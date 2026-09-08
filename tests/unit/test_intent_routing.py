@@ -9,13 +9,10 @@ import pytest
 
 from src.agents.core.base import AgentLoopOutput
 from src.internal.configs import AppSettings
-from src.internal.servers.web import ml_intent
 from src.internal.servers.web import request_capture as rc
-from src.internal.servers.web.intent_routing import (
-    RouteStrategy,
-    _infer_intent_from_output,
-    route_request,
-)
+from src.internal.servers.web.intent import RouteStrategy, recognize_intent
+from src.internal.servers.web.intent import similarity
+from src.internal.servers.web.tool_agent_runner import _infer_intent_from_output
 from src.internal.tools.routing_tools import (
     build_rag_routing_tool,
     build_search_routing_tool,
@@ -163,11 +160,9 @@ def test_rag_routing_tool_returns_answer():
     assert data["answer"] == "42"
 
 
-def test_route_request_is_unchanged_by_a_none_returning_model(monkeypatch):
+def test_recognize_intent_is_unchanged_by_a_none_returning_model(monkeypatch):
     """A margin abstention must look exactly like having no model at all."""
-    from src.internal.servers.web import intent_routing
-
-    monkeypatch.setattr(intent_routing, "predict_route", lambda q, settings=None: None)
+    monkeypatch.setattr(similarity, "predict_route", lambda q, settings=None: None)
     calls = []
 
     class _LLM:
@@ -175,17 +170,17 @@ def test_route_request_is_unchanged_by_a_none_returning_model(monkeypatch):
             calls.append(messages)
             return "search"
 
-    decision = intent_routing.route_request(
+    decision = recognize_intent(
         "where does the reranker timeout live",
         llm=_LLM(),
         explicit_source=False,
     )
 
-    assert decision.strategy is intent_routing.RouteStrategy.SEARCH
+    assert decision.strategy is RouteStrategy.SEARCH
     assert calls, "the LLM classifier must still be consulted"
 
 
-# --- route_request end-to-end: exactly one intent_model capture stage ---
+# --- recognize_intent end-to-end: exactly one intent_model capture stage ---
 
 _AXIS = {"search": 0, "chat": 1, "tool": 2}
 _MODULE = {"search": "lookup_fact", "chat": "explain", "tool": "schedule"}
@@ -227,7 +222,7 @@ class _ChatLLM:
         # Served: clear margin, no abstention.
         pytest.param([0.9950, 0.1005, 0.0], False, id="served"),
         # Margin abstention: the top two routes tie. predict_route returns the
-        # decision with abstain_reason set, and route_request records the one
+        # decision with abstain_reason set, and recognize_intent records the one
         # stage -- previously predict_route returned None and recorded its own,
         # which is what kept this deferral out of production telemetry.
         pytest.param([0.707, 0.707, 0.0], False, id="margin_only"),
@@ -236,7 +231,7 @@ class _ChatLLM:
         pytest.param([0.71, 0.0, 0.70], True, id="margin_and_composite"),
     ],
 )
-def test_route_request_records_exactly_one_intent_model_stage(
+def test_recognize_intent_records_exactly_one_intent_model_stage(
     tmp_path, monkeypatch, vector, expect_composite
 ):
     """Parametrisation lost its confidence-abstention case with that gate.
@@ -246,9 +241,9 @@ def test_route_request_records_exactly_one_intent_model_stage(
     served / margin-abstained / margin-abstained-and-composite -- which is the
     full set of shapes a decision can still take.
     """
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
     monkeypatch.setattr(
-        ml_intent, "encode_texts", lambda texts: np.array([vector], dtype=np.float32)
+        similarity, "encode_texts", lambda texts: np.array([vector], dtype=np.float32)
     )
     settings = AppSettings(
         intent_index_path=_write_routing_index(tmp_path),
@@ -257,7 +252,7 @@ def test_route_request_records_exactly_one_intent_model_stage(
     )
     token = rc.start_capture("r", _MODEL_STAGE_QUERY)
     try:
-        route_request(
+        decision = recognize_intent(
             _MODEL_STAGE_QUERY,
             llm=_ChatLLM(),
             explicit_source=False,
@@ -266,10 +261,24 @@ def test_route_request_records_exactly_one_intent_model_stage(
         model_stages = [s for s in rc.active().stages if s.stage == "intent_model"]
 
         assert len(model_stages) == 1
-        assert model_stages[0].payload["composite"] is expect_composite
+        captured = model_stages[0].payload
+        assert captured["composite"] is expect_composite
+        assert (
+            decision.metadata["route_predicted_intent"] == captured["predicted_intent"]
+        )
+        assert decision.metadata["route_confidence"] == captured["confidence"]
+        assert decision.metadata["route_abstained"] == captured["abstained"]
+        assert decision.metadata["route_model_latency_ms"] == captured["latency_ms"]
+        assert decision.metadata["route_modules"] == captured["modules"]
+        assert decision.metadata["route_composite"] == captured["composite"]
+        if captured["abstained"]:
+            assert (
+                decision.metadata["route_fallback_reason"]
+                == captured["fallback_reason"]
+            )
     finally:
         rc.reset_capture(token)
-        ml_intent._INTENT_INDEXES.clear()
+        similarity._INTENT_INDEXES.clear()
 
 
 def _route_with_telemetry(tmp_path, monkeypatch, vector, **overrides):
@@ -279,9 +288,9 @@ def _route_with_telemetry(tmp_path, monkeypatch, vector, **overrides):
     the debug panels, so anything asserted here is reaching the telemetry dict
     that is actually persisted with the session.
     """
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
     monkeypatch.setattr(
-        ml_intent, "encode_texts", lambda texts: np.array([vector], dtype=np.float32)
+        similarity, "encode_texts", lambda texts: np.array([vector], dtype=np.float32)
     )
     settings = AppSettings(
         intent_index_path=_write_routing_index(tmp_path),
@@ -289,18 +298,16 @@ def _route_with_telemetry(tmp_path, monkeypatch, vector, **overrides):
         intent_min_module_score=0.4,
         **overrides,
     )
-    telemetry: dict = {}
     try:
-        decision = route_request(
+        decision = recognize_intent(
             _MODEL_STAGE_QUERY,
             llm=_ChatLLM(),
             explicit_source=False,
             settings=settings,
-            telemetry=telemetry,
         )
     finally:
-        ml_intent._INTENT_INDEXES.clear()
-    return decision, telemetry
+        similarity._INTENT_INDEXES.clear()
+    return decision, decision.metadata
 
 
 def test_margin_abstention_is_distinguishable_in_production_telemetry(
@@ -366,9 +373,9 @@ def test_shadow_mode_records_the_prediction_without_acting_on_it(tmp_path, monke
     both halves matters — recording without the fall-through would be a silent
     promotion, and falling through without recording would gather nothing.
     """
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
     )
@@ -378,21 +385,31 @@ def test_shadow_mode_records_the_prediction_without_acting_on_it(tmp_path, monke
         intent_min_module_score=0.4,
         intent_shadow_mode=True,
     )
-    telemetry: dict = {}
+    token = rc.start_capture("r", _MODEL_STAGE_QUERY)
     try:
-        decision = route_request(
+        decision = recognize_intent(
             _MODEL_STAGE_QUERY,
             llm=_ChatLLM(),
             explicit_source=False,
             settings=settings,
-            telemetry=telemetry,
+        )
+        captured = next(
+            stage.payload
+            for stage in rc.active().stages
+            if stage.stage == "intent_model"
         )
     finally:
-        ml_intent._INTENT_INDEXES.clear()
+        rc.reset_capture(token)
+        similarity._INTENT_INDEXES.clear()
+
+    telemetry = decision.metadata
 
     # Observed: the router would have said "search".
     assert telemetry["route_shadow_intent"] == "search"
     assert telemetry["route_shadow_abstained"] is False
+    assert telemetry["route_shadow_intent"] == captured["predicted_intent"]
+    assert telemetry["route_shadow_abstained"] == captured["abstained"]
+    assert telemetry["route_shadow_fallback_reason"] == captured["fallback_reason"]
     # Not acted on: the classifier decided, and it answers "chat".
     assert decision.strategy is RouteStrategy.CHAT
     assert telemetry["route_mechanism"] == "classifier"
@@ -407,9 +424,9 @@ def test_shadow_fields_are_distinct_from_served_fields(tmp_path, monkeypatch):
     only a served route reaches `route_mechanism == "model"` — so the two are
     separable when the telemetry is read back in aggregate.
     """
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
     )
@@ -422,23 +439,23 @@ def test_shadow_fields_are_distinct_from_served_fields(tmp_path, monkeypatch):
     served: dict = {}
     shadow: dict = {}
     try:
-        route_request(
+        decision = recognize_intent(
             _MODEL_STAGE_QUERY,
             llm=_ChatLLM(),
             explicit_source=False,
             settings=AppSettings(**common),
-            telemetry=served,
         )
-        ml_intent._INTENT_INDEXES.clear()
-        route_request(
+        served.update(decision.metadata)
+        similarity._INTENT_INDEXES.clear()
+        decision = recognize_intent(
             _MODEL_STAGE_QUERY,
             llm=_ChatLLM(),
             explicit_source=False,
             settings=AppSettings(**common, intent_shadow_mode=True),
-            telemetry=shadow,
         )
+        shadow.update(decision.metadata)
     finally:
-        ml_intent._INTENT_INDEXES.clear()
+        similarity._INTENT_INDEXES.clear()
 
     assert served["route_mechanism"] == "model"
     assert "route_shadow_intent" not in served

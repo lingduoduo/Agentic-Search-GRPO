@@ -28,7 +28,7 @@ from .model import DEFAULT_ENCODER, modules_for_route
 #
 # Curating ~270 canonical examples is a review pass over machine proposals, not
 # 270 acts of authorship. The cues below are the same ones
-# ``src/internal/servers/web/intent_routing.py`` already routes on, which is why
+# ``src/internal/servers/web/intent/rules.py`` already routes on, which is why
 # the taxonomy has these fourteen modules and no others — so a proposal agrees
 # with the router by construction, and a disagreement is worth looking at.
 #

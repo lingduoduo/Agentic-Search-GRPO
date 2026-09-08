@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from src.agents.search import AgenticRAGResult
 from src.context.models import SearchContextBundle
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
-from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 
 
 def _stub_agentic_rag_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,7 +38,7 @@ def _route_to_chat_with_fake_rag(monkeypatch: pytest.MonkeyPatch) -> None:
     completes with no local model and no network call (mirrors
     test_auto_route_agentic_rag_for_chat in test_web_experience_app.py)."""
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.CHAT),
     )
     _stub_agentic_rag_run(monkeypatch)
@@ -46,7 +46,7 @@ def _route_to_chat_with_fake_rag(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def web_client_debug_on(monkeypatch, tmp_path):
-    # Exercise the REAL route_query -> classify_route so the `intent` stage
+    # Exercise the real recognize_intent -> classify_route cascade so the `intent` stage
     # (emitted by classify_route via record_stage) is captured end-to-end
     # alongside `final`, instead of bypassing the classifier entirely.
     _stub_agentic_rag_run(monkeypatch)

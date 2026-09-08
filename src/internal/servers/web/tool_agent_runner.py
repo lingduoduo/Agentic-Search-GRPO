@@ -11,7 +11,6 @@ import json as _json
 from pydantic import BaseModel
 
 from src.context.models import ContextDocument
-from .intent_routing import _infer_intent_from_output
 
 NO_LOCAL_MODEL_MESSAGE = (
     "tool_agent mode requires a local model. "
@@ -42,6 +41,25 @@ _ROLLOUT_BUDGET_MULTIPLIER = 4
 # The corpus search the agent is given, and the trace name its results carry.
 _CORPUS_SEARCH_NAME = "search"
 _CORPUS_SEARCH_TOP_K = 5
+
+
+def _infer_intent_from_output(output) -> str:
+    """Infer the executed intent from the first tool in an agent trace."""
+    if not output.action_trace:
+        return "chat"
+    first_line = output.action_trace.split("\n")[0].strip()
+    try:
+        record = _json.loads(first_line)
+        tool_name = record.get("tool_name", "")
+        if tool_name == "search":
+            return "search"
+        if tool_name == "rag_routing_tool":
+            return "chat"
+        if tool_name:
+            return "tool"
+    except (_json.JSONDecodeError, AttributeError):
+        pass
+    return "chat"
 
 
 class ToolCallView(BaseModel):

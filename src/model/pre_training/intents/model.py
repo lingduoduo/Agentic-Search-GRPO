@@ -49,7 +49,7 @@ import numpy as np
 # explainable; orthogonal primitives are the right end state at several thousand.
 #
 # The module names are not invented. Each is drawn from a regex cue already used
-# by ``src/internal/servers/web/intent_routing.py``, so the taxonomy describes
+# by ``src/internal/servers/web/intent/rules.py``, so the taxonomy describes
 # distinctions the router already makes.
 # ---------------------------------------------------------------------------
 INTENT_LABELS: tuple[str, ...] = ("chat", "search", "tool")
@@ -140,7 +140,7 @@ DEFAULT_ENCODER = "intfloat/e5-small-v2"
 # property of the model, derived from its name rather than passed by callers,
 # so no call site can omit it. Deriving rather than storing it also means the
 # index needs no new field: it already records the encoder name, and
-# ml_intent.load_intent_index already rejects a mismatch, which covers the
+# intent.similarity.load_intent_index already rejects a mismatch, which covers the
 # prefix for free. That matters here because e5-small-v2 is also 384-wide, so
 # an index built with the previous encoder would otherwise load and score
 # without any error at all.
@@ -174,7 +174,7 @@ def prefix_for(model_name: str) -> str:
 # Keyed by model name; holds either a loaded model or an Exception. A failed
 # load is cached too — lru_cache does not cache exceptions, and retrying a
 # broken or unreachable model download on every call would block whichever
-# request triggers it, forever. See ml_intent._INTENT_INDEXES for the same
+# request triggers it, forever. See intent.similarity._INTENT_INDEXES for the same
 # policy one layer up.
 _MODEL_CACHE: dict[str, object] = {}
 

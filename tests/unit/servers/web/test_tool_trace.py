@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock
 
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
-from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 from src.agents.core.base import AgentLoopOutput
 
 
@@ -56,7 +56,7 @@ def test_tool_calls_populated_from_action_trace(monkeypatch, tmp_path):
         ]
     )
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     monkeypatch.setattr(
@@ -78,7 +78,7 @@ def test_tool_calls_populated_from_action_trace(monkeypatch, tmp_path):
 def test_latency_computed_from_execution_time(monkeypatch, tmp_path):
     trace = _trace_line("my_tool", "TaskStatus.COMPLETED", "ok", execution_time=0.456)
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     monkeypatch.setattr(
@@ -101,7 +101,7 @@ def test_list_result_becomes_n_items(monkeypatch, tmp_path):
         json.dumps([{"title": "a"}, {"title": "b"}]),
     )
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     monkeypatch.setattr(
@@ -121,7 +121,7 @@ def test_string_result_truncated_to_200(monkeypatch, tmp_path):
     long_result = "x" * 300
     trace = _trace_line("my_tool", "TaskStatus.COMPLETED", long_result)
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     monkeypatch.setattr(
@@ -140,7 +140,7 @@ def test_string_result_truncated_to_200(monkeypatch, tmp_path):
 def test_failed_tool_call_error_message(monkeypatch, tmp_path):
     trace = _trace_line("bad_tool", "TaskStatus.FAILED", None, error_message="timeout")
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     monkeypatch.setattr(

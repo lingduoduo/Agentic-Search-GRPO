@@ -57,7 +57,7 @@ def _load_intent_prediction(index_dir: str, question: str) -> IntentPrediction |
         # mismatched encoder has no other symptom: no shape error, no
         # exception, just a confident, meaningless number driving
         # resolve_search_settings silently. Match the same guard
-        # run_index_evaluation and ml_intent.load_intent_index apply.
+        # run_index_evaluation and intent.similarity.load_intent_index apply.
         raise ValueError(
             f"--intent_index at {index_dir} was built with encoder "
             f"{index.encoder!r}, but this CLI encodes queries with "
