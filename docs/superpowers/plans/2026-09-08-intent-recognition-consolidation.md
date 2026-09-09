@@ -93,6 +93,7 @@ Run the affected web-server suite once after integration, record results and env
 
 **Files:**
 - Modify: `docs/request-routing.md`, `docs/training-and-evaluation.md`, `docs/configuration.md` where current guidance is stale.
+- Modify: `.env.example` intent settings to match existing AppSettings defaults; update its CLI reference and remove the retired confidence setting.
 - Modify: other live documentation references to removed runtime modules as needed; historical specs/plans remain historical.
 
 **Interfaces:**

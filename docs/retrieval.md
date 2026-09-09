@@ -652,7 +652,7 @@ mechanisms in this codebase — easy to conflate, so:
 
 | Layer | Where | Decides | Values |
 |-------|-------|---------|--------|
-| Intent routing | web backend (`route_query`) | which experience to run | `chat` · `search` · `tool` |
+| Intent routing | web backend (`recognize_intent`) | which experience to run | `chat` · `search` · `tool` |
 | Provider cascade | web auto-search | which evidence source | internal → serpapi → browser |
 | Retriever-target routing | `src/internal/routing/` | which retriever / construction target | `sparse·dense·hybrid·metadata·sql·graph·api` |
 | Transform routing | `QueryRouter` (`QT_ROUTER`) | which query transforms to apply | `decompose·hyde·step_back·keywords·construct_filters·multi_query·rewrite` |

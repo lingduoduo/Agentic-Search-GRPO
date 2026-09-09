@@ -69,8 +69,8 @@ what ran and is not a second pre-execution recognizer.
 - Standalone greetings/thanks (`hi`, `hello`, `hi there`, `thanks`, `thank you`,
   with surrounding whitespace, ordinary terminal punctuation and case changes)
   deterministically select chat. Match the whole utterance, so `hello world
-  tutorial` still behaves as a lookup and `hi, find the report` does not silently
-  become a greeting-only chat. Include greetings in the bare-lookup exclusions.
+  tutorial` and `hi, find the report` retain their non-greeting treatment instead
+  of silently becoming greeting-only chat. Include greetings in the bare-lookup exclusions.
 - The classifier accepts exactly one distinct supported whole-word label in
   its completion. Reject multiple distinct labels as `unexpected`; retain
   compatibility with explanatory completions containing only one label and
@@ -100,7 +100,7 @@ no encoder, canonical data, scoring or serving-threshold changes are planned.
 
 ## Documentation and delivery
 
-Update `docs/request-routing.md`, current configuration/training guidance and
+Update `docs/request-routing.md`, current configuration/training guidance, `.env.example`, and
 live source references. Retain historical benchmark numbers with explicit
 historical context, rather than presenting them as fresh measurements. Commit
 spec and plan before implementation, review the implementation independently,
