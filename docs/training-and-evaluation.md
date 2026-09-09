@@ -37,6 +37,8 @@ python -m src.model.pre_training.intents.cli evaluate \
 
 ### How routing works
 
+The route vocabulary and default scoring values live in `src/shared_configs/intent.py`. Existing imports of `model.INTENT_LABELS` and `model.TOP_K` remain supported. Both the web adapter and the example CLI pass the configured `intent_top_k` to the same index scorer; the CLI keeps its own search/model policy.
+
 Each canonical example is encoded once by `intfloat/e5-small-v2` and L2-normalized. At serving time the request is encoded the same way, and each route scores as the **mean of its top-k cosine similarities** to that request. The best route wins; the module labels reported alongside it are diagnostics and can never change the route.
 
 **The prefix contract.** E5 models are trained with instruction prefixes and **degrade silently without them** — no error, no warning, just worse vectors. Every text gets `"query: "`, applied **symmetrically** to canonical anchors and to incoming requests: this is symmetric short-text similarity, not the asymmetric retrieval E5's `"passage: "` prefix is for. The prefix is a property of the encoder, not an argument, so it lives in `MODEL_PREFIXES` in `src/model/pre_training/intents/model.py` and is applied inside `encode_texts` — no call site can forget it. An encoder with no registered prefix raises rather than defaulting to `""`: an unregistered model is far likelier to be one whose prefix nobody looked up than one that genuinely needs none, and guessing wrong is invisible.

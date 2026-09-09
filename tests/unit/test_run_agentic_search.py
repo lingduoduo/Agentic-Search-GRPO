@@ -498,3 +498,55 @@ def test_cli_mode_resolves_to_registry_class():
     assert (
         get_registered_agent_loop(resolve_agent_name("single")) is PlainGenerationLoop
     )
+
+
+@pytest.mark.parametrize(
+    ("top_k", "expected_route", "expected_confidence"),
+    [("1", "search", 1.0), ("4", "chat", 0.8), (None, "chat", 0.8)],
+)
+def test_cli_and_web_intent_scoring_parity(
+    tmp_path, monkeypatch, top_k, expected_route, expected_confidence
+):
+    """A CLI request must honor the same configured neighbors as web scoring."""
+    import numpy as np
+
+    from src.internal import configs
+    from src.internal.servers.web.intent import similarity
+    from src.model.pre_training.intents.model import (
+        DEFAULT_ENCODER,
+        INDEX_FILENAME,
+        CanonicalExample,
+        IntentIndex,
+    )
+
+    examples, rows = [], []
+    for route, module, vectors in (
+        ("search", "lookup_fact", [[1, 0, 0]] + [[0, 0, 1]] * 11),
+        ("chat", "explain", [[0.8, 0.6, 0]] * 12),
+        ("tool", "schedule", [[0, 0, 1]] * 12),
+    ):
+        for i, vector in enumerate(vectors):
+            examples.append(
+                CanonicalExample(f"{route}-{i}", "anchor", route, (module,))
+            )
+            rows.append(vector)
+    IntentIndex(
+        examples, np.array(rows, dtype=np.float32), DEFAULT_ENCODER, "sha256:parity"
+    ).save(tmp_path / INDEX_FILENAME)
+    env = {"AGENTIC_SEARCH_INTENT_INDEX_PATH": str(tmp_path)}
+    if top_k is not None:
+        env["AGENTIC_SEARCH_INTENT_TOP_K"] = top_k
+    settings = configs.load_app_settings(env)
+    monkeypatch.setattr(configs, "load_app_settings", lambda: settings)
+    monkeypatch.setattr(similarity, "_INTENT_INDEXES", {})
+    _stub_encoder(monkeypatch, [1.0, 0.0, 0.0])
+
+    cli = _load_intent_prediction(str(tmp_path), "ambiguous request")
+    web = similarity.predict_route("ambiguous request", settings=settings)
+
+    assert cli is not None and web is not None
+    assert web.abstain_reason is None
+    assert web.strategy.value == expected_route
+    assert cli.intent == expected_route
+    assert cli.confidence == pytest.approx(expected_confidence)
+    assert web.confidence == pytest.approx(expected_confidence)

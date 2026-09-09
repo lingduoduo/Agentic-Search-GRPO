@@ -9,6 +9,12 @@ and chat_configs.py and are kept in one place for documentation and
 test-fixture use.
 """
 
+from src.shared_configs.intent import (
+    DEFAULT_MIN_MODULE_SCORE,
+    DEFAULT_MIN_ROUTE_MARGIN,
+    DEFAULT_TOP_K,
+)
+
 DEFAULT_CONFIG: dict = {
     # -------------------------------------------------------------------------
     # Services — retrieval server, web backend, persistence
@@ -25,10 +31,10 @@ DEFAULT_CONFIG: dict = {
     # Intent model serving
     # -------------------------------------------------------------------------
     "AGENTIC_SEARCH_INTENT_INDEX_PATH": "",
-    "AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN": 0.010,
-    "AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE": 0.8215,
+    "AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN": DEFAULT_MIN_ROUTE_MARGIN,
+    "AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE": DEFAULT_MIN_MODULE_SCORE,
     # Neighbors averaged per route; see intent_top_k in app_configs.py.
-    "AGENTIC_SEARCH_INTENT_TOP_K": 8,
+    "AGENTIC_SEARCH_INTENT_TOP_K": DEFAULT_TOP_K,
     "AGENTIC_SEARCH_ROUTE_CLARIFICATION": True,
     "WEB_DOMAIN": "http://localhost:8080",
     # -------------------------------------------------------------------------

@@ -22,7 +22,7 @@ from typing import Any
 class IntentPrediction:
     """One accepted route for the request, with its cosine similarity.
 
-    ``confidence`` is the top-3 mean cosine to the winning route's canonical
+    ``confidence`` is the configured top-k mean cosine to the winning route's canonical
     examples — not a softmax probability. Thresholds compared against it must
     be tuned on that scale.
     """
@@ -34,9 +34,8 @@ class IntentPrediction:
 def _load_intent_prediction(index_dir: str, question: str) -> IntentPrediction | None:
     """Route *question* against a canonical-example index, or return None.
 
-    None means the index abstained: either nothing canonical resembles the
-    request, or two routes fit it equally well. Neither is a signal worth
-    switching a generation model on.
+    None means the winning route did not clear the configured margin over
+    the runner-up. This is not a signal worth switching a generation model on.
     """
     from src.internal.configs import load_app_settings
 
@@ -69,6 +68,7 @@ def _load_intent_prediction(index_dir: str, question: str) -> IntentPrediction |
         encode_texts([question])[0],
         min_margin=settings.intent_min_route_margin,
         min_module_score=settings.intent_min_module_score,
+        top_k=settings.intent_top_k,
     )
     if decision.abstained:
         return None

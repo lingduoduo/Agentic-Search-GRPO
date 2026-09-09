@@ -15,6 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
+from src.shared_configs.intent import (
+    DEFAULT_MIN_MODULE_SCORE,
+    DEFAULT_MIN_ROUTE_MARGIN,
+    DEFAULT_TOP_K,
+)
+
 EnvMapping = Mapping[str, str]
 
 DEFAULT_RETRIEVAL_URL = "http://localhost:8001/retrieve"
@@ -159,24 +165,14 @@ class AppSettings:
     # answer mid-word long before the token budget is reached. 0 disables it.
     generation_timeout_seconds: float = 120.0
     intent_index_path: Path | None = None
-    # Score every auto-routed request and record what the router WOULD have
-    # decided, without acting on it. Turns promotion from a bet into a
-    # measurement: the artifact stays dark while production data accumulates.
+    # Evaluate only requests reaching similarity; record but do not serve
+    # predictions when shadow mode is enabled.
     intent_shadow_mode: bool = False
-    # Cosine similarity to the best-matching route, not a softmax probability,
-    # and the scale moves with the encoder: these are the pair the 2026-08-13
-    # sweep selected on the *tuning* slice under intfloat/e5-small-v2, at a
-    # pinned top_k so the search could not touch the reported number. Under
-    # this encoder the confidence gate never fires (in-scope confidences run
-    # 0.792-0.905); the margin does the abstaining. See
-    # docs/training-and-evaluation.md.
-    intent_min_route_margin: float = 0.010
-    intent_min_module_score: float = 0.8215
-    # Neighbors averaged per route. A sweep over the shipped encoder moves
-    # both accuracy and out-of-scope separation (see
-    # docs/training-and-evaluation.md); the default stays 3, the shipped
-    # value, until that trade is decided together with a stronger encoder.
-    intent_top_k: int = 8
+    # The route margin is the sole abstention gate. Module scores are diagnostics.
+    intent_min_route_margin: float = DEFAULT_MIN_ROUTE_MARGIN
+    intent_min_module_score: float = DEFAULT_MIN_MODULE_SCORE
+    # Neighbors averaged per route, selected jointly with the route margin.
+    intent_top_k: int = DEFAULT_TOP_K
     route_clarification: bool = True
 
     def __post_init__(self) -> None:
@@ -210,12 +206,12 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
     ):
         raise ValueError("TOOL_APPROVAL_TIMEOUT_SECONDS must be positive.")
     intent_min_route_margin = get_env_float(
-        source, "AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN", 0.010
+        source, "AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN", DEFAULT_MIN_ROUTE_MARGIN
     )
     intent_min_module_score = get_env_float(
-        source, "AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE", 0.8215
+        source, "AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE", DEFAULT_MIN_MODULE_SCORE
     )
-    intent_top_k = get_env_int(source, "AGENTIC_SEARCH_INTENT_TOP_K", 8)
+    intent_top_k = get_env_int(source, "AGENTIC_SEARCH_INTENT_TOP_K", DEFAULT_TOP_K)
     intent_shadow_mode = get_env_bool(
         source, "AGENTIC_SEARCH_INTENT_SHADOW_MODE", False
     )

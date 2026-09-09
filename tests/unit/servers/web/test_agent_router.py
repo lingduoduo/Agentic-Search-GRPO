@@ -16,7 +16,6 @@ from src.internal.servers.web.intent import similarity
 from src.internal.servers.web.intent.recognizer import classify_route
 from src.internal.servers.web.intent.rules import (
     _regex_route,
-    _rule_based_route,
 )
 from src.internal.servers.web.intent.types import IntentModelDecision
 
@@ -103,31 +102,28 @@ def test_recognize_intent_descriptive_phrase_still_uses_classifier():
     assert llm.calls  # the classifier was consulted
 
 
-# --- _rule_based_route ---
-
-
-def test_rule_based_bare_lookup_routes_to_search():
-    assert _rule_based_route("FAISS") is RouteStrategy.SEARCH
-    assert _rule_based_route("vector database") is RouteStrategy.SEARCH
-
-
-def test_rule_based_action_routes_to_tool():
-    assert _rule_based_route("send an email to the team") is RouteStrategy.TOOL
-    assert _rule_based_route("create a ticket for this bug") is RouteStrategy.TOOL
-
-
-def test_rule_based_search_verb_routes_to_search():
-    assert _rule_based_route("find the Q3 revenue report") is RouteStrategy.SEARCH
-    assert _rule_based_route("look up the latest release notes") is RouteStrategy.SEARCH
-
-
-def test_rule_based_generative_routes_to_chat():
-    assert _rule_based_route("write a haiku about the sea") is RouteStrategy.CHAT
-    assert _rule_based_route("translate this sentence to French") is RouteStrategy.CHAT
-
-
-def test_rule_based_default_no_signal_routes_to_chat():
-    assert _rule_based_route("the procurement approval flow") is RouteStrategy.CHAT
+@pytest.mark.parametrize(
+    ("query", "expected_route", "clarifies"),
+    [
+        ("please send the monthly report", RouteStrategy.TOOL, False),
+        ("please find the monthly report", RouteStrategy.SEARCH, False),
+        ("the quarterly procurement approval workflow", RouteStrategy.CHAT, True),
+    ],
+)
+def test_last_resort_rules_preserve_route_and_clarification(
+    query, expected_route, clarifies
+):
+    decision = recognize_intent(
+        query,
+        llm=None,
+        explicit_source=False,
+        settings=AppSettings(intent_index_path=None),
+    )
+    assert decision.strategy is expected_route
+    assert (decision.clarification is not None) is clarifies
+    assert decision.metadata["route_mechanism"] == (
+        "clarify" if clarifies else "heuristic_default"
+    )
 
 
 # --- classify_route ---

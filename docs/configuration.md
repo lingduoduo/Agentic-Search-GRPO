@@ -62,6 +62,11 @@ Routing configuration spans separate capabilities:
 
 `source_provider=auto` applies the sequential provider order to auto-routed search. Signing in narrows what that search returns rather than selecting a different path. Explicit modes and explicit providers retain their own execution contracts. See [API request routing](request-routing.md).
 
+Intent route values and scoring defaults are defined in
+`src/shared_configs/intent.py`. AppSettings, environment fallbacks, the default
+configuration map, and the offline scorer consume those definitions. The
+example CLI also honors `AGENTIC_SEARCH_INTENT_TOP_K` when `--intent_index` is set.
+
 ## Application and authentication
 
 | Env var | Default | Description |
