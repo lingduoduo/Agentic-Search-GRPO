@@ -69,6 +69,7 @@ def _load_intent_prediction(index_dir: str, question: str) -> IntentPrediction |
         encode_texts([question])[0],
         min_margin=settings.intent_min_route_margin,
         min_module_score=settings.intent_min_module_score,
+        top_k=settings.intent_top_k,
     )
     if decision.abstained:
         return None
