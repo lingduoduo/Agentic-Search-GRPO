@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from src.internal.configs import AppSettings
-from src.internal.servers.web import ml_intent
-from src.internal.servers.web.intent_routing import RouteStrategy
+from src.internal.servers.web.intent import RouteStrategy
+from src.internal.servers.web.intent import similarity
 from src.model.pre_training.intents.model import DEFAULT_ENCODER
 from src.model.pre_training.intents.model import (
     INDEX_FILENAME,
@@ -51,20 +51,20 @@ def _settings(tmp_path: Path, **overrides) -> AppSettings:
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
     yield
-    ml_intent._INTENT_INDEXES.clear()
+    similarity._INTENT_INDEXES.clear()
 
 
 def _on_axis(route: str, monkeypatch):
     vector = np.eye(3, dtype=np.float32)[_AXIS[route]][None, :]
-    monkeypatch.setattr(ml_intent, "encode_texts", lambda texts: vector)
+    monkeypatch.setattr(similarity, "encode_texts", lambda texts: vector)
 
 
 def test_confident_query_returns_its_route_and_modules(tmp_path, monkeypatch):
     _on_axis("search", monkeypatch)
 
-    decision = ml_intent.predict_route("anything", settings=_settings(tmp_path))
+    decision = similarity.predict_route("anything", settings=_settings(tmp_path))
 
     assert decision is not None
     assert decision.strategy is RouteStrategy.SEARCH
@@ -103,7 +103,7 @@ def test_predict_route_passes_settings_top_k_through_to_decide(tmp_path, monkeyp
         directory / INDEX_FILENAME
     )
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.eye(3, dtype=np.float32)[0][None, :],
     )
@@ -113,10 +113,10 @@ def test_predict_route_passes_settings_top_k_through_to_decide(tmp_path, monkeyp
         "intent_min_module_score": 0.0,
     }
 
-    decision_top_1 = ml_intent.predict_route(
+    decision_top_1 = similarity.predict_route(
         "anything", settings=AppSettings(**base, intent_top_k=1)
     )
-    decision_top_4 = ml_intent.predict_route(
+    decision_top_4 = similarity.predict_route(
         "anything", settings=AppSettings(**base, intent_top_k=4)
     )
 
@@ -130,19 +130,19 @@ def test_low_margin_reports_its_abstention_on_the_returned_decision(
 ):
     """The margin abstention is reported, not swallowed into ``None``.
 
-    It used to return ``None``, which ``route_request`` cannot tell apart from
+    It used to return ``None``, which recognition cannot tell apart from
     "no index configured" — so every margin deferral was invisible to
     production telemetry, and the margin gate is the only abstention that fires
     at all under e5. Returning the decision with a reason is what makes it
     countable, and leaves both abstentions symmetric.
     """
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.array([[0.707, 0.707, 0.0]], dtype=np.float32),
     )
 
-    decision = ml_intent.predict_route("anything", settings=_settings(tmp_path))
+    decision = similarity.predict_route("anything", settings=_settings(tmp_path))
 
     assert decision is not None
     assert decision.abstain_reason == "margin_below_threshold"
@@ -151,7 +151,7 @@ def test_low_margin_reports_its_abstention_on_the_returned_decision(
 def test_missing_index_path_defers_without_raising(tmp_path):
     settings = AppSettings(intent_index_path=None)
 
-    assert ml_intent.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
 
 
 def test_unreadable_index_defers_and_is_not_retried(tmp_path, monkeypatch):
@@ -165,8 +165,8 @@ def test_unreadable_index_defers_and_is_not_retried(tmp_path, monkeypatch):
 
     monkeypatch.setattr(IntentIndex, "load", staticmethod(_counting_load))
 
-    assert ml_intent.predict_route("anything", settings=settings) is None
-    assert ml_intent.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
     assert loads["count"] == 1
 
 
@@ -189,8 +189,8 @@ def test_encoder_mismatch_defers_and_is_cached_as_failure(tmp_path, monkeypatch)
 
     monkeypatch.setattr(IntentIndex, "load", staticmethod(_counting_load))
 
-    assert ml_intent.predict_route("anything", settings=settings) is None
-    assert ml_intent.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
     assert loads["count"] == 1
 
 
@@ -198,9 +198,9 @@ def test_encoder_failure_defers_rather_than_failing_the_request(tmp_path, monkey
     def _boom(texts):
         raise RuntimeError("no model")
 
-    monkeypatch.setattr(ml_intent, "encode_texts", _boom)
+    monkeypatch.setattr(similarity, "encode_texts", _boom)
 
-    assert ml_intent.predict_route("anything", settings=_settings(tmp_path)) is None
+    assert similarity.predict_route("anything", settings=_settings(tmp_path)) is None
 
 
 def test_index_is_loaded_once_and_cached(tmp_path, monkeypatch):
@@ -215,8 +215,8 @@ def test_index_is_loaded_once_and_cached(tmp_path, monkeypatch):
 
     monkeypatch.setattr(IntentIndex, "load", staticmethod(_counting_load))
 
-    ml_intent.predict_route("a", settings=settings)
-    ml_intent.predict_route("b", settings=settings)
+    similarity.predict_route("a", settings=settings)
+    similarity.predict_route("b", settings=settings)
 
     assert loads["count"] == 1
 
@@ -229,15 +229,15 @@ def test_composite_query_defers_and_carries_the_flag_on_its_decision(
     The flag used to reach only the capture stage, which runs solely under the
     debug panels — so the one signal whose entire purpose is to feed a future
     plan-aware router was never recorded anywhere durable. It now rides the
-    returned decision, and ``route_request`` puts it in production telemetry.
+    returned decision, and recognition puts it in production metadata.
     """
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.array([[0.71, 0.0, 0.70]], dtype=np.float32),
     )
 
-    decision = ml_intent.predict_route("anything", settings=_settings(tmp_path))
+    decision = similarity.predict_route("anything", settings=_settings(tmp_path))
 
     assert decision is not None
     assert decision.composite is True
@@ -291,12 +291,12 @@ def test_an_index_built_with_the_previous_encoder_is_rejected(tmp_path, monkeypa
     # before this vector is ever used, decide() would return a maximally
     # confident, unambiguous decision, well clear of every default threshold.
     monkeypatch.setattr(
-        ml_intent, "encode_texts", lambda texts: basis[_AXIS["search"]][None, :]
+        similarity, "encode_texts", lambda texts: basis[_AXIS["search"]][None, :]
     )
 
     settings = AppSettings(intent_index_path=directory)
 
-    assert ml_intent.predict_route("anything", settings=settings) is None
+    assert similarity.predict_route("anything", settings=settings) is None
 
 
 def test_predict_route_records_no_capture_stage_on_any_path(tmp_path, monkeypatch):
@@ -309,14 +309,14 @@ def test_predict_route_records_no_capture_stage_on_any_path(tmp_path, monkeypatc
     already covers with the very same input.
 
     What survives nowhere else is this: ``predict_route`` records **no** capture
-    stage on any path. ``route_request`` records exactly one per decision, so a
+    stage on any path. ``recognize_intent`` records exactly one per decision, so a
     stage recorded here as well would emit two with conflicting payloads for
     every abstaining request. It used to record one on the margin path
-    precisely because that path returned ``None`` and ``route_request`` never
+    precisely because that path returned ``None`` and recognition never
     saw the decision.
     """
     monkeypatch.setattr(
-        ml_intent,
+        similarity,
         "encode_texts",
         lambda texts: np.array([[0.71, 0.0, 0.70]], dtype=np.float32),
     )
@@ -326,7 +326,7 @@ def test_predict_route_records_no_capture_stage_on_any_path(tmp_path, monkeypatc
         lambda *a, **k: recorded.append(a),
     )
 
-    decision = ml_intent.predict_route("anything", settings=_settings(tmp_path))
+    decision = similarity.predict_route("anything", settings=_settings(tmp_path))
 
     assert decision is not None
     assert decision.composite is True

@@ -775,10 +775,10 @@ def test_auto_route_agentic_rag_for_chat(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock, MagicMock
     from src.agents.search import AgenticRAGResult
     from src.context.models import SearchContextBundle
-    from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.CHAT),
     )
     fake_result = AgenticRAGResult(
@@ -812,10 +812,10 @@ def test_auto_route_search_uses_direct_provider_order_without_local_model(
         called.append(source_provider)
         return []
 
-    from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.SEARCH),
     )
     monkeypatch.setattr("src.internal.servers.web.app._run_direct_search", fake_direct)
@@ -855,11 +855,11 @@ def test_auto_route_tool_agent_runs_tool_loop_when_model_available(
     """TOOL route with a local model → ToolAgentLoop runs with real tools."""
     from unittest.mock import AsyncMock, MagicMock
     from src.agents.core.base import AgentLoopOutput
-    from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
     import json
 
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.TOOL),
     )
     # A trace that says the corpus search tool was called
@@ -901,12 +901,12 @@ def test_agent_no_llm_chat_degrades_to_pipeline(monkeypatch, tmp_path):
     can't repopulate it (delenv alone is insufficient — the reload re-adds it).
     """
     from src.internal.configs import AppSettings
-    from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 
     monkeypatch.setattr("src.internal.servers.web.app.load_dotenv", lambda: None)
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(RouteStrategy.CHAT),
     )
 
@@ -1435,12 +1435,12 @@ def _write_dispatch_index(tmp_path):
 def _stub_encode_texts(monkeypatch, vector_by_query):
     import numpy as np
 
-    from src.internal.servers.web import ml_intent
+    from src.internal.servers.web.intent import similarity
 
     def _fake(texts):
         return np.stack([vector_by_query[text] for text in texts]).astype(np.float32)
 
-    monkeypatch.setattr(ml_intent, "encode_texts", _fake)
+    monkeypatch.setattr(similarity, "encode_texts", _fake)
 
 
 def test_real_intent_index_dispatches_to_each_existing_runner(monkeypatch, tmp_path):

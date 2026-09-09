@@ -1,9 +1,9 @@
 """Tests for mid-execution fallbacks in the 3-way agentic router.
 
-The router (`route_query`) picks a strategy; dispatch is capability-aware. The
+The recognizer picks a strategy; dispatch is capability-aware. The
 retrieval-first fallback chain (hybrid -> RAG -> raw docs -> 502) lives in
 `_auto_search_pipeline`, reached when SEARCH has no local model or
-CHAT has no LLM. These tests force a strategy via `route_query` and assert
+CHAT has no LLM. These tests force a strategy at the recognition boundary and assert
 the resulting dispatch / fallback behavior.
 """
 
@@ -23,7 +23,7 @@ from src.context.models import (
     ContextDocument,
 )
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
-from src.internal.servers.web.intent_routing import RouteDecision, RouteStrategy
+from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 from src.agents.core.base import AgentLoopOutput
 
 
@@ -38,7 +38,7 @@ def _make_answer_result(answer: str = "ok") -> AnswerGenerationResult:
 
 def _force_route(monkeypatch, strategy: RouteStrategy) -> None:
     monkeypatch.setattr(
-        "src.internal.servers.web.app.route_request",
+        "src.internal.servers.web.app.recognize_intent",
         lambda *a, **k: RouteDecision(strategy),
     )
 
@@ -262,7 +262,7 @@ def test_tool_loop_empty_output_degrades(monkeypatch, tmp_path):
 
 
 def test_explicit_source_forces_search_against_that_provider(monkeypatch, tmp_path):
-    """source_provider='serpapi' → route_query returns SEARCH; the chosen
+    """source_provider='serpapi' → recognition returns SEARCH; the chosen
     provider flows through to hybrid search.
     """
     from src.internal.servers.web.app import _HybridSearchResult
@@ -274,7 +274,7 @@ def test_explicit_source_forces_search_against_that_provider(monkeypatch, tmp_pa
         doc = ContextDocument(id="D1", title="t", content="c", url=None, score=0.0)
         return _HybridSearchResult(executed_queries=[query], documents=[doc])
 
-    # No route_query override: explicit_source must drive SEARCH on its own.
+    # No recognition override: explicit_source must drive SEARCH on its own.
     monkeypatch.setattr("src.internal.servers.web.app._run_hybrid_search", fake_hybrid)
     app = create_web_app(SearchExperienceSettings(db_path=tmp_path / "db.sqlite3"))
     with TestClient(app) as client:

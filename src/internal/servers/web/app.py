@@ -120,9 +120,9 @@ from src.internal.tools import search_tool
 from .static import APP_CSS
 from .static import APP_HTML
 from .static import APP_JS
-from .intent_routing import (
+from .intent import (
     RouteStrategy,
-    route_request,
+    recognize_intent,
 )
 from .tool_agent_runner import (
     NO_LOCAL_MODEL_MESSAGE,
@@ -1107,7 +1107,7 @@ async def _run_auto_routed(
 ) -> tuple:
     """3-way agentic routing. Returns (answer, citations, documents, intent, extra).
 
-    `route_request` picks one of {chat, search, tool}, or asks the user when no
+    `recognize_intent` picks one of {chat, search, tool}, or asks the user when no
     signal in the cascade dominates; dispatch is capability-aware and degrades
     gracefully when a required backend (local model vs LLM client) is
     unavailable. `extra["route"]` records the chosen strategy and
@@ -1121,13 +1121,13 @@ async def _run_auto_routed(
         strategy = forced_route
         extra["route_mechanism"] = "user_selected"
     else:
-        decision = route_request(
+        decision = recognize_intent(
             query,
             llm=llm,
             explicit_source=explicit_source,
             settings=app_settings,
-            telemetry=extra,
         )
+        extra.update(decision.metadata)
         if decision.clarification is not None:
             extra["route"] = "clarify"
             extra["clarification"] = {

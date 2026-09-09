@@ -10,6 +10,8 @@ Serving still uses indexes built offline by the `index_builder`. Filter-aware an
 
 ## Intent routing by nearest canonical example
 
+Serving enters through `src.internal.servers.web.intent.recognize_intent`, which returns strategy, clarification, and metadata together. The optional similarity adapter lives in `web/intent/similarity.py`; offline build and evaluation remain in `src/model/pre_training/intents/`. Module labels and composite flags are diagnostics, not a multi-step execution plan. See [request routing](request-routing.md#auto-router-decision-order) for the complete cascade.
+
 **There is no intent training run any more.** The optional three-label (`chat`, `search`, `tool`) request router used to be a small MLP trained on generated examples. It is gone — module, checkpoint format, wordpiece bundle and all. What replaced it compares the incoming request against roughly 300 curated canonical examples and takes the route whose nearest examples are closest. The whole offline workflow is three commands, none of which trains anything:
 
 ```bash
@@ -39,9 +41,9 @@ Each canonical example is encoded once by `intfloat/e5-small-v2` and L2-normaliz
 
 **The prefix contract.** E5 models are trained with instruction prefixes and **degrade silently without them** — no error, no warning, just worse vectors. Every text gets `"query: "`, applied **symmetrically** to canonical anchors and to incoming requests: this is symmetric short-text similarity, not the asymmetric retrieval E5's `"passage: "` prefix is for. The prefix is a property of the encoder, not an argument, so it lives in `MODEL_PREFIXES` in `src/model/pre_training/intents/model.py` and is applied inside `encode_texts` — no call site can forget it. An encoder with no registered prefix raises rather than defaulting to `""`: an unregistered model is far likelier to be one whose prefix nobody looked up than one that genuinely needs none, and guessing wrong is invisible.
 
-**Every index built before this change is invalidated.** Rebuild with command 2 above. What catches a stale index is the **encoder-name check** — `IntentIndex` records the encoder that built it, and both `run_index_evaluation` and `ml_intent.load_intent_index` reject a mismatch by name — **not** a dimension mismatch, because `all-MiniLM-L6-v2` and `e5-small-v2` are **both 384-wide**. A stale index therefore loads, scores, and reports confident, meaningless numbers with no other symptom. That is not hypothetical: it happened once on this branch, and the name check is what turned it into one loud failure naming the rebuild command.
+**Every index built before this change is invalidated.** Rebuild with command 2 above. What catches a stale index is the **encoder-name check** — `IntentIndex` records the encoder that built it, and both `run_index_evaluation` and `web.intent.similarity.load_intent_index` reject a mismatch by name — **not** a dimension mismatch, because `all-MiniLM-L6-v2` and `e5-small-v2` are **both 384-wide**. A stale index therefore loads, scores, and reports confident, meaningless numbers with no other symptom. That is not hypothetical: it happened once on this branch, and the name check is what turned it into one loud failure naming the rebuild command.
 
-`k` (`TOP_K` in `src/model/pre_training/intents/model.py`) is `15`, chosen on the tuning slice rather than inherited — see [`top_k` chosen on the split](#top_k-chosen-on-the-split) below, and `AGENTIC_SEARCH_INTENT_TOP_K` in [Configuration](configuration.md) for the env var. It was an unswept `3` from #511 to #521.
+`k` (`TOP_K` in `src/model/pre_training/intents/model.py`) is `8`, re-selected on the wider tuning instrument — see [`top_k` chosen on the split](#top_k-chosen-on-the-split) below, and `AGENTIC_SEARCH_INTENT_TOP_K` in [Configuration](configuration.md) for the env var. It was an unswept `3` from #511 to #521.
 
 **One** threshold gates the answer:
 
@@ -72,9 +74,7 @@ The split is deterministic in the seed alone (input order is normalized first), 
 
 ### What it scores, and why it is still dark
 
-Both columns are measured against the **current** committed canonical set (304 anchors) and the same eval files, each at its own shipped hyperparameters — e5 at `k=15, min_margin=0.010`, MiniLM at the `k=3, min_margin=0.02` it actually shipped with. **The instrument is not identical**: the reported slice is now the 111-query test slice rather than the 151-query clean set, because 40 clean queries are spent on tuning. Every row below is therefore quoted **on the same slice for both encoders**, re-measuring MiniLM where needed rather than carrying a number across slices.
-
-Unless a row says otherwise, "test slice" means the 111 queries left after the split (**seed 17**, tuning 70 / test 111), and the out-of-scope rows score those 111 against the 24 probes.
+The table records measurements from the current 304-anchor canonical set and earlier evaluation instruments. The current serving settings are `top_k=8`, `min_margin=0.010`, and `min_module_score=0.8215`. Rows naming the 201-query test slice use the wider split (seed 17, tuning 70 / test 201); rows naming clean_151 or the retired 111-query slice are historical and are not directly comparable across instruments. These are recorded benchmark results, not new measurements from the serving-package consolidation.
 
 | Measure | e5-small-v2 (now) | all-MiniLM-L6-v2 (before) |
 |---|---|---|
@@ -95,7 +95,7 @@ Unless a row says otherwise, "test slice" means the 111 queries left after the s
 
 The `1.0000` served accuracy reported before this instrument change was 58 queries on the old slice; on 120 it is `0.9667` (4 wrong). That is the more believable number, and its arrival is the clearest single argument for having widened the instrument. Argmax is the number the decision rule was written against and the only one comparable to the `0.6667` MiniLM figure, which is argmax too; the served pair is what promotion would actually deliver. Both are reported for every slice in `evaluation_report.json`.
 
-**The margin gate abstains hardest exactly where the router is weakest**, which is the behavior you want and is not visible in either headline. Broken out by route on the test slice: `search` remains the weak route at 26/37 argmax, and it is still the route that serves least. Every route now serves with **no errors at all** — the 58 served queries contain zero misroutes. The route whose representation is worst therefore contributes all of the deferrals and none of the mistakes, which is exactly the shape the margin gate is supposed to produce. Abstention is not spread evenly over the slice; it is concentrated on the queries the index genuinely cannot place.
+**The earlier margin-gate breakdown is historical.** On the retired 111-query slice, search scored 26/37 argmax and the 58 served queries had no errors. That pattern motivated measuring per-route deferral, but it must not be read as the result on the wider instrument: the 201-query evaluation above served 120 with four wrong routes. See `evaluation_report.json` for the per-route breakdown of a particular rebuild.
 
 For older context, on the retired clean-151 instrument the previous MLP scored `0.4768`, the production regex cascade `0.4238`, and the majority-class floor `0.3377`. Those are different queries under a different encoder — context, not a like-for-like comparison with the column above.
 
@@ -195,7 +195,7 @@ The direct measurement is starker than the rule. Comparing every decision at `0.
 
 **Why it earned nothing is structural, not a tuning failure.** Under this encoder, in-scope and out-of-scope scores occupy the same narrow band — the ranges overlap, so no floor separates them. Anything far enough from a single route to fail an absolute floor is, by then, close to two routes and already fails the *margin*. The two gates were not complementary; the margin gate subsumed the confidence gate almost entirely.
 
-Removing it is behaviour-preserving to the digit: test-slice accuracy is `0.8159203980099502` before and after, along with every other reported number. `decide()` now takes one threshold instead of two, `route_request` derives one abstention instead of two, and the `model_below_threshold` fallback label is gone — every deferral is now `margin_below_threshold`.
+Removing it is behaviour-preserving to the digit: test-slice accuracy is `0.8159203980099502` before and after, along with every other reported number. `decide()` now has one route-abstention threshold instead of two, `recognize_intent` derives one abstention instead of two, and the `model_below_threshold` fallback label is gone — every deferral is now `margin_below_threshold`.
 
 **A knob that looks like out-of-scope protection but cannot fire is worse than no knob**, because it invites tuning that does nothing and conceals the absence of the control it appears to offer. A future encoder that separates absolute scores cleanly would need it back; the git history has it.
 
@@ -207,7 +207,7 @@ The consequence was that `_emit_modules` returned every well-supported module of
 
 **The rule was registered before the sweep ran** (`docs/superpowers/plans/2026-08-14-intent-module-threshold.md`, committed in its own commit ahead of any measurement): highest module macro-F1 on the **tuning** slice, ties to the lower threshold. The grid is **computed** from that slice's own module-score quantiles at the `top_k` in force, not written down — see [the grid that must not be a constant](#the-grid-that-must-not-be-a-constant).
 
-The sweep at the serving `top_k=15` — tuning numbers, abridged:
+The historical sweep at the then-serving `top_k=15` — tuning numbers, abridged (current defaults are `top_k=8` and `min_module_score=0.8215`):
 
 | `min_module_score` | macro-F1 (tuning) | joint (tuning) | mean modules emitted |
 |---|---|---|---|
@@ -221,7 +221,7 @@ The sweep at the serving `top_k=15` — tuning numbers, abridged:
 
 **Why the rule excluded joint accuracy is visible in that table.** Joint accuracy reaches `0.5000` at both `0.8210` and `0.8396` — but at `0.8396` `mean modules emitted` is exactly `1.00`, meaning emission has collapsed to `_emit_modules`'s top-1 fallback for every query. It ties only because most queries carry a single gold module, so "always guess one" wins an exact-set match on them. Macro-F1 separates the two cleanly (`0.6531` against `0.6107`). Had joint accuracy been the selector, the tie-break to the lower threshold would have saved it here by luck — but at `k=3` the same table peaked at the collapsed setting outright, and it would have shipped.
 
-Held out on the test slice, at the shipped `0.821`:
+Held out on that historical test slice, at the then-shipped `0.821`:
 
 | | before (`0.45`) | after (`0.821`) |
 |---|---|---|
@@ -325,7 +325,7 @@ At `k=15`, leave-one-out reaches `0.7464` and clean_151 accuracy reaches `0.6887
 
 `TOP_K` was `3` from #511 to #521 — an arbitrary constant, never swept for selection. It is now `8`, chosen on the tuning slice by a rule registered before the sweep ran: **highest served accuracy at coverage ≥ `0.60`, ties to higher out-of-scope deferral then to lower `k`.** That is the existing `_select_thresholds` rule extended to a second dimension, not a new one invented for the occasion, and `_select_thresholds` now searches `(top_k, min_margin)` jointly.
 
-**Jointly is the important word.** Raising `k` compresses margins, so a `k` evaluated at the old `min_margin=0.015` is evaluated at the wrong threshold for itself. The pair that won is `k=15, min_margin=0.010`.
+**Jointly is the important word.** Raising `k` compresses margins, so a `k` evaluated at the old `min_margin=0.015` is evaluated at the wrong threshold for itself. The pair that won on the retired 111-query instrument was `k=15, min_margin=0.010`; the wider instrument subsequently selected `k=8` with the same margin. The following tables describe that earlier selection.
 
 Best eligible row per `k` on the **tuning** slice — tuning numbers, not results:
 
@@ -413,7 +413,7 @@ Pre-registered here so a future decision is taken against stated criteria rather
 
 #### Shadow mode
 
-`AGENTIC_SEARCH_INTENT_SHADOW_MODE=true`, with an index configured, scores every auto-routed request and records what the router *would* have decided — then discards it and falls through to the classifier exactly as if no index were configured.
+`AGENTIC_SEARCH_INTENT_SHADOW_MODE=true`, with an index configured, scores requests reaching the similarity step after explicit overrides and deterministic rules, and records what the router *would* have decided — then discards it and falls through to the classifier exactly as if no index were configured.
 
 ```
 route_shadow_intent            the route it would have returned
@@ -447,7 +447,7 @@ The loaded index is cached by resolved path and is never invalidated, so: **rebu
 
 **An index built before the e5 swap must be rebuilt**, or the encoder-name check disables the route on load — deliberately, since both encoders are 384-wide and the alternative is silently meaningless routing.
 
-The e5-small-v2 encoder itself loads lazily on the first auto-routed request, separately from the index, and blocks that request for roughly two seconds while the model loads. This is not the promotion-gate activation checklist above; it is a separate one-time cost the first caller pays. A failing model fetch (missing weights, unreachable HuggingFace) is cached as a failure the same way the index's failed load is: the route disables itself and every later request degrades straight to the LLM classifier instead of retrying the download per request.
+The e5-small-v2 encoder itself loads lazily on the first request that reaches configured similarity routing, separately from the index, and blocks that request for roughly two seconds while the model loads. This is not the promotion-gate activation checklist above; it is a separate one-time cost the first caller pays. A failing model fetch (missing weights, unreachable HuggingFace) is cached as a failure the same way the index's failed load is: the route disables itself and every later request degrades straight to the LLM classifier instead of retrying the download per request.
 
 ### The units trap
 
@@ -459,9 +459,9 @@ The e5-small-v2 encoder itself loads lazily on the first auto-routed request, se
 | all-MiniLM-L6-v2 (cosine) | mean `0.378` | abstain on almost every request |
 | **intfloat/e5-small-v2 (cosine), `k=15`** | **`0.776`–`0.857`, probes `0.767`–`0.829`** | **pass everything, in scope or not** |
 
-A value carried over from either earlier configuration is meaningless. Under e5 the shipped `0.30` is so far below the whole distribution that the confidence gate never fires at all, and no single value can separate in-scope from out-of-scope requests, because the two ranges overlap. The abstention that survives is the margin gate: `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` is re-derived at `0.010` (serving 57 of 111 test-slice queries at `0.9825`). `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` is cosine-scaled the same way and has been re-derived to `0.821`. All three thresholds are now in this encoder's units **at this `top_k`** — and that second qualifier is not decoration: every one of these scales moves with `k` as well as with the encoder, which is why the module grid is [computed rather than written down](#the-grid-that-must-not-be-a-constant).
+These historical distributions were measured at `k=15`; they do not describe the current `k=8` operating point. Under e5, the retired `0.30` confidence floor sat below the distribution and provided almost no additional rejection beyond the margin gate. On the earlier 111-query instrument, margin `0.010` served 57 queries at `0.9825` accuracy, and the module threshold was `0.821`. Current defaults remain margin `0.010`, module score `0.8215`, and `top_k=8`, selected on the wider instrument described above. Confidence has no serving threshold now.
 
-Re-derive rather than reuse — and re-derive on the **tuning slice**, never on the test slice. `evaluation_report.json` carries the full 270-row sweep (5 `top_k` × 6 confidence × 9 margin values) under `threshold_tuning.sweep`, with the winner — `top_k=15, min_margin=0.010`, shipped as the app defaults — under `threshold_tuning.selected`. The sweep's own margin grid was already re-derived for e5's scale (see [above](#what-it-scores-and-why-it-is-still-dark)); a future encoder swap will need the same re-derivation, made and reviewed **before** looking at what it does to the headline, before the grid can select anything meaningful again.
+Re-derive on the **tuning slice**, never on the test slice. The old 270-row sweep included an absolute confidence floor; that dimension has been removed. `evaluation_report.json` records the current joint `(top_k, min_margin)` sweep under `threshold_tuning.sweep` and its selected settings under `threshold_tuning.selected`. Module thresholds are derived separately at the selected `top_k`. A future encoder swap requires the same review of score units before examining held-out headline results.
 
 `AGENTIC_SEARCH_INTENT_MODEL_PATH` no longer exists. Serving reads `AGENTIC_SEARCH_INTENT_INDEX_PATH`, a directory holding an `index.npz`. Building or evaluating an index never changes a serving setting.
 

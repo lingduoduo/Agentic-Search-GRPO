@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
-import src.internal.servers.web.intent_routing as ir
 from src.context.models import ChatMessage
 from src.internal.configs import AppSettings
-from src.internal.servers.web.intent_routing import (
-    RouteStrategy,
+from src.internal.servers.web.intent import RouteStrategy, recognize_intent
+from src.internal.servers.web.intent import recognizer as ir
+from src.internal.servers.web.intent import similarity
+from src.internal.servers.web.intent.recognizer import classify_route
+from src.internal.servers.web.intent.rules import (
     _regex_route,
     _rule_based_route,
-    classify_route,
-    route_query,
 )
-from src.internal.servers.web.ml_intent import IntentModelDecision
+from src.internal.servers.web.intent.types import IntentModelDecision
 
 
 class _FakeLLM:
@@ -29,6 +33,10 @@ class _FakeLLM:
         return self._reply
 
 
+def _strategy_for(query, **kwargs):
+    return recognize_intent(query, **kwargs).strategy
+
+
 def test_classify_route_uses_deterministic_decoding():
     # The strategy classifier must decode deterministically (temperature 0), so
     # the same query always routes to the same strategy/source run-to-run.
@@ -39,12 +47,12 @@ def test_classify_route_uses_deterministic_decoding():
     assert llm.call_kwargs[0].get("temperature") == 0.0
 
 
-# --- route_query cascade ---
+# --- recognition cascade ---
 
 
 def test_explicit_source_routes_to_search_agent():
     # An explicit source provider is an unambiguous search command.
-    strategy = route_query(
+    strategy = _strategy_for(
         "anything at all",
         llm=_FakeLLM("chat"),
         explicit_source=True,
@@ -52,9 +60,9 @@ def test_explicit_source_routes_to_search_agent():
     assert strategy is RouteStrategy.SEARCH
 
 
-def test_route_query_without_llm_uses_rule_based():
+def test_recognize_intent_without_llm_uses_rule_based():
     # No LLM → rule-based route; a search verb yields SEARCH.
-    strategy = route_query(
+    strategy = _strategy_for(
         "find the latest pricing sheet",
         llm=None,
         explicit_source=False,
@@ -62,9 +70,9 @@ def test_route_query_without_llm_uses_rule_based():
     assert strategy is RouteStrategy.SEARCH
 
 
-def test_route_query_uses_llm_classifier_when_available():
+def test_recognize_intent_uses_llm_classifier_when_available():
     llm = _FakeLLM("tool")
-    strategy = route_query(
+    strategy = _strategy_for(
         "create a Jira ticket for the outage",
         llm=llm,
         explicit_source=False,
@@ -73,20 +81,20 @@ def test_route_query_uses_llm_classifier_when_available():
     assert llm.calls  # the classifier consulted the LLM
 
 
-def test_route_query_bare_lookup_is_search_and_skips_classifier():
+def test_recognize_intent_bare_lookup_is_search_and_skips_classifier():
     # A bare entity/term lookup like "FAISS" is unambiguously a grounded search,
     # so it must NOT reach the (over-eager) LLM classifier that would otherwise
     # send it to chat. Deterministic regardless of the LLM reply.
     llm = _FakeLLM("chat")
-    strategy = route_query("FAISS", llm=llm, explicit_source=False)
+    strategy = _strategy_for("FAISS", llm=llm, explicit_source=False)
     assert strategy is RouteStrategy.SEARCH
     assert llm.calls == []  # classifier was never consulted
 
 
-def test_route_query_descriptive_phrase_still_uses_classifier():
+def test_recognize_intent_descriptive_phrase_still_uses_classifier():
     # A multi-word descriptive phrase is NOT a bare lookup → classifier decides.
     llm = _FakeLLM("chat")
-    strategy = route_query(
+    strategy = _strategy_for(
         "the procurement approval flow",
         llm=llm,
         explicit_source=False,
@@ -135,14 +143,24 @@ def test_classify_route_parses_each_label():
 
 
 def test_classify_route_reports_none_on_garbage():
-    # An unusable response returns None; the caller (route_request) supplies
+    # An unusable response returns None; recognize_intent supplies
     # the chat default, and decides whether that default is a guess.
     assert classify_route("q", _FakeLLM("nonsense reply"))[0] is None
     assert classify_route("q", _FakeLLM(""))[0] is None
 
 
+@pytest.mark.parametrize(
+    "reply", ["not chat; search", "search or tool", "chat, search, tool"]
+)
+def test_classifier_rejects_conflicting_labels(reply):
+    strategy, detail = classify_route("query", _FakeLLM(reply))
+
+    assert strategy is None
+    assert detail == {"raw_label": "unexpected"}
+
+
 def test_bare_lookup_excludes_greetings_and_generative():
-    from src.internal.servers.web.intent_routing import _is_bare_lookup
+    from src.internal.servers.web.intent.rules import _is_bare_lookup
 
     assert _is_bare_lookup("hello") is False
     assert _is_bare_lookup("poem") is False
@@ -151,10 +169,112 @@ def test_bare_lookup_excludes_greetings_and_generative():
     assert _is_bare_lookup("FAISS") is True
 
 
-def test_route_query_greeting_routes_to_chat_without_llm():
+def test_recognize_intent_greeting_routes_to_chat_without_llm():
     # No LLM → rule-based; a bare greeting must NOT short-circuit to SEARCH.
-    strategy = route_query("hello", llm=None, explicit_source=False)
+    strategy = _strategy_for("hello", llm=None, explicit_source=False)
     assert strategy is RouteStrategy.CHAT
+
+
+@pytest.mark.parametrize(
+    "query", ["hi", "HI!", "hello", "hi there", "thanks", "thank you."]
+)
+def test_standalone_greeting_is_chat_without_clarification(query):
+    decision = recognize_intent(query, llm=None, explicit_source=False)
+
+    assert decision.strategy is RouteStrategy.CHAT
+    assert decision.clarification is None
+
+
+@pytest.mark.parametrize(
+    ("query", "classifier_calls"),
+    [("hello world tutorial", 1), ("hi, find the report", 1)],
+)
+def test_greeting_words_inside_requests_do_not_force_chat(query, classifier_calls):
+    llm = _FakeLLM("search")
+
+    decision = recognize_intent(query, llm=llm, explicit_source=False)
+
+    assert decision.strategy is RouteStrategy.SEARCH
+    assert len(llm.calls) == classifier_calls
+
+
+@pytest.mark.parametrize(
+    "first_import",
+    [
+        "src.internal.servers.web.intent",
+        "src.internal.servers.web.intent.similarity",
+    ],
+)
+def test_intent_import_order_does_not_require_encoder_dependencies(first_import):
+    script = textwrap.dedent(
+        f"""
+        import importlib
+        import sys
+
+        class BlockEncoderDependencies:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.split('.')[0] in {{'torch', 'sentence_transformers'}}:
+                    raise ImportError(f'blocked optional dependency: {{fullname}}')
+                return None
+
+        sys.meta_path.insert(0, BlockEncoderDependencies())
+        importlib.import_module({first_import!r})
+        from src.internal.configs import AppSettings
+        from src.internal.servers.web.intent import recognize_intent
+
+        decision = recognize_intent(
+            'hi',
+            llm=None,
+            explicit_source=False,
+            settings=AppSettings(intent_index_path=None),
+        )
+        assert decision.strategy.value == 'chat'
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_omitted_settings_apply_shadow_mode(monkeypatch):
+    settings = AppSettings(intent_shadow_mode=True)
+    monkeypatch.setattr(ir, "load_app_settings", lambda: settings)
+    observed_settings = []
+
+    def _predict(_query, *, settings=None):
+        observed_settings.append(settings)
+        return IntentModelDecision(RouteStrategy.SEARCH, 0.91, 1.5)
+
+    monkeypatch.setattr(similarity, "predict_route", _predict)
+
+    decision = recognize_intent(
+        "the vendor contract renewal terms",
+        llm=_FakeLLM("chat"),
+        explicit_source=False,
+    )
+
+    assert observed_settings == [settings]
+    assert decision.strategy is RouteStrategy.CHAT
+    assert decision.metadata["route_shadow_intent"] == "search"
+    assert decision.metadata["route_mechanism"] == "classifier"
+
+
+def test_omitted_settings_disable_clarification(monkeypatch):
+    monkeypatch.setattr(
+        ir, "load_app_settings", lambda: AppSettings(route_clarification=False)
+    )
+    monkeypatch.setattr(similarity, "predict_route", lambda *_a, **_k: None)
+
+    decision = recognize_intent(
+        "Review the vendor renewal terms", llm=None, explicit_source=False
+    )
+
+    assert decision.strategy is RouteStrategy.CHAT
+    assert decision.clarification is None
+    assert decision.metadata["route_mechanism"] == "heuristic_default"
 
 
 def test_classify_route_ignores_substring_false_positives():
@@ -224,22 +344,22 @@ def test_regex_route_polysemous_verbs_are_not_bare_tool_actions():
     assert _regex_route("schedule a meeting for Friday") is RouteStrategy.TOOL
 
 
-# --- route_query uses _regex_route before the LLM ---
+# --- recognition uses _regex_route before the LLM ---
 
 
-def test_route_query_confident_regex_skips_llm():
+def test_recognize_intent_confident_regex_skips_llm():
     # A confident chat-form question routes deterministically; the LLM classifier
     # is never consulted (previously this misrouted via the classifier).
     llm = _FakeLLM("search")  # would say search if consulted
-    strategy = route_query("What is FAISS?", llm=llm, explicit_source=False)
+    strategy = _strategy_for("What is FAISS?", llm=llm, explicit_source=False)
     assert strategy is RouteStrategy.CHAT
     assert llm.calls == []  # regex decided; classifier not consulted
 
 
-def test_route_query_ambiguous_falls_through_to_llm():
+def test_recognize_intent_ambiguous_falls_through_to_llm():
     # No confident regex match → the LLM classifier decides.
     llm = _FakeLLM("chat")
-    strategy = route_query(
+    strategy = _strategy_for(
         "the procurement approval flow",
         llm=llm,
         explicit_source=False,
@@ -248,10 +368,10 @@ def test_route_query_ambiguous_falls_through_to_llm():
     assert llm.calls  # classifier consulted
 
 
-def test_route_query_currency_conflict_defers_to_llm():
+def test_recognize_intent_currency_conflict_defers_to_llm():
     # A chat-form question with a currency cue is NOT decided by regex.
     llm = _FakeLLM("search")
-    strategy = route_query(
+    strategy = _strategy_for(
         "what is the latest price of NVDA",
         llm=llm,
         explicit_source=False,
@@ -269,7 +389,7 @@ class _SpyLLM:
         return "chat"
 
 
-def test_route_query_uses_model_when_confident(monkeypatch):
+def test_recognize_intent_uses_model_when_confident(monkeypatch):
     settings = AppSettings()
     observed_settings = []
 
@@ -281,9 +401,9 @@ def test_route_query_uses_model_when_confident(monkeypatch):
             latency_ms=1.25,
         )
 
-    monkeypatch.setattr(ir, "predict_route", _predict)
+    monkeypatch.setattr(similarity, "predict_route", _predict)
     llm = _SpyLLM()
-    strategy = ir.route_query(
+    strategy = _strategy_for(
         "the vendor contract renewal terms",
         llm=llm,
         explicit_source=False,
@@ -294,7 +414,7 @@ def test_route_query_uses_model_when_confident(monkeypatch):
     assert observed_settings == [settings]
 
 
-def test_route_query_defers_to_llm_when_the_model_abstains(monkeypatch):
+def test_recognize_intent_defers_to_llm_when_the_model_abstains(monkeypatch):
     """Abstention now arrives on the decision rather than as low confidence.
 
     This asserted a confidence-below-threshold deferral until that gate was
@@ -303,7 +423,7 @@ def test_route_query_defers_to_llm_when_the_model_abstains(monkeypatch):
     way abstention is signalled has moved.
     """
     monkeypatch.setattr(
-        ir,
+        similarity,
         "predict_route",
         lambda q, *, settings=None: IntentModelDecision(
             strategy=RouteStrategy.SEARCH,
@@ -313,7 +433,7 @@ def test_route_query_defers_to_llm_when_the_model_abstains(monkeypatch):
         ),
     )
     llm = _SpyLLM()
-    strategy = ir.route_query(
+    strategy = _strategy_for(
         "the vendor contract renewal terms",
         llm=llm,
         explicit_source=False,
@@ -322,10 +442,10 @@ def test_route_query_defers_to_llm_when_the_model_abstains(monkeypatch):
     assert strategy is RouteStrategy.CHAT  # spy LLM returns "chat"
 
 
-def test_route_query_no_model_is_unchanged(monkeypatch):
-    monkeypatch.setattr(ir, "predict_route", lambda q, *, settings=None: None)
+def test_recognize_intent_no_model_is_unchanged(monkeypatch):
+    monkeypatch.setattr(similarity, "predict_route", lambda q, *, settings=None: None)
     llm = _SpyLLM()
-    strategy = ir.route_query(
+    strategy = _strategy_for(
         "the vendor contract renewal terms",
         llm=llm,
         explicit_source=False,
@@ -345,9 +465,9 @@ def test_regex_still_wins_over_model(monkeypatch):
             latency_ms=1.25,
         )
 
-    monkeypatch.setattr(ir, "predict_route", _spy)
+    monkeypatch.setattr(similarity, "predict_route", _spy)
     # "find X" matches the anchored search regex -> returns before predict_route.
-    strategy = ir.route_query(
+    strategy = _strategy_for(
         "find the Q3 revenue report",
         llm=None,
         explicit_source=False,
@@ -356,7 +476,7 @@ def test_regex_still_wins_over_model(monkeypatch):
     assert called["model"] is False
 
 
-def test_route_query_reports_deciding_mechanism_outside_debug_captures(monkeypatch):
+def test_recognize_intent_reports_mechanism_outside_debug_captures(monkeypatch):
     """Route telemetry must survive without the dev-only request capture.
 
     Request captures only run under AGENTIC_SEARCH_DEBUG_PANELS, so a caller
@@ -364,15 +484,17 @@ def test_route_query_reports_deciding_mechanism_outside_debug_captures(monkeypat
     model errors into training.
     """
     telemetry: dict = {}
-    strategy = route_query(
-        "find the onboarding doc", llm=None, explicit_source=False, telemetry=telemetry
+    decision = recognize_intent(
+        "find the onboarding doc", llm=None, explicit_source=False
     )
+    strategy = decision.strategy
+    telemetry.update(decision.metadata)
 
     assert strategy is RouteStrategy.SEARCH
     assert telemetry["route_mechanism"] == "rules"
 
     monkeypatch.setattr(
-        ir,
+        similarity,
         "predict_route",
         lambda query, settings=None: IntentModelDecision(
             strategy=RouteStrategy.TOOL,
@@ -381,12 +503,13 @@ def test_route_query_reports_deciding_mechanism_outside_debug_captures(monkeypat
         ),
     )
     telemetry = {}
-    strategy = route_query(
+    decision = recognize_intent(
         "vendor renewal terms archive and notes",
         llm=None,
         explicit_source=False,
-        telemetry=telemetry,
     )
+    strategy = decision.strategy
+    telemetry.update(decision.metadata)
 
     assert strategy is RouteStrategy.TOOL
     assert telemetry["route_mechanism"] == "model"
@@ -394,11 +517,11 @@ def test_route_query_reports_deciding_mechanism_outside_debug_captures(monkeypat
     assert telemetry["route_abstained"] is False
 
 
-# --- route_request: guess-site detection ---
+# --- recognize_intent: guess-site detection ---
 
 
-def test_route_request_clarifies_when_heuristic_has_no_signal():
-    decision = ir.route_request(
+def test_recognize_intent_clarifies_when_heuristic_has_no_signal():
+    decision = recognize_intent(
         "Review the vendor renewal terms", llm=None, explicit_source=False
     )
 
@@ -411,8 +534,8 @@ def test_route_request_clarifies_when_heuristic_has_no_signal():
     ]
 
 
-def test_route_request_does_not_clarify_when_heuristic_matches_a_cue():
-    decision = ir.route_request(
+def test_recognize_intent_does_not_clarify_when_heuristic_matches_a_cue():
+    decision = recognize_intent(
         "email the quarterly report to legal", llm=None, explicit_source=False
     )
 
@@ -420,12 +543,12 @@ def test_route_request_does_not_clarify_when_heuristic_matches_a_cue():
     assert decision.clarification is None
 
 
-def test_route_request_clarifies_on_unusable_llm_output():
+def test_recognize_intent_clarifies_on_unusable_llm_output():
     class _GarbageLLM:
         def complete(self, messages, **kwargs):
             return "I'm not sure what you mean"
 
-    decision = ir.route_request(
+    decision = recognize_intent(
         "Review the vendor renewal terms",
         llm=_GarbageLLM(),
         explicit_source=False,
@@ -435,18 +558,18 @@ def test_route_request_clarifies_on_unusable_llm_output():
     assert decision.clarification is not None
 
 
-def test_route_request_never_clarifies_on_a_deterministic_rule():
+def test_recognize_intent_never_clarifies_on_a_deterministic_rule():
     for query in ("find the onboarding checklist", "Explain how FAISS works"):
-        decision = ir.route_request(query, llm=None, explicit_source=False)
+        decision = recognize_intent(query, llm=None, explicit_source=False)
         assert decision.clarification is None
 
 
-def test_route_request_does_not_clarify_on_a_usable_llm_label():
+def test_recognize_intent_does_not_clarify_on_a_usable_llm_label():
     class _UsableLLM:
         def complete(self, messages, **kwargs):
             return "search"
 
-    decision = ir.route_request(
+    decision = recognize_intent(
         "Review the vendor renewal terms", llm=_UsableLLM(), explicit_source=False
     )
 
@@ -454,12 +577,12 @@ def test_route_request_does_not_clarify_on_a_usable_llm_label():
     assert decision.clarification is None
 
 
-def test_route_request_falls_through_to_the_heuristic_when_the_llm_raises():
+def test_recognize_intent_falls_through_to_heuristic_when_llm_raises():
     class _BrokenLLM:
         def complete(self, messages, **kwargs):
             raise RuntimeError("provider down")
 
-    decision = ir.route_request(
+    decision = recognize_intent(
         "email the quarterly report to legal",
         llm=_BrokenLLM(),
         explicit_source=False,
@@ -469,9 +592,9 @@ def test_route_request_falls_through_to_the_heuristic_when_the_llm_raises():
     assert decision.clarification is None
 
 
-def test_route_request_never_clarifies_on_a_confident_model(monkeypatch):
+def test_recognize_intent_never_clarifies_on_a_confident_model(monkeypatch):
     monkeypatch.setattr(
-        ir,
+        similarity,
         "predict_route",
         lambda query, settings=None: IntentModelDecision(
             strategy=RouteStrategy.TOOL,
@@ -480,7 +603,7 @@ def test_route_request_never_clarifies_on_a_confident_model(monkeypatch):
         ),
     )
 
-    decision = ir.route_request(
+    decision = recognize_intent(
         "Review the vendor renewal terms", llm=None, explicit_source=False
     )
 
@@ -488,8 +611,8 @@ def test_route_request_never_clarifies_on_a_confident_model(monkeypatch):
     assert decision.clarification is None
 
 
-def test_route_request_never_clarifies_for_an_explicit_source():
-    decision = ir.route_request(
+def test_recognize_intent_never_clarifies_for_an_explicit_source():
+    decision = recognize_intent(
         "Review the vendor renewal terms", llm=None, explicit_source=True
     )
 
@@ -497,24 +620,26 @@ def test_route_request_never_clarifies_for_an_explicit_source():
     assert decision.clarification is None
 
 
-def test_route_request_returns_chat_without_clarifying_for_an_empty_query():
-    decision = ir.route_request("   ", llm=None, explicit_source=False)
+def test_recognize_intent_returns_chat_without_clarifying_for_empty_query():
+    decision = recognize_intent("   ", llm=None, explicit_source=False)
 
     assert decision.strategy is RouteStrategy.CHAT
     assert decision.clarification is None
 
 
-def test_route_query_answer_is_unchanged_at_every_guess_site():
+def test_recognize_intent_strategy_is_unchanged_at_every_guess_site():
     class _GarbageLLM:
         def complete(self, messages, **kwargs):
             return ""
 
     assert (
-        route_query("Review the vendor renewal terms", llm=None, explicit_source=False)
+        _strategy_for(
+            "Review the vendor renewal terms", llm=None, explicit_source=False
+        )
         is RouteStrategy.CHAT
     )
     assert (
-        route_query(
+        _strategy_for(
             "Review the vendor renewal terms",
             llm=_GarbageLLM(),
             explicit_source=False,
@@ -522,7 +647,7 @@ def test_route_query_answer_is_unchanged_at_every_guess_site():
         is RouteStrategy.CHAT
     )
     assert (
-        route_query(
+        _strategy_for(
             "email the quarterly report to legal", llm=None, explicit_source=False
         )
         is RouteStrategy.TOOL
@@ -531,36 +656,36 @@ def test_route_query_answer_is_unchanged_at_every_guess_site():
 
 def test_route_mechanisms_use_the_documented_vocabulary():
     telemetry: dict = {}
-    ir.route_request(
+    decision = recognize_intent(
         "find the onboarding checklist",
         llm=None,
         explicit_source=False,
-        telemetry=telemetry,
     )
+    telemetry.update(decision.metadata)
     assert telemetry["route_mechanism"] == "rules"
 
     telemetry = {}
-    ir.route_request(
+    decision = recognize_intent(
         "email the quarterly report to legal",
         llm=None,
         explicit_source=False,
-        telemetry=telemetry,
     )
+    telemetry.update(decision.metadata)
     assert telemetry["route_mechanism"] == "heuristic_default"
 
     telemetry = {}
-    ir.route_request(
+    decision = recognize_intent(
         "Review the vendor renewal terms",
         llm=None,
         explicit_source=False,
-        telemetry=telemetry,
     )
+    telemetry.update(decision.metadata)
     assert telemetry["route_mechanism"] == "clarify"
 
 
-def test_route_request_honors_the_clarification_setting():
+def test_recognize_intent_honors_the_clarification_setting():
     settings = AppSettings(route_clarification=False)
-    decision = ir.route_request(
+    decision = recognize_intent(
         "Review the vendor renewal terms",
         llm=None,
         explicit_source=False,

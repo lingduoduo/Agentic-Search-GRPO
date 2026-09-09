@@ -170,7 +170,7 @@ The backend auto-classifies every query and dispatches to the right agent withou
 | `chat` | `AgenticRAGLoop` | Descriptive/conversational questions and generative asks — grounded synthesis |
 | `tool` | `ToolAgentLoop` | Explicit tool use (`search_routing_tool`, custom tools) |
 
-The router is `route_query` (`src/internal/servers/web/intent_routing.py`), dispatched by `_run_auto_routed` in `src/internal/servers/web/app.py`. Its precedence is explicit source, deterministic regex cues, confident learned intent model, deterministic LLM classifier, then rule-based fallback. Bare terms route to `search`; input with no signal at all triggers a clarification question instead of guessing (see [API request routing](request-routing.md#auto-router-decision-order)).
+The router is `recognize_intent` (`src/internal/servers/web/intent/recognizer.py`), dispatched by `_run_auto_routed` in `src/internal/servers/web/app.py`. It returns strategy, clarification, and metadata together. Its precedence is explicit source, deterministic regex cues, optional margin-gated canonical similarity, deterministic LLM classifier, then rule-based fallback. Bare terms route to `search`; input with no signal at all triggers a clarification question instead of guessing (see [API request routing](request-routing.md#auto-router-decision-order)).
 
 ### End-to-end request flow
 
@@ -181,7 +181,7 @@ offline index_builder (corpus.jsonl)
 
 /api/agent or /api/agent/stream
   → query hook + session/history + access filters
-  → explicit mode, or route_query(chat | search | tool)
+  → explicit mode, or recognize_intent(chat | search | tool)
       → chat: AgenticRAGLoop, or the SearchPipeline composition without an LLM
       → tool: ToolAgentLoop, then grounded chat if tools/model are unavailable
       → search: internal retrieval → sufficiency gate

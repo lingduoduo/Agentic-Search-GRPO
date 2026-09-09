@@ -4,9 +4,10 @@ import logging
 
 from src.context.models import ChatMessage
 from src.internal.servers.web import request_capture as rc
-from src.internal.servers.web import intent_routing as ir
-from src.internal.servers.web.intent_routing import route_query
-from src.internal.servers.web.ml_intent import IntentModelDecision
+from src.internal.servers.web.intent import recognize_intent
+from src.internal.servers.web.intent import recognizer as ir
+from src.internal.servers.web.intent import similarity
+from src.internal.servers.web.intent.types import IntentModelDecision
 
 
 class _FakeLLM:
@@ -19,14 +20,18 @@ class _FakeLLM:
         return self.reply
 
 
+def _strategy_for(query, **kwargs):
+    return recognize_intent(query, **kwargs).strategy
+
+
 def _intent_stages():
     return [s for s in rc.active().stages if s.stage == "intent"]
 
 
-def test_route_query_emits_regex_intent_stage():
+def test_recognize_intent_emits_regex_intent_stage():
     token = rc.start_capture("r", "What is FAISS?")
     try:
-        strategy = route_query(
+        strategy = _strategy_for(
             "What is FAISS?",
             llm=_FakeLLM(),
             explicit_source=False,
@@ -40,12 +45,12 @@ def test_route_query_emits_regex_intent_stage():
         rc.reset_capture(token)
 
 
-def test_route_query_emits_classifier_intent_stage_with_detail():
+def test_recognize_intent_emits_classifier_intent_stage_with_detail():
     # A phrase _regex_route defers on → classifier path, preserving only the
     # safe raw label rather than the prompt containing the user's query.
     token = rc.start_capture("r", "the procurement approval flow")
     try:
-        route_query(
+        _strategy_for(
             "the procurement approval flow",
             llm=_FakeLLM(
                 "search — request was private_sentinel procurement approval flow"
@@ -67,7 +72,7 @@ def test_unexpected_classifier_output_is_redacted_from_capture_and_logs(caplog):
     token = rc.start_capture("r", "the private_sentinel procurement approval flow")
     try:
         with caplog.at_level(logging.WARNING, logger=ir.__name__):
-            route_query(
+            _strategy_for(
                 "the private_sentinel procurement approval flow",
                 llm=_FakeLLM(
                     "unrecognized response echoing private_sentinel procurement"
@@ -90,12 +95,14 @@ def test_classifier_exception_message_is_redacted_while_rule_fallback_runs(
         def complete(self, messages: list[ChatMessage], **_) -> str:
             raise RuntimeError("private_sentinel from classifier prompt")
 
-    monkeypatch.setattr(ir, "predict_route", lambda query, *, settings=None: None)
+    monkeypatch.setattr(
+        similarity, "predict_route", lambda query, *, settings=None: None
+    )
     query = "please send an email to Bob"
     token = rc.start_capture("r", query)
     try:
         with caplog.at_level(logging.WARNING, logger=ir.__name__):
-            strategy = route_query(
+            strategy = _strategy_for(
                 query,
                 llm=_FailingLLM(),
                 explicit_source=False,
@@ -112,10 +119,10 @@ def test_classifier_exception_message_is_redacted_while_rule_fallback_runs(
         rc.reset_capture(token)
 
 
-def test_route_query_emits_explicit_source_intent_stage():
+def test_recognize_intent_emits_explicit_source_intent_stage():
     token = rc.start_capture("r", "anything at all")
     try:
-        route_query("anything at all", llm=None, explicit_source=True)
+        _strategy_for("anything at all", llm=None, explicit_source=True)
         stages = _intent_stages()
         assert len(stages) == 1
         assert stages[0].payload["mechanism"] == "explicit_source"
@@ -124,11 +131,11 @@ def test_route_query_emits_explicit_source_intent_stage():
         rc.reset_capture(token)
 
 
-def test_route_query_emits_clarify_intent_stage_without_llm():
+def test_recognize_intent_emits_clarify_intent_stage_without_llm():
     # No LLM and no dominant heuristic cue → a guess, recorded as "clarify".
     token = rc.start_capture("r", "the procurement approval flow")
     try:
-        route_query(
+        _strategy_for(
             "the procurement approval flow",
             llm=None,
             explicit_source=False,
@@ -140,14 +147,14 @@ def test_route_query_emits_clarify_intent_stage_without_llm():
         rc.reset_capture(token)
 
 
-def test_route_query_no_capture_does_not_raise():
+def test_recognize_intent_no_capture_does_not_raise():
     # With no active capture the emit is a silent no-op.
-    route_query("q", llm=_FakeLLM(), explicit_source=False)
+    _strategy_for("q", llm=_FakeLLM(), explicit_source=False)
 
 
 def test_confident_model_records_evaluation_and_final_intent(monkeypatch):
     monkeypatch.setattr(
-        ir,
+        similarity,
         "predict_route",
         lambda query, *, settings=None: IntentModelDecision(
             strategy=ir.RouteStrategy.SEARCH,
@@ -158,7 +165,7 @@ def test_confident_model_records_evaluation_and_final_intent(monkeypatch):
     llm = _FakeLLM()
     token = rc.start_capture("r", "the vendor contract renewal terms")
     try:
-        strategy = route_query(
+        strategy = _strategy_for(
             "the vendor contract renewal terms",
             llm=llm,
             explicit_source=False,
@@ -195,7 +202,7 @@ def test_confident_model_records_evaluation_and_final_intent(monkeypatch):
 
 def test_abstaining_model_records_evaluation_and_classifier_fallback(monkeypatch):
     monkeypatch.setattr(
-        ir,
+        similarity,
         "predict_route",
         # Abstention is now expressed on the decision itself. It used to be
         # inferred from confidence < threshold, and that gate is gone.
@@ -208,7 +215,7 @@ def test_abstaining_model_records_evaluation_and_classifier_fallback(monkeypatch
     )
     token = rc.start_capture("r", "the vendor contract renewal terms")
     try:
-        strategy = route_query(
+        strategy = _strategy_for(
             "the vendor contract renewal terms",
             llm=_FakeLLM(
                 "search — request was private_sentinel vendor contract renewal terms"
@@ -232,10 +239,12 @@ def test_abstaining_model_records_evaluation_and_classifier_fallback(monkeypatch
 
 
 def test_missing_model_does_not_fabricate_prediction_detail(monkeypatch):
-    monkeypatch.setattr(ir, "predict_route", lambda query, *, settings=None: None)
+    monkeypatch.setattr(
+        similarity, "predict_route", lambda query, *, settings=None: None
+    )
     token = rc.start_capture("r", "the vendor contract renewal terms")
     try:
-        route_query(
+        _strategy_for(
             "the vendor contract renewal terms",
             llm=_FakeLLM(),
             explicit_source=False,

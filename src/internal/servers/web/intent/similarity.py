@@ -1,52 +1,31 @@
-"""Lazy adapter: canonical-example index -> RouteStrategy for route_query."""
+"""Lazy canonical-index adapter for serving-time intent recognition."""
 
 from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
 from src.internal.configs import AppSettings, load_app_settings
-from src.internal.servers.web.intent_routing import RouteStrategy
-from src.model.pre_training.intents.model import DEFAULT_ENCODER, encode_texts
+
+from .types import IntentModelDecision, RouteStrategy
 
 logger = logging.getLogger(__name__)
 
 _INTENT_INDEXES: dict[Path, object | None] = {}
+_ROUTE_VALUES = {strategy.value for strategy in RouteStrategy}
 
-_ROUTE_VALUES = {s.value for s in RouteStrategy}
 
+def encode_texts(texts: list[str]):
+    """Load the optional encoder implementation only when prediction needs it."""
+    from src.model.pre_training.intents.model import encode_texts as encode
 
-@dataclass(frozen=True)
-class IntentModelDecision:
-    """A valid route prediction with serving diagnostics.
-
-    ``abstain_reason`` is ``margin_below_threshold`` or ``None``. It was once
-    one of two abstentions; the confidence gate that provided the other was
-    removed after measuring at 3 changed decisions in 416.
-
-    The optional fields default, so a construction without them means "served"
-    — which is what every existing caller and test double intends.
-    """
-
-    strategy: RouteStrategy
-    confidence: float
-    latency_ms: float
-    modules: tuple[str, ...] = ()
-    composite: bool = False
-    margin: float = 0.0
-    abstain_reason: str | None = None
+    return encode(texts)
 
 
 def load_intent_index(settings: AppSettings | None = None) -> object | None:
-    """Load the configured index lazily, caching by resolved path.
-
-    Loading is lazy rather than done at app startup: the web TestClient suite
-    already hangs on lifespan model loads, and routing degrades safely to the
-    LLM classifier while the encoder warms.
-    """
+    """Load and cache the configured canonical index by resolved path."""
     resolved = settings or load_app_settings()
     configured = resolved.intent_index_path
     if configured is None:
@@ -55,14 +34,14 @@ def load_intent_index(settings: AppSettings | None = None) -> object | None:
     if directory in _INTENT_INDEXES:
         return _INTENT_INDEXES[directory]
     try:
-        from src.model.pre_training.intents.model import INDEX_FILENAME, IntentIndex
+        from src.model.pre_training.intents.model import (
+            DEFAULT_ENCODER,
+            INDEX_FILENAME,
+            IntentIndex,
+        )
 
         index = IntentIndex.load(directory / INDEX_FILENAME)
         if index.encoder != DEFAULT_ENCODER:
-            # A dimension mismatch would raise inside index.decide(); a same-
-            # dimension different model (e.g. MiniLM-L6 vs MiniLM-L12, both
-            # 384-d) would not — it would just score silent garbage dot
-            # products. Catch both the same way: fail loudly here, once.
             raise ValueError(
                 f"intent-index built with encoder {index.encoder!r}, "
                 f"serving uses {DEFAULT_ENCODER!r}"
@@ -84,30 +63,7 @@ def load_intent_index(settings: AppSettings | None = None) -> object | None:
 def predict_route(
     query: str, *, settings: AppSettings | None = None
 ) -> IntentModelDecision | None:
-    """Return a route decision, or None when there is nothing to say at all.
-
-    Abstention is not decided here. Margin abstention is reported on the
-    returned decision's ``abstain_reason`` for ``route_request`` to act on, and
-    it ends at the LLM classifier.
-
-    There used to be a second, confidence-based abstention judged by
-    ``route_request`` against a configured floor. That gate was measured to
-    change 3 decisions out of 416 and removed, so the margin is now the only
-    thing that abstains.
-
-    Margin abstention used to return ``None`` after recording its own capture
-    stage, which is why it was invisible to production telemetry: ``None`` is
-    indistinguishable from "no index configured", so ``route_request`` could
-    not tell a deferral from an absent model. Returning the decision makes the
-    reporting single-owner.
-
-    This function records **no** capture stage. ``route_request`` records
-    exactly one per decision; recording here as well would emit two stages with
-    conflicting payloads for any request that abstains.
-
-    ``None`` now means only: no index, an unsupported route, a failed encode, or
-    a confidence outside the valid cosine range.
-    """
+    """Return a typed similarity decision, including any margin abstention."""
     resolved = settings or load_app_settings()
     index = load_intent_index(resolved)
     if index is None:

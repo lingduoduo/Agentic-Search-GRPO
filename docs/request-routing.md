@@ -12,7 +12,7 @@ The pipeline described here is query-time orchestration over indexes produced of
 request
   ├─ mode is set ───────────────→ run that explicit mode
   └─ mode is omitted
-       └─ route_query ──────────→ chat | search | tool | clarify
+       └─ recognize_intent ──────────→ chat | search | tool | clarify
                                    │
                                    ├─ chat → grounded AgenticRAGLoop
                                    ├─ tool → ToolAgentLoop, or grounded chat fallback
@@ -35,7 +35,7 @@ Three separate decisions are involved:
 2. **Source-provider selection** chooses the internal corpus or a web provider.
 3. **Retrieval-backend routing** inside `RetrievalService` chooses sparse, dense, hybrid, graph, and query-transformation behavior.
 
-Changing one axis does not directly change the others. For example, `source_provider=auto` forces the request strategy to `search`, but the internal retrieval service still selects its own configured retrieval backend.
+Changing one axis does not directly change the others. For example, `source_provider=retrieval` forces the request strategy to `search`, while `auto` permits intent recognition. The internal retrieval service still selects its own configured retrieval backend.
 
 Filter-aware and degraded search branches use the shared internal `SearchPipeline` composition:
 
@@ -64,6 +64,7 @@ The JSON body uses `AgentExperienceRequest`:
 | `search_url` | server setting | Retrieval URL override. Honored only when `AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL=true`. |
 | `top_k` | `5` | Requested result count, from 1 through 20. |
 | `source_provider` | `auto` | Source policy: `auto`, `retrieval`, `serpapi`, `google`, `browser`, or `all`. |
+| `route` | omitted | User-selected `chat`, `search`, or `tool` route; bypasses recognition in auto mode. |
 | `mode` | omitted | Explicit dispatch override: `search_tool`, `hybrid_search`, `chat_once`, `chat_loop`, `search_agent`, or `tool_agent`. |
 
 The backend, not the browser client, normally owns service URLs. In production, keep client retrieval URL overrides disabled.
@@ -85,22 +86,26 @@ Explicit policy-agent modes run model **inference** during an API request. They 
 
 ## Auto-router decision order
 
-When `mode` is omitted, `route_query` chooses one strategy. The cascade is intentionally deterministic whenever a high-confidence signal exists:
+When `mode` is omitted and no user-selected `route` is supplied, `recognize_intent` returns a `RouteDecision` containing the strategy, optional clarification, and production metadata. The dispatcher copies that metadata into `hook_metadata`. The cascade is:
 
 1. A non-`auto` `source_provider` is an explicit search request.
-2. High-precision regex cues select a route:
+2. Deterministic rules select a route:
    - action commands such as “send”, “deploy”, or “create a ticket” → `tool`;
    - lookup verbs such as “find”, “search for”, or “retrieve” → `search`;
    - bare one-to-three-word terms such as `RAG`, `GRPO`, or `vector database` → `search`;
-   - conversational or generative starts normally → `chat`.
-3. If configured, a nearest-canonical-example similarity match may select a route when its cosine confidence reaches `AGENTIC_SEARCH_INTENT_MODEL_MIN_CONFIDENCE` (default `0.30`, a cosine similarity rather than a softmax probability; nothing is trained — see [Training and evaluation](training-and-evaluation.md#intent-routing-by-nearest-canonical-example)).
-4. Otherwise an available LLM runs the three-label classifier at temperature 0.
-5. If no LLM exists or classification fails, a heuristic cue is checked with `tool` → `search` → bare lookup → `chat` precedence. When a cue matches, that route is used deterministically.
-6. If no heuristic cue matches at all, the router asks the user which route they meant instead of guessing (see below).
+   - standalone greetings and thanks, such as “hi!” and “thank you” → `chat`;
+   - conversational or generative starts normally → `chat`. A current-information cue such as “latest” defers a chat-form question to the next step.
+3. If an index is configured, canonical-example similarity selects the highest-scoring route when its gap over the runner-up reaches `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`). Each route scores as its top-8 mean cosine similarity. Margin is the only abstention gate; absolute confidence is diagnostic. See [Training and evaluation](training-and-evaluation.md#intent-routing-by-nearest-canonical-example).
+4. An available LLM classifies at temperature 0. A completion must contain exactly one distinct supported whole-word label. A single-label explanation is accepted, but conflicting labels such as “not chat; search” are rejected as `unexpected`.
+5. If no LLM is available or its call raises, the last-resort heuristic checks tool, search, and bare-lookup cues. No signal defaults to chat with clarification. An empty or unusable classifier completion also requests clarification. Set `AGENTIC_SEARCH_ROUTE_CLARIFICATION=false` to return the chat default without the question.
 
-Explicit modes and providers, then regex decisions, precede the learned model. Covered model predictions skip the LLM classifier. Model abstentions fall through to that classifier and then to the rule-based router when needed. Downstream chat, search, and tool execution is unchanged: the model selects only the existing execution family and cannot select a specific tool or bypass authorization.
+Explicit modes, user-selected routes, explicit providers, and deterministic rules take precedence over similarity. A served similarity prediction skips the LLM; an abstention defers to it. The model chooses an execution family, not a specific tool, and cannot bypass authorization. Module labels and the composite-request flag are diagnostics only; no multi-step planner acts on them.
 
-Every auto-routed response carries the deciding mechanism in `hook_metadata.route_mechanism`, alongside `route_predicted_intent`, `route_confidence`, `route_threshold`, `route_abstained`, `route_model_latency_ms`, and `route_fallback_reason` when a model was evaluated. That metadata is persisted with the session, so route outcomes can be joined to the already-stored request and recycled into a corrected training set without logging anything new about the request. Request captures additionally identify the deciding mechanism When the model is evaluated, the `intent_model · evaluation` stage records its predicted intent, confidence, configured threshold, abstention state, and latency. An abstention also records `fallback_reason="model_below_threshold"` on the evaluation and eventual intent stage, so traces expose both the deciding mechanism and fallback reason without adding the raw request to intent telemetry. A missing, unreadable, or incompatible configured artifact disables the similarity route safely; the loader logs a diagnostic and routing continues through the existing fallbacks.
+`AGENTIC_SEARCH_INTENT_SHADOW_MODE=true` records similarity predictions for requests that reach the model step, then discards them and continues to the classifier or heuristic. Explicit overrides and deterministic rules still bypass model evaluation. The recognizer resolves omitted settings once so similarity, shadow mode, and clarification use the same configuration.
+
+Every recognition result includes `route_mechanism`. When similarity produces a decision, metadata also contains `route_predicted_intent`, `route_confidence`, `route_abstained`, `route_model_latency_ms`, `route_modules`, and `route_composite`. A model abstention adds `route_fallback_reason="margin_below_threshold"`; shadow evaluation instead adds `route_fallback_reason="shadow_mode"` and the separate `route_shadow_intent`, `route_shadow_abstained`, and `route_shadow_fallback_reason` fields.
+
+Request captures receive exactly one deciding `intent` stage and at most one `intent_model · evaluation` stage. Model capture includes cosine confidence, margin, modules, composite flag, abstention reason, and latency. Classifier capture retains only a supported label or the `empty`/`unexpected` sentinel, never arbitrary completion text or the query. A missing, unreadable, or incompatible index disables similarity safely and leaves the existing fallbacks available.
 
 `route_mechanism` uses the following vocabulary:
 
@@ -110,11 +115,11 @@ Every auto-routed response carries the deciding mechanism in `hook_metadata.rout
 | `rules` | Deterministic high-precision cues decided |
 | `model` | The canonical-example similarity match was confident |
 | `classifier` | The LLM classifier returned a usable label |
-| `heuristic_default` | Nothing else worked; a heuristic cue decided |
+| `heuristic_default` | A fallback cue decided, or clarification was disabled and chat defaulted |
 | `clarify` | No signal at all; the user was asked |
 | `user_selected` | The user chose the route |
 
-The selected strategy is recorded as `hook_metadata.route`. Capability fallback occurs after classification and may be recorded as `hook_metadata.route_degraded`.
+The selected strategy is recorded as `hook_metadata.route`. Capability fallback occurs after classification and may be recorded as `hook_metadata.route_degraded`; the surfaced `intent` describes what actually ran and can differ from the selected route.
 
 When no step in the cascade has a signal, the router asks instead of guessing.
 The response carries `intent: "clarify"` and a `clarification` object holding a
@@ -223,7 +228,7 @@ Both endpoints ultimately produce `AgentExperienceResponse` data:
 | `citations` | Citation labels corresponding to returned evidence. Empty when no evidence exists. |
 | `documents` | Normalized source documents with ID, citation, title, content, URL, score, and metadata. |
 | `messages` | Persisted conversation messages after the request. |
-| `intent` | Actual surfaced path: `search`, `chat`, or `tool`. |
+| `intent` | Actual surfaced path: `search`, `chat`, `tool`, or `clarify` when asking a routing question. |
 | `hook_metadata` | Mode, selected route, degradation reason, search mode, provider, and hook data when applicable. |
 | `tool_calls` | Structured tool execution records. |
 | `control_flow_trace` | Ordered component/action/status events for agent loops. |
@@ -274,7 +279,7 @@ This is serving-time routing and inference. It is unrelated to GRPO training, ev
 - Browser fallback: `SearchExperienceSettings.browser_search_url` and a running browser-search service. The default `from_app_settings()` construction does not currently populate this URL, so deployments that want browser fallback must wire it into app construction.
 - Local policy modes: `SEARCH_AGENT_MODEL` or `SEARCH_AGENT_SERVER_URL`.
 - Provider-backed chat and classification: `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, and provider credentials.
-- Learned intent route: `AGENTIC_SEARCH_INTENT_INDEX_PATH` plus `AGENTIC_SEARCH_INTENT_MODEL_MIN_CONFIDENCE`.
+- Optional similarity route: `AGENTIC_SEARCH_INTENT_INDEX_PATH`, `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`), `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` (default `0.8215`, diagnostics only), and `AGENTIC_SEARCH_INTENT_TOP_K` (default `8`).
 - Sufficiency threshold: `SEARCH_DIRECT_COS_MIN`.
 
 See [Configuration](configuration.md) for setup details.
@@ -284,8 +289,11 @@ See [Configuration](configuration.md) for setup details.
 | Concern | Code |
 |---|---|
 | API models and shared dispatcher | `src/internal/servers/web/app.py` |
-| Three-way route classifier | `src/internal/servers/web/intent_routing.py` |
-| Learned intent adapter | `src/internal/servers/web/ml_intent.py` |
+| Public intent recognition | `src/internal/servers/web/intent/__init__.py` (`recognize_intent`) |
+| Cascade, classifier, and routing metadata | `src/internal/servers/web/intent/recognizer.py` |
+| Shared decision types and deterministic rules | `src/internal/servers/web/intent/types.py`, `rules.py` |
+| Lazy similarity adapter | `src/internal/servers/web/intent/similarity.py` |
+| Offline index and evaluation | `src/model/pre_training/intents/` |
 | Request capture and inspector metadata | `src/internal/servers/web/request_capture.py` |
 | Search, tool, and RAG loops | `src/agents/` |
 | Web provider services | `src/internal/servers/web_search/` |
