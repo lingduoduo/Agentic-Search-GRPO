@@ -37,7 +37,7 @@
 - Produces: `RouteDecision(strategy: RouteStrategy, clarification: Clarification | None = None, metadata: dict = field(default_factory=dict))`.
 - Internal functions retain useful names (`classify_route`, `predict_route`, `_regex_route`, `_rule_based_route_or_none`) in their owning submodule; there is no compatibility shim for old modules or route_query.
 
-- [ ] **Step 1: Add failing behavioral regressions to the existing router tests.** Reuse the existing `_FakeLLM` and call `ir.route_request` before migration. These tests catch wrong rule branches and label-order guesses:
+- [x] **Step 1: Add failing behavioral regressions to the existing router tests.** Reuse the existing `_FakeLLM` and call `ir.route_request` before migration. These tests catch wrong rule branches and label-order guesses:
 
 ```python
 @pytest.mark.parametrize("query", ["hi", "HI!", "hello", "hi there", "thanks", "thank you."])
@@ -55,7 +55,7 @@ def test_classifier_rejects_conflicting_labels(reply):
 
 Run `/Users/linghuang/miniconda3/bin/python -m pytest -q -o addopts='' tests/unit/servers/web/test_agent_router.py -k 'standalone_greeting or conflicting_labels'`; record the expected assertion failures.
 
-- [ ] **Step 2: Extract types, rules and similarity; implement regression fixes.** Move existing code into the specified owning modules, remove circular imports and retain lazy dependency behavior. Use whole-utterance greeting matching before bare lookup, and exclude greeting terms from bare lookups. Parse distinct labels rather than enum-order matches:
+- [x] **Step 2: Extract types, rules and similarity; implement regression fixes.** Move existing code into the specified owning modules, remove circular imports and retain lazy dependency behavior. Use whole-utterance greeting matching before bare lookup, and exclude greeting terms from bare lookups. Parse distinct labels rather than enum-order matches:
 
 ```python
 labels = {value for value in _LABEL_BY_VALUE if re.search(rf"\b{value}\b", content)}
@@ -68,7 +68,7 @@ else:
 
 Add negative greeting examples (`hello world tutorial`, `hi, find the report`) and retain single-label explanatory completion/redaction tests.
 
-- [ ] **Step 3: Replace the cascade interface and migrate callers.** Resolve settings once, accumulate metadata locally, and return it from every decision path; capture stages stay in the recognizer. Preserve model/shadow/abstention diagnostics and error fallback behavior. Dispatcher integration is:
+- [x] **Step 3: Replace the cascade interface and migrate callers.** Resolve settings once, accumulate metadata locally, and return it from every decision path; capture stages stay in the recognizer. Preserve model/shadow/abstention diagnostics and error fallback behavior. Dispatcher integration is:
 
 ```python
 decision = recognize_intent(query, llm=llm, explicit_source=explicit_source, settings=app_settings)
@@ -77,9 +77,9 @@ extra.update(decision.metadata)
 
 Use `decision.strategy` for consumers previously using `route_query`. Update monkeypatch targets to defining submodules and `app.recognize_intent`. Keep existing test assertions on actual routes, capture counts and metadata. Move `_infer_intent_from_output` to `tool_agent_runner.py` and update its tests. Remove unused strategy-only helpers if they have no production caller, migrating their tests to the result-bearing interface.
 
-- [ ] **Step 4: Verify import and default-settings boundaries.** Add fresh-subprocess import checks in both public-package-first and similarity-first order with a meta-path blocker for torch and sentence_transformers; import success plus a real greeting recognition must be asserted. Add no-explicit-settings tests that patch configuration loading and exercise shadow mode and disabled clarification through the public entry point. Assert returned model metadata agrees with the real capture stage on served, abstained and shadow cases, reusing existing fixtures where possible.
+- [x] **Step 4: Verify import and default-settings boundaries.** Add fresh-subprocess import checks in both public-package-first and similarity-first order with a meta-path blocker for torch and sentence_transformers; import success plus a real greeting recognition must be asserted. Add no-explicit-settings tests that patch configuration loading and exercise shadow mode and disabled clarification through the public entry point. Assert returned model metadata agrees with the real capture stage on served, abstained and shadow cases, reusing existing fixtures where possible.
 
-- [ ] **Step 5: Run tests, lint and commit the runtime change.** Run:
+- [x] **Step 5: Run tests, lint and commit the runtime change.** Run:
 
 ```bash
 /Users/linghuang/miniconda3/bin/python -m pytest -q -o addopts='' tests/unit/test_intent_model.py tests/unit/test_ml_intent.py tests/unit/test_intent_routing.py tests/unit/servers/web/test_agent_router.py tests/unit/servers/web/test_stage_emits_intent.py tests/unit/test_execution_fallbacks.py
@@ -100,7 +100,7 @@ Run the affected web-server suite once after integration, record results and env
 - Consumes: Task 1's public `web.intent.recognize_intent`, returned RouteDecision.metadata, unchanged API response fields and serving settings.
 - Produces: consistent current routing/ownership/configuration documentation. PR creation is performed by the controller after review and validation.
 
-- [ ] **Step 1: Update routing and metadata documentation.** Describe `recognize_intent`, explicit-source semantics (`!= auto` forces search), the margin-only model gate, optional index path, shadow mode, and clarification behavior. Replace the old confidence-gate example with:
+- [x] **Step 1: Update routing and metadata documentation.** Describe `recognize_intent`, explicit-source semantics (`!= auto` forces search), the margin-only model gate, optional index path, shadow mode, and clarification behavior. Replace the old confidence-gate example with:
 
 ```text
 AGENTIC_SEARCH_INTENT_INDEX_PATH=data/intent_index
@@ -111,8 +111,35 @@ AGENTIC_SEARCH_INTENT_TOP_K=8
 
 List existing model/shadow metadata accurately; remove claims about `route_threshold`, `model_below_threshold`, and confidence-floor settings in current serving guidance. Update source-ownership table to the new package. Clarify that selected route and executed intent can differ after degradation.
 
-- [ ] **Step 2: Reconcile current training/evaluation guidance.** Correct present-tense top_k=15 claims to 8 while keeping historical comparisons clearly historical. State that offline CLI/index/data paths remain unchanged and module/composite diagnostics do not invoke a planner. Do not claim any new accuracy measurements. Update live links/references to the relocated adapter/rules.
+- [x] **Step 2: Reconcile current training/evaluation guidance.** Correct present-tense top_k=15 claims to 8 while keeping historical comparisons clearly historical. State that offline CLI/index/data paths remain unchanged and module/composite diagnostics do not invoke a planner. Do not claim any new accuracy measurements. Update live links/references to the relocated adapter/rules.
 
-- [ ] **Step 3: Check links and commit.** Inspect `git diff --check` and all changed Markdown paths/links; no prose-mirroring tests. Commit documentation with `docs(intent): align routing guide with consolidated recognition`.
+- [x] **Step 3: Check links and commit.** Inspect `git diff --check` and all changed Markdown paths/links; no prose-mirroring tests. Commit documentation with `docs(intent): align routing guide with consolidated recognition`.
 
-- [ ] **Step 4: Independent review, verification and PR (controller).** Review Task 1 and Task 2 for spec compliance/code quality, then review the entire branch. Resolve material findings, run appropriate final checks and update this plan with actual results. Push only `refactor/consolidate-intent-recognition` and create a PR against main, using an exact body file containing problem, behavior, spec/plan links and validation limitations. Do not merge.
+- [x] **Step 4: Independent review, verification and PR (controller).** Review Task 1 and Task 2 for spec compliance/code quality, then review the entire branch. Resolve material findings, run appropriate final checks and update this plan with actual results. Push only `refactor/consolidate-intent-recognition` and create a PR against main, using an exact body file containing problem, behavior, spec/plan links and validation limitations. Do not merge.
+
+
+## Execution record
+
+Implemented on `refactor/consolidate-intent-recognition` and published as
+[PR #569](https://github.com/lingduoduo/Agentic-Search-GRPO/pull/569).
+
+- Spec/plan committed before implementation: `191055b0`.
+- Runtime consolidation and regression coverage: `da3b598b`.
+- Current documentation and environment example: `103da14e`.
+- TDD: nine specified regression cases failed before implementation and passed afterward.
+- Targeted runtime/fallback tests: 156 passed. Web-server suite: 302 passed.
+- Full backend unit/regression suite: 3,761 passed, 3 skipped, 39 warnings in 92.84s.
+- The three skipped encoder accuracy/separation/latency checks need a built
+  `data/intent_index/index.npz`; that optional artifact was absent in the isolated worktree.
+- Repository-wide Ruff lint and format checks passed (969 files); changed relative
+  documentation file links and diff whitespace checks passed.
+- Independent whole-branch review approved with no Critical or Important findings.
+  The initial task-review attempt hit a usage limit; another available model
+  completed the final review. Documentation was completed locally.
+- Optional review follow-up: the private `_rule_based_route` defaulting wrapper
+  still has only test callers. It does not provide a public recognition entry
+  point or affect production dispatch; the reviewer classified cleanup as minor.
+
+No encoder, canonical data, index format, or scoring change was made. Historical
+benchmark numbers in documentation are not measurements from this consolidation.
+The PR is open for review; no merge or deployment was performed.
