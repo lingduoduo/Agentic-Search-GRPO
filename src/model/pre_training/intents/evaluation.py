@@ -4,9 +4,9 @@ Reuses the metric functions in ``metrics``: they take prediction records rather
 than a model, so none of it needed to change to score a different kind of model.
 
 The tuning/test split lives here too, immediately above the harness that is its
-only consumer. Three hyperparameters need values — top_k and the two abstention
-thresholds — and choosing any of them on the queries used to report accuracy
-inflates that accuracy. The split spends the cheapest data first: the legacy
+only consumer. Three hyperparameters need values — top_k, the route margin,
+and the diagnostic module-score threshold. Choosing any of them on the queries
+used to report accuracy inflates that accuracy. The split spends the cheapest data first: the legacy
 queries are already contaminated (the canonical set was iterated against them
 during curation), so they are worthless as a gate and free to tune on, which
 preserves the clean queries as an untouched test set.
@@ -23,6 +23,10 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
+
+from src.shared_configs.intent import (
+    DEFAULT_MIN_MODULE_SCORE as _DEFAULT_MIN_MODULE_SCORE,
+)
 
 from .data import fingerprint, load_intent_eval_queries, load_out_of_scope_probes
 from .metrics import (
@@ -246,10 +250,6 @@ _MIN_COVERAGE = 0.60
 # be exactly the fitting this split exists to prevent. Widening it later means
 # re-registering the grid first, then re-running -- never the other way round.
 _SWEEP_TOP_K = (3, 5, 8, 15, 25)
-
-# Mirrors AppSettings.intent_min_module_score's default (src/internal/configs/
-# app_configs.py) so evaluation scores modules with the same bar serving uses.
-_DEFAULT_MIN_MODULE_SCORE = 0.8215
 
 # The module grid is COMPUTED, not written down, because a hardcoded one goes
 # stale twice over: module scores move with the encoder *and* with top_k (a
@@ -721,17 +721,11 @@ def _sweep_top_k(
 ) -> list[dict[str, Any]]:
     """Report-only sweep of TOP_K over the already-built index and encoder.
 
-    Evidence for a later decision, not a selection: TOP_K stays 3 in serving
-    regardless of this table. Draws only on the tuning slice and the
-    out-of-scope probes -- never the test slice, and never hard-40, which is
-    held-out test data by this project's own split (see
-    docs/training-and-evaluation.md) even though it is not drawn from the
-    same clean-query pool. This is the fitting curve for the one
-    hyperparameter this task moved into an automated sweep, and publishing
-    that curve computed on data no hyperparameter is allowed to see would
-    hand test-set fitting straight back to the human reading the report,
-    even though nothing in code selects from it. See the module-level
-    ``_SWEEP_TOP_K`` comment and docs/training-and-evaluation.md.
+    These diagnostic rows use only the tuning slice and tuning probes, never
+    held-out test queries. Selection happens separately in _select_thresholds,
+    which chooses top_k and min_margin jointly. Running an evaluation does not
+    update application settings; promoting a selected pair is an explicit
+    configuration change. See docs/training-and-evaluation.md.
     """
     rows: list[dict[str, Any]] = []
     for top_k in _SWEEP_TOP_K:
@@ -986,12 +980,9 @@ def run_index_evaluation(
 
     report["top_k_sweep"] = {
         "note": (
-            "Report-only, computed on the tuning slice (never test): TOP_K "
-            "stays 3 in serving (unchanged by this sweep). The "
-            "accuracy/abstention trade it exposes -- tuning accuracy rises "
-            "while out-of-scope separation falls as k grows -- should be "
-            "decided once, together with a stronger encoder, not twice. See "
-            "docs/training-and-evaluation.md."
+            "Diagnostic sweep on the tuning slice and tuning probes, never test. "
+            "threshold_tuning selects top_k and min_margin jointly; evaluating "
+            "does not change serving settings. See docs/training-and-evaluation.md."
         ),
         "rows": _sweep_top_k(
             index,

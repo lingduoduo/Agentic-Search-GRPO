@@ -502,7 +502,7 @@ def test_cli_mode_resolves_to_registry_class():
 
 @pytest.mark.parametrize(
     ("top_k", "expected_route", "expected_confidence"),
-    [("1", "search", 1.0), ("4", "chat", 0.8)],
+    [("1", "search", 1.0), ("4", "chat", 0.8), (None, "chat", 0.8)],
 )
 def test_cli_and_web_intent_scoring_parity(
     tmp_path, monkeypatch, top_k, expected_route, expected_confidence
@@ -533,12 +533,10 @@ def test_cli_and_web_intent_scoring_parity(
     IntentIndex(
         examples, np.array(rows, dtype=np.float32), DEFAULT_ENCODER, "sha256:parity"
     ).save(tmp_path / INDEX_FILENAME)
-    settings = configs.load_app_settings(
-        {
-            "AGENTIC_SEARCH_INTENT_INDEX_PATH": str(tmp_path),
-            "AGENTIC_SEARCH_INTENT_TOP_K": top_k,
-        }
-    )
+    env = {"AGENTIC_SEARCH_INTENT_INDEX_PATH": str(tmp_path)}
+    if top_k is not None:
+        env["AGENTIC_SEARCH_INTENT_TOP_K"] = top_k
+    settings = configs.load_app_settings(env)
     monkeypatch.setattr(configs, "load_app_settings", lambda: settings)
     monkeypatch.setattr(similarity, "_INTENT_INDEXES", {})
     _stub_encoder(monkeypatch, [1.0, 0.0, 0.0])

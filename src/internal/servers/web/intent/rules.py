@@ -102,11 +102,6 @@ def _rule_based_route_or_none(query: str) -> RouteStrategy | None:
     return None
 
 
-def _rule_based_route(query: str) -> RouteStrategy:
-    """Return the heuristic route, defaulting to chat."""
-    return _rule_based_route_or_none(query) or RouteStrategy.CHAT
-
-
 def _regex_route(query: str) -> RouteStrategy | None:
     """Return a high-precision deterministic route when one is available."""
     q = query.strip()

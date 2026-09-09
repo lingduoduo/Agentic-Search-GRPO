@@ -291,6 +291,7 @@ See [Configuration](configuration.md) for setup details.
 | API models and shared dispatcher | `src/internal/servers/web/app.py` |
 | Public intent recognition | `src/internal/servers/web/intent/__init__.py` (`recognize_intent`) |
 | Cascade, classifier, and routing metadata | `src/internal/servers/web/intent/recognizer.py` |
+| Shared vocabulary and scoring defaults | `src/shared_configs/intent.py` |
 | Shared decision types and deterministic rules | `src/internal/servers/web/intent/types.py`, `rules.py` |
 | Lazy similarity adapter | `src/internal/servers/web/intent/similarity.py` |
 | Offline index and evaluation | `src/model/pre_training/intents/` |

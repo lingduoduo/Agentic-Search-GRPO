@@ -3,15 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
-
-
-class RouteStrategy(str, Enum):
-    """High-level agent strategy chosen by the entry-point router."""
-
-    CHAT = "chat"
-    SEARCH = "search"
-    TOOL = "tool"
+from src.shared_configs.intent import RouteStrategy as RouteStrategy
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,9 @@ from pathlib import Path
 
 import numpy as np
 
+from src.shared_configs.intent import INTENT_LABELS
+from src.shared_configs.intent import DEFAULT_TOP_K as TOP_K
+
 # ---------------------------------------------------------------------------
 # Taxonomy — the two-level intent taxonomy: three routes, each with its own
 # modules.
@@ -52,7 +55,6 @@ import numpy as np
 # by ``src/internal/servers/web/intent/rules.py``, so the taxonomy describes
 # distinctions the router already makes.
 # ---------------------------------------------------------------------------
-INTENT_LABELS: tuple[str, ...] = ("chat", "search", "tool")
 
 
 @dataclass(frozen=True)
@@ -221,7 +223,6 @@ def encode_texts(
 # ---------------------------------------------------------------------------
 # Index — canonical example vectors and the scoring rules over them.
 # ---------------------------------------------------------------------------
-TOP_K = 8
 MIN_MODULE_SUPPORT = 10
 INDEX_FILENAME = "index.npz"
 
