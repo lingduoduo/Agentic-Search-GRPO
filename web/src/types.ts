@@ -359,10 +359,17 @@ export interface RequestSnapshot {
   stages: StageRecordView[];
 }
 
+/** Which side of the pipeline an eval metric describes; order is display order. */
+export const METRIC_GROUPS = ["retrieval", "generation", "reward", "latency", "other"] as const;
+export type MetricGroup = (typeof METRIC_GROUPS)[number];
+
 export interface EvalResultFile {
   name: string;
   modified: number;
+  /** Every finite number in the file, nested keys dotted. */
   metrics: Record<string, number>;
+  /** The same numbers bucketed by the shared taxonomy; empty groups omitted. */
+  groups?: Partial<Record<MetricGroup, Record<string, number>>>;
 }
 
 /** One row of GET /api/debug/latency — a route's recent-request window. */
@@ -375,6 +382,27 @@ export interface RouteLatencyRow {
   p95_ms: number;
   max_ms: number;
 }
+
+/** Per-stage window from GET /api/debug/latency: requests that used the stage. */
+export interface StageLatency {
+  count: number;
+  p50_ms?: number;
+  p95_ms?: number;
+  max_ms?: number;
+  avg_docs?: number;
+  cache_hit_rate?: number;
+  avg_prompt_tokens?: number;
+  avg_completion_tokens?: number;
+}
+
+export interface RouteLatencyResponse {
+  routes: RouteLatencyRow[];
+  stages?: { retrieval: StageLatency; generation: StageLatency };
+}
+
+export type FeedbackSignal = "thumbs_up" | "thumbs_down";
+/** What a thumbs is about: the sources, the answer, or the turn as a whole. */
+export type FeedbackTarget = "retrieval" | "generation" | "overall";
 
 export interface QueryTransformResult {
   original: string;

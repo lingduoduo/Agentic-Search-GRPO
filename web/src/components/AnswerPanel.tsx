@@ -1,7 +1,8 @@
 import React, { memo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import type { ProgressStep } from "../types";
+import { submitSessionFeedback } from "../api";
+import type { FeedbackSignal, FeedbackTarget, ProgressStep } from "../types";
 
 interface AnswerPanelProps {
   answer: string;
@@ -11,6 +12,85 @@ interface AnswerPanelProps {
   toolCallCount?: number;
   progressSteps?: ProgressStep[];
   completedSteps?: ProgressStep[];
+  /** When set, the answer gets a thumbs bar that posts session feedback. */
+  sessionId?: string | null;
+}
+
+type FeedbackState =
+  | { phase: "idle" }
+  | { phase: "choosing" }
+  | { phase: "sending" }
+  | { phase: "sent" }
+  | { phase: "failed" };
+
+/**
+ * Session-level thumbs. A thumbs-up is posted at once as "overall"; a
+ * thumbs-down first asks whether the sources or the answer were at fault, so
+ * the stored signal can be read apart as a retrieval or a generation complaint.
+ */
+function FeedbackBar({ sessionId }: { sessionId: string }) {
+  const [state, setState] = useState<FeedbackState>({ phase: "idle" });
+
+  const send = async (signal: FeedbackSignal, target: FeedbackTarget) => {
+    setState({ phase: "sending" });
+    try {
+      await submitSessionFeedback(sessionId, signal, target);
+      setState({ phase: "sent" });
+    } catch {
+      setState({ phase: "failed" });
+    }
+  };
+
+  if (state.phase === "sent") {
+    return (
+      <div className="feedback-bar" role="status">
+        Thanks for the feedback.
+      </div>
+    );
+  }
+
+  if (state.phase === "choosing") {
+    return (
+      <div className="feedback-bar" role="group" aria-label="What was off?">
+        <span>What was off?</span>
+        <button type="button" onClick={() => send("thumbs_down", "retrieval")}>
+          Sources
+        </button>
+        <button type="button" onClick={() => send("thumbs_down", "generation")}>
+          Answer
+        </button>
+        <button type="button" onClick={() => send("thumbs_down", "overall")}>
+          Both
+        </button>
+      </div>
+    );
+  }
+
+  const busy = state.phase === "sending";
+  return (
+    <div className="feedback-bar" role="group" aria-label="Rate this answer">
+      <span>Was this helpful?</span>
+      <button
+        type="button"
+        aria-label="Helpful"
+        disabled={busy}
+        onClick={() => send("thumbs_up", "overall")}
+      >
+        👍
+      </button>
+      <button
+        type="button"
+        aria-label="Not helpful"
+        disabled={busy}
+        onClick={() => setState({ phase: "choosing" })}
+      >
+        👎
+      </button>
+      {state.phase === "failed" && (
+        <span className="feedback-bar__error">Couldn't send — try again.</span>
+      )}
+    </div>
+  );
 }
 
 const CITATION_RE = /(\[(?:R\d+Q\d+)?D\d+\])/;
@@ -140,6 +220,7 @@ export const AnswerPanel = memo(function AnswerPanel({
   toolCallCount,
   progressSteps = [],
   completedSteps = [],
+  sessionId,
 }: AnswerPanelProps) {
   if (!answer && progressSteps.length === 0) {
     return (
@@ -161,6 +242,10 @@ export const AnswerPanel = memo(function AnswerPanel({
         />
       )}
       <ReactMarkdown components={markdownComponents}>{answer}</ReactMarkdown>
+      {answer && sessionId && progressSteps.length === 0 && (
+        // Keyed by the answer so a new answer gets a fresh, un-sent bar.
+        <FeedbackBar key={answer} sessionId={sessionId} />
+      )}
     </article>
   );
 });

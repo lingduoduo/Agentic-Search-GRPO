@@ -199,6 +199,47 @@ def test_agent_endpoint_persists_pipeline_stage_summary(monkeypatch, tmp_path):
     store.close()
 
 
+def test_agent_endpoint_persists_stage_metrics_apart_from_pipeline_stages(
+    monkeypatch, tmp_path
+):
+    from src.internal.observability import stage_metrics as sm
+
+    async def fake_run_auto_routed(query, **kwargs):
+        # Stand in for the choke points: one retrieval, one generation.
+        sm.note_retrieval(elapsed_ms=7.0, docs=3)
+        sm.note_generation(elapsed_ms=90.0, prompt_tokens=120, completion_tokens=15)
+        result = _answer_result(query)
+        return (result.answer, result.citations, result.context.documents, "search", {})
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._run_auto_routed", fake_run_auto_routed
+    )
+    stats = sm.StageLatencyStats()
+    monkeypatch.setattr("src.internal.servers.web.app.STAGE_LATENCY", stats)
+    store = AgenticSearchStore(tmp_path / "stage-metrics.sqlite3")
+    app = create_web_app(SearchExperienceSettings(), store=store)
+    response = TestClient(app).post("/api/agent", json={"query": "How do I deploy?"})
+
+    assert response.status_code == 200
+    assistant = store.list_chat_messages(response.json()["session_id"])[-1]
+    assert assistant.metadata["stage_metrics"] == {
+        "retrieval": {"calls": 1, "cache_hits": 0, "ms": 7.0, "docs": 3},
+        "generation": {
+            "calls": 1,
+            "ms": 90.0,
+            "prompt_tokens": 120,
+            "completion_tokens": 15,
+        },
+    }
+    assert "timing" not in assistant.metadata["pipeline_stages"]
+    snap = stats.snapshot()
+    assert snap["retrieval"]["count"] == 1 and snap["retrieval"]["avg_docs"] == 3.0
+    assert snap["generation"]["count"] == 1
+    assert snap["generation"]["avg_completion_tokens"] == 15.0
+    assert sm.current() is None  # the request scope was closed
+    store.close()
+
+
 def test_agent_endpoint_persists_inference_fallback_stage(monkeypatch, tmp_path):
     async def fake_run_auto_routed(query, **kwargs):
         result = _answer_result(query)

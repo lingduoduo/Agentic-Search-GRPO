@@ -2134,10 +2134,19 @@ class AgenticSearchStore:
         parent_feedback_id: str | None = None,
         correlation_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        target: str | None = None,
     ) -> str:
-        """Persist a thumbs_up or thumbs_down signal for a search session."""
+        """Persist a thumbs_up or thumbs_down signal for a search session.
+
+        ``target`` names what the signal is about — ``retrieval`` (the
+        documents), ``generation`` (the answer) or ``overall`` — and is kept in
+        ``metadata_json`` so no schema change is needed; rows without one read
+        as ``overall``.
+        """
         feedback_id = _new_id("fb")
         metadata_json = dict(metadata or {})
+        if target is not None:
+            metadata_json["target"] = target
         if note is not None:
             sanitized_note, note_meta = deterministic_capture(note)
             metadata_json["note"] = sanitized_note
@@ -2192,7 +2201,35 @@ class AgenticSearchStore:
         thumbs_up_rate — fraction of rated queries that got thumbs_up.
         ctr            — fraction of distinct sessions that received any feedback.
         rated_queries  — total feedback rows persisted.
+        by_target      — the same rate and count per feedback target
+                         (retrieval / generation / overall), so "the sources
+                         were bad" and "the answer was bad" are read apart.
         """
+        by_target: dict[str, dict[str, float | int]] = {
+            name: {"rated": 0, "thumbs_up_rate": 0.0}
+            for name in ("retrieval", "generation", "overall")
+        }
+        for target_row in self._conn.execute(
+            """
+            SELECT
+                COALESCE(json_extract(metadata_json, '$.target'), 'overall') AS target,
+                COUNT(*) AS total,
+                SUM(CASE WHEN signal = 'thumbs_up' THEN 1 ELSE 0 END) AS ups
+            FROM retrieval_feedback
+            GROUP BY target
+            """
+        ).fetchall():
+            name = str(target_row["target"])
+            total_for_target = int(target_row["total"])
+            ups_for_target = int(target_row["ups"] or 0)
+            by_target[name] = {
+                "rated": total_for_target,
+                "thumbs_up_rate": (
+                    round(ups_for_target / total_for_target, 4)
+                    if total_for_target
+                    else 0.0
+                ),
+            }
         row = self._conn.execute(
             """
             SELECT
@@ -2217,4 +2254,5 @@ class AgenticSearchStore:
             "thumbs_up_rate": thumbs_up_rate,
             "ctr": ctr,
             "rated_queries": total,
+            "by_target": by_target,
         }

@@ -1977,3 +1977,49 @@ option:disabled,
   font-size: 0.82rem;
   color: var(--muted, #6b7280);
 }
+
+
+/* Answer feedback bar: session thumbs with a sources/answer target. */
+.feedback-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border, #e5e7eb);
+  font-size: 0.875rem;
+  color: var(--muted, #6b7280);
+}
+.feedback-bar button {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.feedback-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.feedback-bar__error {
+  color: var(--danger, #b91c1c);
+}
+
+/* Eval results: one table per metric group, captioned by side. */
+.eval-results__group {
+  margin-top: 0.5rem;
+}
+.eval-results__group caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.25rem;
+}
+.latency-panel__stages {
+  margin-top: 1rem;
+}
+.latency-panel__stages caption {
+  text-align: left;
+  padding-bottom: 0.25rem;
+}

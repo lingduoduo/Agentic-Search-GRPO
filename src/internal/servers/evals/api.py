@@ -88,6 +88,9 @@ class EvalsSummary(BaseModel):
     thumbs_up_rate: float
     ctr: float
     rated_queries: int
+    # Per feedback target (retrieval / generation / overall): rated count and
+    # thumbs-up rate, so retrieval complaints read apart from answer complaints.
+    by_target: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 def create_evals_router(
@@ -194,6 +197,7 @@ def create_evals_router(
             thumbs_up_rate=float(summary["thumbs_up_rate"]),
             ctr=float(summary["ctr"]),
             rated_queries=int(summary["rated_queries"]),
+            by_target=dict(summary.get("by_target", {})),
         )
 
     return router

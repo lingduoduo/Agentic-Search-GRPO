@@ -20,7 +20,34 @@ def _seed_store(db_path: str, rows: list[dict]) -> None:
                 store.add_chat_message(
                     session_id=session_id, role="user", content=r["message"]
                 )
-            store.save_retrieval_feedback(session_id, r["signal"])
+            store.save_retrieval_feedback(
+                session_id, r["signal"], target=r.get("target")
+            )
+
+
+def test_target_reaches_the_example_metadata(tmp_path):
+    db = str(tmp_path / "test.sqlite3")
+    _seed_store(
+        db,
+        [
+            {
+                "session_id": "s1",
+                "signal": "thumbs_down",
+                "message": "Q1",
+                "target": "retrieval",
+            },
+            {"session_id": "s2", "signal": "thumbs_up", "message": "Q2"},
+        ],
+    )
+    examples = sorted(
+        load_feedback_examples(db, min_ratings=1), key=lambda e: e.question
+    )
+    assert examples[0].metadata == {
+        "human_signal": -1.0,
+        "human_signal_target": "retrieval",
+    }
+    # A row recorded before targets existed reads as "overall".
+    assert examples[1].metadata["human_signal_target"] == "overall"
 
 
 def test_thumbs_up_sets_positive_signal(tmp_path):

@@ -418,7 +418,45 @@ def test_write_summary_json(tmp_path):
         "exact_match": 0.66,
         "contains_match": 1.0,
         "avg_reward": 0.5,
+        "avg_reward_retrieval": None,
+        "avg_reward_generation": None,
     }
+
+
+@patch(
+    "src.model.post_training.eval.bamboogle.load_bamboogle", return_value=_FAKE_DATASET
+)
+def test_summary_splits_the_reward_by_side(mock_load, tmp_path):
+    """The reward's retrieval side and generation side are averaged apart, so
+    a change in avg_reward can be attributed to the documents or the answer."""
+
+    class _Agent:
+        def invoke(self, state: dict) -> MagicMock:
+            r = MagicMock()
+            r.answer = "Paris"
+            del r.metadata
+            return r
+
+    class _RewardFn:
+        def reward_components(self, *, output, ground_truth, judge_fn):
+            return {
+                "correctness": 0.5,  # generation side
+                "citation_support": 0.1,  # generation side
+                "search_quality": 0.2,  # retrieval side
+                "retriever_cost": -0.1,  # retrieval side
+                "total": 0.7,
+            }
+
+    from src.model.post_training.eval.bamboogle import evaluate_bamboogle
+
+    summary, _ = evaluate_bamboogle(
+        _Agent(), limit=2, output_path=None, verbose=False, reward_fn=_RewardFn()
+    )
+    assert summary.avg_reward == pytest.approx(0.7)
+    assert summary.avg_reward_retrieval == pytest.approx(0.1)
+    assert summary.avg_reward_generation == pytest.approx(0.6)
+    assert "retrieval side  : 0.1000" in str(summary)
+    assert "generation side : 0.6000" in str(summary)
 
 
 @patch(

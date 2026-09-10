@@ -817,17 +817,24 @@ def load_feedback_examples(
     Each returned example has:
         question     = first user message in the session
         ground_truth = ""  (human signal replaces correctness supervision)
-        metadata     = {"human_signal": +1.0 | -1.0}
+        metadata     = {"human_signal": +1.0 | -1.0,
+                        "human_signal_target": "retrieval" | "generation" | "overall"}
+
+    ``human_signal_target`` says what the rater was judging (rows recorded
+    before targets existed read as ``"overall"``), so a trainer can weight the
+    retrieval side and the generation side of the reward apart.
 
     Sessions without chat messages are skipped.
     Raises ValueError if fewer than min_ratings rated sessions are found.
     """
+    import json as _json
+
     from src.internal.db import AgenticSearchStore
 
     examples: list[PromptTrainingExample] = []
     with AgenticSearchStore(str(db_path)) as store:
         rows = store._conn.execute(
-            "SELECT session_id, signal FROM retrieval_feedback"
+            "SELECT session_id, signal, metadata_json FROM retrieval_feedback"
         ).fetchall()
         for row in rows:
             session_id = row["session_id"]
@@ -840,11 +847,21 @@ def load_feedback_examples(
             first_user = next((m.content for m in messages if m.role == "user"), None)
             if not first_user:
                 continue
+            try:
+                row_metadata = _json.loads(row["metadata_json"] or "{}")
+            except (TypeError, ValueError):
+                row_metadata = {}
+            target = (
+                row_metadata.get("target") if isinstance(row_metadata, dict) else None
+            )
             examples.append(
                 PromptTrainingExample(
                     question=first_user,
                     ground_truth="",
-                    metadata={"human_signal": signal},
+                    metadata={
+                        "human_signal": signal,
+                        "human_signal_target": target or "overall",
+                    },
                 )
             )
 

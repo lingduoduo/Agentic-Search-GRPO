@@ -130,6 +130,8 @@ from .tool_agent_runner import (
     _run_tool_agent,
 )
 from src.internal.cache.serving import configure_serving_cache, reset_serving_cache
+from src.internal.observability import stage_metrics as _stage_metrics
+from src.internal.observability.stage_metrics import STAGE_LATENCY
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +421,11 @@ def _register_routers(
     from src.internal.servers.retrieval.feedback_router import create_feedback_router
 
     app.include_router(create_feedback_router(db))
+
+    # --- Process telemetry (admin) ---
+    from src.internal.servers.web.metrics_router import create_metrics_router
+
+    app.include_router(create_metrics_router(db, settings))
 
     # --- Memory ---
     from src.internal.memory.router import create_memory_router
@@ -742,6 +749,11 @@ def _finalize_response(
     }
     if trace_views:
         metadata["control_flow_trace"] = [view.model_dump() for view in trace_views]
+    stage_metrics = _stage_metrics.current()
+    if stage_metrics is not None:
+        # Retrieval time/docs and generation time/tokens for this turn, kept
+        # apart so a slow or bad turn can be attributed to one side.
+        metadata["stage_metrics"] = stage_metrics.snapshot()
     _capture.record_pipeline_stages(pipeline_stages)
     _capture.record_stage(
         "final",
@@ -1566,6 +1578,10 @@ def create_web_app(
             if capture_on and settings.debug_panels
             else None
         )
+        # Always on, unlike the capture: the retrieval/generation split every
+        # path's choke points write into, persisted with the turn and rolled
+        # into the per-stage window /api/admin/metrics reads.
+        stage_token = _stage_metrics.start_request()
 
         try:
             try:
@@ -1860,6 +1876,7 @@ def create_web_app(
                 mode=mode,
             )
         finally:
+            STAGE_LATENCY.record(_stage_metrics.finish_request(stage_token))
             cap = _capture.active()
             if cap is not None:
                 cap.finish()

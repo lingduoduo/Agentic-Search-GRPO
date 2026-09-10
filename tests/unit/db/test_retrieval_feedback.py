@@ -34,6 +34,16 @@ def test_empty_summary_returns_zeros():
     assert summary["rated_queries"] == 0
 
 
+def test_rows_without_a_target_read_as_overall():
+    db = _store()
+    db.save_retrieval_feedback("s1", "thumbs_up")  # legacy row, no target
+    db.save_retrieval_feedback("s2", "thumbs_down", target="retrieval")
+    by_target = db.get_feedback_summary()["by_target"]
+    assert by_target["overall"] == {"rated": 1, "thumbs_up_rate": 1.0}
+    assert by_target["retrieval"] == {"rated": 1, "thumbs_up_rate": 0.0}
+    assert by_target["generation"] == {"rated": 0, "thumbs_up_rate": 0.0}
+
+
 def test_ctr_uses_distinct_sessions():
     db = _store()
     # One session with multiple ratings — still counts as 1 rated session
