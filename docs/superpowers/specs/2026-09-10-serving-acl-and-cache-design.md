@@ -63,18 +63,21 @@ function:
 def acl_allows(metadata: dict | None, filters: dict | None) -> bool
 ```
 
-No filters, no `access_acl` in the filters, or no declared `metadata["acl"]`
-→ allowed. Otherwise allowed iff the declared ACL (str or list) intersects
-`access_acl`. This is `demo.py::_allowed_by_acl` with the `document["metadata"]`
-lookup moved to the caller; `demo.py` keeps `_allowed_by_acl` as a one-line
-wrapper so `hybrid.py` and the tests are unchanged.
+No filters, no `access_acl` in the filters, or no declared ACL → allowed.
+Otherwise allowed iff the declared ACL intersects `access_acl`. The declared
+ACL is read from `metadata["acl"]` and `metadata["tags"]["acl"]` (str or list),
+exactly as `SearchFilters._metadata_acl_values` does. This is
+`demo.py::_allowed_by_acl` with the `document["metadata"]` lookup moved to the
+caller plus the `tags.acl` source it lacked; `demo.py` keeps `_allowed_by_acl`
+as a one-line wrapper so `hybrid.py` and the tests are unchanged.
 
 `backends/local.py::_apply_filters` pops `access_acl` and applies
 `acl_allows`; the remaining keys keep the metadata-equality semantics. The
 local backend flattens unknown corpus keys into `RetrievalResult.metadata`, so
-a corpus document with `"metadata": {"acl": [...]}` arrives as
-`metadata["metadata"]["acl"]`; the backend reads the nested dict when present,
-so both the `with_access_metadata` shape and a top-level `"acl"` key work.
+a corpus document with `"metadata": {"acl": [...]}` (the shape
+`metadata_with_acl` produces) arrives as `metadata["metadata"]["acl"]`; the
+backend reads the nested dict when it carries an ACL, so both that shape and a
+top-level `"acl"` key work.
 
 `SearchClientRetrievalStage.retrieve` filters the returned candidates with
 `acl_allows(result.metadata, filters)` before building the `CandidateSet`.
@@ -109,9 +112,10 @@ lifespan never turns it on, and one that does turns it off again.
 | `RerankHTTPRankingStage.rank` (`src/internal/search/stages.py`) | `("rerank", url, query, top_k-or-None, tuple(contents))` | the server's ranked list |
 
 `SearchClient.retrieve` looks each query up, posts only the misses in one
-request, and merges. Cached values are re-materialised on every hit (raw
-dicts → new `SearchResult`s), so a caller mutating a result never poisons the
-cache. Values that are empty or contain an error page are not cached: an empty
+request, and merges; it always returns one row per query, logging a warning
+when the server answered with a different number of rows. Cached values are
+deep-copied on every hit and store, so a caller mutating a result (including a
+nested metadata value) never poisons the cache. Values that are empty or contain an error page are not cached: an empty
 web result usually means a transient provider failure, and empty retrieval is
 cheap to recompute.
 

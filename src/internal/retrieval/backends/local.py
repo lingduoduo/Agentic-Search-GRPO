@@ -50,12 +50,12 @@ def _acl_metadata(result: RetrievalResult) -> dict:
     """The dict that carries the document's declared ``acl``.
 
     ``_row_to_result`` flattens every non-standard corpus key into
-    ``metadata``, so a document written by ``with_access_metadata`` (``{"metadata":
-    {"acl": [...]}}``) arrives nested one level down, while a corpus with a
-    top-level ``"acl"`` key arrives flat. Accept both.
+    ``metadata``, so a document whose metadata came from ``metadata_with_acl``
+    (``{"metadata": {"acl": [...]}}``) arrives nested one level down, while a
+    corpus with a top-level ``"acl"`` key arrives flat. Accept both.
     """
     nested = result.metadata.get("metadata")
-    if isinstance(nested, dict) and "acl" in nested:
+    if isinstance(nested, dict) and nested.get("acl"):
         return nested
     return result.metadata
 

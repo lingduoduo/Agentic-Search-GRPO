@@ -28,7 +28,14 @@ def serp_calls(monkeypatch) -> list:
             return [SearchPage(error="rate limited")]
         if query == "nothing":
             return []
-        return [SearchPage(title=query, summary="s", url=f"https://{query}")]
+        return [
+            SearchPage(
+                title=query,
+                summary="s",
+                url=f"https://{query}",
+                metadata={"tags": ["fresh"]},
+            )
+        ]
 
     monkeypatch.setattr("src.internal.tools.search.serpapi_search", _fake_serpapi)
     return calls
@@ -43,6 +50,14 @@ def test_repeat_web_lookup_is_served_from_cache(serp_calls, cache):
     second = _search("faiss", page_size=3)
     assert serp_calls == [("faiss", 1, 3)]
     assert [p.url for p in second] == [p.url for p in first] == ["https://faiss"]
+
+
+def test_mutating_a_page_cannot_poison_later_hits(serp_calls, cache):
+    first = _search("faiss")
+    first[0].metadata["tags"].append("stale")  # SearchPage is frozen; dict is not
+    second = _search("faiss")
+    assert len(serp_calls) == 1
+    assert second[0].metadata == {"tags": ["fresh"]}
 
 
 def test_page_and_page_size_are_part_of_the_key(serp_calls, cache):

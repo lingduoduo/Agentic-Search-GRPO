@@ -21,12 +21,15 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from urllib.parse import urlparse, urlunparse
 
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
+
+logger = logging.getLogger(__name__)
 
 
 class _LazyAiohttp:
@@ -148,6 +151,15 @@ class SearchClient:
             rows = data.get("result", data.get("results", []))
             if rows and isinstance(rows[0], dict):
                 rows = [rows]
+            if len(rows) != len(missing):
+                # Never silently drop a query's evidence: queries without a
+                # row get an empty list below, and the gap is logged.
+                logger.warning(
+                    "SearchClient.retrieve: %s returned %d rows for %d queries",
+                    self.config.url,
+                    len(rows),
+                    len(missing),
+                )
             for index, row in zip(missing, rows):
                 rows_by_index[index] = row
                 # Empty rows are cheap to recompute and may be a transient miss.

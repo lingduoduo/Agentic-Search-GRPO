@@ -31,6 +31,13 @@ def test_disjoint_acl_denies():
     assert not acl_allows({"acl": "user:b"}, {"access_acl": ["user:a"]})
 
 
+def test_tags_acl_counts_like_search_filters_matches():
+    # SearchFilters.matches also reads metadata["tags"]["acl"]; so must this.
+    assert not acl_allows({"tags": {"acl": ["user:b"]}}, {"access_acl": ["user:a"]})
+    assert acl_allows({"tags": {"acl": "user:a"}}, {"access_acl": ["user:a"]})
+    assert acl_allows({"tags": {"other": "x"}}, {"access_acl": ["user:a"]})
+
+
 def test_demo_server_wrapper_reads_document_metadata():
     from src.internal.servers.retrieval.demo import _allowed_by_acl
 

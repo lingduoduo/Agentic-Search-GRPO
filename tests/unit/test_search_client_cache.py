@@ -42,7 +42,16 @@ class _FakeSession:
         rows = [
             []
             if q in self._empty_for
-            else [{"document": {"title": q, "contents": f"body of {q}"}, "score": 1.0}]
+            else [
+                {
+                    "document": {
+                        "title": q,
+                        "contents": f"body of {q}",
+                        "metadata": {"acl": ["public"]},
+                    },
+                    "score": 1.0,
+                }
+            ]
             for q in json["queries"]
         ]
         return _FakeResponse({"results": rows})
@@ -82,8 +91,35 @@ def test_repeat_is_served_without_a_post(posts, cache):
     second = _run(client.retrieve(["a"], topk=3, filters={"access_acl": ["public"]}))
     assert len(posts) == 1
     assert [r.title for r in second[0]] == [r.title for r in first[0]] == ["a"]
-    # A hit is a fresh object; mutating it cannot poison later hits.
-    assert second[0][0] is not first[0][0]
+
+
+def test_mutating_a_result_cannot_poison_later_hits(posts, cache):
+    client = _client()
+    first = _run(client.retrieve(["a"]))
+    first[0][0].metadata["acl"].append("user:mallory")
+    second = _run(client.retrieve(["a"]))
+    second[0][0].metadata["acl"].append("user:eve")
+    third = _run(client.retrieve(["a"]))
+    assert len(posts) == 1
+    assert second[0][0].metadata["acl"] == ["public", "user:eve"]
+    assert third[0][0].metadata["acl"] == ["public"]
+
+
+def test_short_server_response_is_padded_and_logged(monkeypatch, cache, caplog):
+    class _ShortSession(_FakeSession):
+        def post(self, url, json):
+            self._posts.append(json)
+            return _FakeResponse({"results": [[{"document": {"title": "only"}}]]})
+
+    posts: list = []
+    monkeypatch.setattr(
+        "src.context.retrieval.client.aiohttp.ClientSession",
+        lambda *, timeout: _ShortSession(posts),
+    )
+    with caplog.at_level("WARNING", logger="src.context.retrieval.client"):
+        rows = _run(_client().retrieve(["a", "b"]))
+    assert [len(row) for row in rows] == [1, 0]
+    assert "returned 1 rows for 2 queries" in caplog.text
 
 
 def test_different_filters_miss(posts, cache):

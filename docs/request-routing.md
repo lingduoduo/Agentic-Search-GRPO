@@ -193,7 +193,7 @@ backend:
 | Direct / degraded search | `_enforce_access` on the returned documents |
 | `SearchAgentLoop` | inside the loop, before the documents enter the model's context |
 | Tool agent's corpus `search` | in the tool, which is built per request and carries the caller's filters |
-| `SearchPipeline` via `SearchClientRetrievalStage` | in the stage, on the candidates the server returned |
+| `SearchClientRetrievalStage` (a `SearchPipeline` stage; no route is wired to it today) | in the stage, on the candidates the server returned |
 
 Filters are also sent to the retrieval server, and all three bundled servers
 (`demo.py`, `hybrid.py`, and `server.py`'s `RetrievalService`) honour them — but

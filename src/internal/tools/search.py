@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import parse_qsl
 from urllib.parse import urlencode
@@ -283,14 +284,14 @@ async def search_tool(
         )
     # Web providers are slow and rate-limited; repeats within the TTL are served
     # from the process-local serving cache. They carry no ACL, so the key is
-    # just the lookup itself. Hits are copied so a caller mutating a page
-    # cannot poison later hits.
+    # just the lookup itself. Hits are deep-copied so a caller mutating a page
+    # (or a nested value in its metadata) cannot poison later hits.
     cache = serving_cache()
     cache_key = ("web", provider, query, page, page_size)
     if cache is not None:
         hit = cache.get(cache_key)
         if hit is not None:
-            return [replace(p, metadata=dict(p.metadata)) for p in hit]
+            return copy.deepcopy(hit)
     if provider == "google":
         pages = await google_custom_search(
             query,
@@ -314,7 +315,7 @@ async def search_tool(
     # Never cache an empty or failed lookup: for a web provider that is usually
     # a transient failure, and pinning it for the TTL would hide the recovery.
     if cache is not None and pages and not any(p.error for p in pages):
-        cache.set(cache_key, [replace(p, metadata=dict(p.metadata)) for p in pages])
+        cache.set(cache_key, copy.deepcopy(pages))
     return pages
 
 
