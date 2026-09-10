@@ -500,7 +500,8 @@ RERANKER_PROVIDER=local RERANKER_USE_ONNX=true RERANKER_MODEL=BAAI/bge-reranker-
 python -m src.internal.retrieval.eval_runner \
   --dataset data/eval/qa_pairs.jsonl --top_k 10 \
   --reranker local --reranker_model BAAI/bge-reranker-v2-m3 \
-  --compare-baseline --slo-ms 200
+  --compare-baseline --slo-ms 200 \
+  --output data/eval/retrieval_metrics.json   # also written here; the Dev Console reads data/eval/*.json
 
 # Output JSON:
 # { "retrieval":  {"ndcg@10": 0.48, "mrr": 0.63},
@@ -541,6 +542,10 @@ curl -s -X POST http://localhost:8001/internal/optimize/fusion-weights \
   -H "Authorization: Bearer $TOKEN"
 # → {"w_sparse": 0.38, "w_dense": 0.62}
 ```
+
+Both tuning endpoints score against labelled QA pairs (never user feedback)
+and **return** the tuned values; nothing persists them and nothing loads them
+at startup. Apply a result by setting the corresponding env vars yourself.
 
 **Tune HNSW ef_search for a recall target:**
 ```bash

@@ -22,56 +22,56 @@
 
 **Files:** create `src/internal/observability/metric_taxonomy.py`, `tests/unit/observability/test_metric_taxonomy.py`.
 
-- [ ] Tests: exemplars per group; parent-path disambiguation; `flatten_metrics` filtering and depth; `group_metrics` omits empties.
-- [ ] Implement.
+- [x] Tests: exemplars per group; parent-path disambiguation; `flatten_metrics` filtering and depth; `group_metrics` omits empties.
+- [x] Implement.
 
 ### Task 2: Eval results endpoint + panel grouping, eval_runner `--output`, dead workers endpoint
 
 **Files:** `src/internal/servers/web/debug_router.py`, `tests/unit/servers/web/test_debug_router.py`, `web/src/types.ts`, `web/src/components/debug/EvalResultsPanel.tsx`, `web/src/components/debug/__tests__/EvalResultsPanel.test.tsx`, `src/internal/retrieval/eval_runner.py`, `tests/unit/retrieval/test_eval_runner.py`.
 
-- [ ] Tests: endpoint returns `groups` and a flattened `metrics` for a Bamboogle summary and a reranked eval_runner file; `--output` writes the printed JSON; the workers endpoint is gone.
-- [ ] Implement; delete `/workers` and its two tests; panel renders one table per group.
+- [x] Tests: endpoint returns `groups` and a flattened `metrics` for a Bamboogle summary and a reranked eval_runner file; `--output` writes the printed JSON; the workers endpoint is gone.
+- [x] Implement; delete `/workers` and its two tests; panel renders one table per group.
 
 ### Task 3: Reward sides + Bamboogle summary
 
 **Files:** `src/model/post_training/reward.py`, `src/model/post_training/eval/bamboogle.py`, `tests/unit/test_reward.py` (or a new `test_reward_sides.py`), `tests/unit/test_bamboogle_eval.py`.
 
-- [ ] Tests: `reward_sides` sums equal dimension sums; summary carries `avg_reward_retrieval` / `avg_reward_generation`, `None` without a reward fn, printed when present.
-- [ ] Implement.
+- [x] Tests: `reward_sides` sums equal dimension sums; summary carries `avg_reward_retrieval` / `avg_reward_generation`, `None` without a reward fn, printed when present.
+- [x] Implement.
 
 ### Task 4: Stage metrics module
 
 **Files:** create `src/internal/observability/stage_metrics.py`, `tests/unit/observability/test_stage_metrics.py`.
 
-- [ ] Tests: no-op outside a request; accumulation; snapshot shape; `StageLatencyStats` percentiles, averages, cache-hit rate; bounded window.
-- [ ] Implement.
+- [x] Tests: no-op outside a request; accumulation; snapshot shape; `StageLatencyStats` percentiles, averages, cache-hit rate; bounded window.
+- [x] Implement.
 
 ### Task 5: Hook the choke points
 
 **Files:** `src/context/retrieval/client.py`, `src/internal/llm/providers.py`, `src/model/serving.py`, `tests/unit/test_search_client_cache.py` (extend), `tests/unit/test_llm_providers*.py` (find the existing provider test), `tests/unit/observability/test_stage_metrics.py`.
 
-- [ ] Tests: `SearchClient.retrieve` notes elapsed/docs and `cache_hit` on a full hit; `complete` notes tokens from `usage`; local `generate` notes token counts.
-- [ ] Implement.
+- [x] Tests: `SearchClient.retrieve` notes elapsed/docs and `cache_hit` on a full hit; `complete` notes tokens from `usage`; local `generate` notes token counts.
+- [x] Implement.
 
 ### Task 6: Request wiring, exposure, admin endpoint
 
 **Files:** `src/internal/servers/web/app.py`, `src/internal/servers/web/request_capture.py` (`pipeline_stage_summary` gains `timing`), create `src/internal/servers/web/metrics_router.py`, `src/internal/servers/web/debug_router.py`, tests under `tests/unit/servers/web/`, `web/src/types.ts`, `web/src/api.ts`, `web/src/components/debug/LatencyPanel.tsx` + test.
 
-- [ ] Tests: a `/api/agent` turn persists `pipeline_stages.timing` and records into `STAGE_LATENCY`; `/api/debug/latency` returns `stages`; `/api/admin/metrics` 401/403 without admin, three sections with; panel renders the stage table.
-- [ ] Implement.
+- [x] Tests: a `/api/agent` turn persists `pipeline_stages.timing` and records into `STAGE_LATENCY`; `/api/debug/latency` returns `stages`; `/api/admin/metrics` 401/403 without admin, three sections with; panel renders the stage table.
+- [x] Implement.
 
 ### Task 7: Feedback target end to end
 
 **Files:** `src/internal/servers/retrieval/feedback_router.py`, `src/internal/db/store.py`, `src/internal/servers/evals/api.py`, `src/model/post_training/data.py`, tests (`test_feedback_router.py`, `db/test_retrieval_feedback.py`, evals tests, `test_feedback_grpo*.py`), `web/src/api.ts`, `web/src/components/AnswerPanel.tsx`, `web/src/pages/AssistPage.tsx`, `web/src/components/__tests__/AnswerPanel.test.tsx`, `web/src/components/__tests__/ConsoleNav.test.tsx`.
 
-- [ ] Tests: `target` validated and persisted; `by_target` rates; loader metadata; panel posts the right pairs and disables; ConsoleNav mock updated.
-- [ ] Implement.
+- [x] Tests: `target` validated and persisted; `by_target` rates; loader metadata; panel posts the right pairs and disables; ConsoleNav mock updated.
+- [x] Implement.
 
 ### Task 8: Docs
 
 **Files:** `docs/configuration.md`, `docs/retrieval.md`, `docs/training-and-evaluation.md`, `docs/api-reference.md` (if it lists admin/debug endpoints).
 
-- [ ] Drop the `FUSION_WEIGHTS_PATH` row; document `target`, `by_target`, `/api/admin/metrics`, `stages`, the eval-results grouping, `reward_sides`, `--output`.
+- [x] Drop the `FUSION_WEIGHTS_PATH` row; document `target`, `by_target`, `/api/admin/metrics`, `stages`, the eval-results grouping, `reward_sides`, `--output`.
 
 ### Task 9: Verify and ship
 

@@ -139,9 +139,21 @@ deleted; it also means "not yours".
 ```bash
 curl -s -X POST http://localhost:7860/api/feedback \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "sess-123", "signal": "thumbs_up"}'
+  -d '{"session_id": "sess-123", "signal": "thumbs_down", "target": "retrieval"}'
 # → {"ok": true}
 ```
+
+`target` is `retrieval` (the sources were wrong), `generation` (the answer was
+wrong given the sources) or `overall` (default). The answer panel's thumbs bar
+posts it; `GET /api/admin/evals/summary` and the training loader read it back
+apart (`by_target`, `metadata["human_signal_target"]`).
+
+**Process telemetry** (`GET /api/admin/metrics`, admin only): the per-route
+latency window, the same recent requests split into their retrieval share
+(ms, docs, cache-hit rate) and generation share (ms, prompt/completion
+tokens), and the feedback summary by target. Recorded in every web process;
+this is the production-reachable read of it. Each assistant turn also carries
+its own split as `metadata.stage_metrics`.
 
 ### Request paths & dispatch
 

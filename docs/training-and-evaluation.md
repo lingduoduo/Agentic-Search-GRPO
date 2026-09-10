@@ -711,6 +711,8 @@ python3 -m examples.run_sft_grpo \
   --grpo_output_dir data/checkpoints/sft_grpo/ --device mps
 ```
 
+Each example's metadata carries `human_signal` (±1.0) and `human_signal_target` — `retrieval`, `generation` or `overall`, whichever the rater chose in the answer panel's thumbs bar (rows recorded before targets existed read as `overall`). The reward still applies one `human_feedback` term; the target is there so a trainer can weight the two sides apart.
+
 `load_feedback_examples` raises if fewer than `--min_ratings` rated sessions exist, so collect feedback first (thumbs in the UI, or `POST /api/feedback`). There is **no HTTP training endpoint** — fine-tuning is offline by design; the only backend endpoint in this loop is `POST /api/feedback` (see [Web Backend API](api-reference.md#web-backend-api)).
 
 ### Reward components
@@ -753,6 +755,8 @@ Scores are cached by `(answer, gold)` — GRPO scores G rollouts per prompt agai
 There is still no *trained* reward model; that remains a separate design.
 
 **Four reward dimensions** — `reward_components()` also groups every term into four subtotals via `REWARD_DIMENSIONS`, emitted as `dim_correctness`, `dim_citation_support`, `dim_retrieval_quality`, `dim_search_efficiency` (and available directly via `reward_dimensions()` or the pure `group_reward_components(components)`). Pre-scale, so `sum(dims) == terminal_reward + shaping_total == total / reward_scale`. The rollup is purely additive — no weight, preset, or `total` formula changed.
+
+**Two sides** — `reward_sides(components)` rolls those four up one more level into what the documents earned (`retrieval` = `retrieval_quality` + `search_efficiency`) and what the answer earned (`generation` = `correctness` + `citation_support`), again additively. The Bamboogle summary reports `avg_reward_retrieval` and `avg_reward_generation` beside `avg_reward`, so a reward change can be attributed to the retriever or the generator. Two dimension members are known to sit on the wrong side of that line (`format_reward` under `citation_support`; the three answer-emission penalties under `retrieval_quality`); moving them would change `dim_*` outputs and is left as a separate decision.
 
 **GRPO** — `score_prompt_group` scores G rollouts for one prompt and normalises within-group advantages. `compute_grpo_outcome_advantage` computes `reward_i - mean(group)` for a flat rewards list. See `src/model/post_training/grpo/algorithms.py`.
 
