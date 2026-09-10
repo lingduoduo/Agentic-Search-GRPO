@@ -83,6 +83,6 @@
 
 ### Task 10: Verify and ship
 
-- [ ] `ruff check . --fix && ruff format .`; full `pytest` green (note the pre-existing intent p95 latency bar if it trips).
-- [ ] Independent code review of the whole branch; fix findings.
-- [ ] Push, open PR with spec + plan.
+- [x] `ruff check . --fix && ruff format .`; full `pytest` green (3796 passed, 9 skipped on the first run; rerun after the review fixes).
+- [x] Independent code review of the whole branch; fix findings (tags.acl in the shared rule, short-response warning, deep-copied hits pinned by three-lookup tests, unwired-stage note in the routing doc).
+- [x] Push, open PR with spec + plan.

@@ -56,8 +56,11 @@ def test_mutating_a_page_cannot_poison_later_hits(serp_calls, cache):
     first = _search("faiss")
     first[0].metadata["tags"].append("stale")  # SearchPage is frozen; dict is not
     second = _search("faiss")
+    second[0].metadata["tags"].append("staler")  # a hit must be a copy too
+    third = _search("faiss")
     assert len(serp_calls) == 1
-    assert second[0].metadata == {"tags": ["fresh"]}
+    assert second[0].metadata == {"tags": ["fresh", "staler"]}
+    assert third[0].metadata == {"tags": ["fresh"]}
 
 
 def test_page_and_page_size_are_part_of_the_key(serp_calls, cache):
