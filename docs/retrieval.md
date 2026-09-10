@@ -280,6 +280,33 @@ server this way, because both bundled servers honouring `access_acl` would
 otherwise make that script pass even with the web layer's enforcement removed.
 Default off; no shipped entry point sets it.
 
+All three bundled retrieval servers apply the same ACL rule,
+`src/internal/retrieval/acl.py::acl_allows`: the request's `access_acl` must
+intersect the document's declared `acl`, and a document that declares none is
+public. `demo.py` and `hybrid.py` apply it per document; `server.py` applies it
+inside the `RetrievalService` local backend, where every other filter key is a
+metadata equality test.
+
+### Serving cache
+
+The web app keeps one process-local TTL cache
+(`src/internal/cache/serving.py`) in front of the three request-path calls
+that dominate latency. No Redis is involved; it is configured by the web
+app's lifespan from `AGENTIC_SEARCH_SEARCH_CACHE_TTL` (default `300` s, `0`
+disables) and cleared on shutdown, so a CLI or test process that never starts
+the web app caches nothing.
+
+| Call | Key | Not cached when |
+|---|---|---|
+| `SearchClient.retrieve` (every `retrieval`-provider caller) | server URL, query, `topk`, serialised filters — per query in a batch; only the misses are posted | the row is empty |
+| `search_tool` for `google` / `serpapi` / `serper` | provider, query, page, page size | the result is empty or contains an error page |
+| `RerankHTTPRankingStage` | rerank URL, query, `top_k`, the candidate texts | the ranked list is empty |
+
+The serialised access filters are part of the retrieval key, so callers with
+different ACLs never share an entry, and every call site still enforces the ACL
+on what it gets back — a hit is checked exactly as a miss is. Hits are copied
+before they are returned, so a caller mutating a result cannot poison later hits.
+
 **Build indexes:**
 
 ```bash

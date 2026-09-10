@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from src.internal.retrieval.acl import acl_allows
 from src.internal.servers.app import (
     add_host_port_args,
     create_base_app,
@@ -108,23 +109,8 @@ class RetrieveRequest(BaseModel):
 
 
 def _allowed_by_acl(document: dict, filters: dict | None) -> bool:
-    """Whether *document* is readable under *filters*.
-
-    A document that declares no ACL is public, matching
-    ``SearchFilters.matches``. Kept local so the retrieval servers stay free of
-    web-layer imports.
-    """
-    if not filters:
-        return True
-    allowed = filters.get("access_acl")
-    if not allowed:
-        return True
-    declared = (document.get("metadata") or {}).get("acl")
-    if not declared:
-        return True
-    if isinstance(declared, str):
-        declared = [declared]
-    return bool(set(declared) & set(allowed))
+    """Whether *document* is readable under *filters* (see ``acl_allows``)."""
+    return acl_allows(document.get("metadata"), filters)
 
 
 def create_app(retriever: TfidfRetriever, *, ignore_acl: bool = False):
