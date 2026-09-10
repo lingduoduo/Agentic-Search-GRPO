@@ -75,6 +75,6 @@
 
 ### Task 9: Verify and ship
 
-- [ ] `ruff check . --fix && ruff format .`; full `pytest`; `cd web && npm run test:ci`.
-- [ ] Independent review of the whole branch; fix findings.
-- [ ] Push, open PR with spec + plan.
+- [x] `ruff check . --fix && ruff format .`; full `pytest`; `cd web && npm run test:ci`.
+- [x] Independent review of the whole branch; fix findings (answer-vs-auxiliary LLM split, accumulator lock, taxonomy edge cases, feedback-bar Cancel + key, coverage caveats documented).
+- [x] Push, open PR with spec + plan.
