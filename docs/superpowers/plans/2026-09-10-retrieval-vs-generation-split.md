@@ -55,9 +55,9 @@
 
 ### Task 6: Request wiring, exposure, admin endpoint
 
-**Files:** `src/internal/servers/web/app.py`, `src/internal/servers/web/request_capture.py` (`pipeline_stage_summary` gains `timing`), create `src/internal/servers/web/metrics_router.py`, `src/internal/servers/web/debug_router.py`, tests under `tests/unit/servers/web/`, `web/src/types.ts`, `web/src/api.ts`, `web/src/components/debug/LatencyPanel.tsx` + test.
+**Files:** `src/internal/servers/web/app.py` (the turn's split is persisted as `metadata.stage_metrics`, a sibling of `pipeline_stages`, whose exact shape existing tests pin), create `src/internal/servers/web/metrics_router.py`, `src/internal/servers/web/debug_router.py`, tests under `tests/unit/servers/web/`, `web/src/types.ts`, `web/src/api.ts`, `web/src/components/debug/LatencyPanel.tsx` + test.
 
-- [x] Tests: a `/api/agent` turn persists `pipeline_stages.timing` and records into `STAGE_LATENCY`; `/api/debug/latency` returns `stages`; `/api/admin/metrics` 401/403 without admin, three sections with; panel renders the stage table.
+- [x] Tests: a `/api/agent` turn persists `metadata.stage_metrics` and records into `STAGE_LATENCY`; `/api/debug/latency` returns `stages`; `/api/admin/metrics` 401 without admin, three sections with; panel renders the stage table.
 - [x] Implement.
 
 ### Task 7: Feedback target end to end
