@@ -59,6 +59,7 @@ Routing configuration spans separate capabilities:
 | `AGENTIC_SEARCH_ROUTE_CLARIFICATION` | Ask the user which route was meant when no step in the cascade has a signal; `true` by default. Set `false` to always choose a route, as before. |
 | `SEARCH_DIRECT_COS_MIN` | Semantic threshold for accepting internal evidence without external fallback |
 | `AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL` | Allows a request body to override the server-owned retrieval URL; development only |
+| `AGENTIC_SEARCH_SEARCH_CACHE_TTL` | Seconds a retrieval row, web-provider page or rerank score stays in the web app's process-local serving cache; defaults to `300`, `0` disables it. No Redis involved. See [Serving cache](retrieval.md#serving-cache) |
 
 `source_provider=auto` applies the sequential provider order to auto-routed search. Signing in narrows what that search returns rather than selecting a different path. Explicit modes and explicit providers retain their own execution contracts. See [API request routing](request-routing.md).
 

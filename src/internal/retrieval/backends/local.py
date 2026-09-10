@@ -9,6 +9,7 @@ from src.internal.document_index.retrieval import (
     SparseRetrieverConfig,
 )
 
+from ..acl import acl_allows
 from .base import RetrievalBackend, RetrievalResult
 
 
@@ -45,14 +46,36 @@ def _row_to_result(row: dict) -> RetrievalResult:
     )
 
 
+def _acl_metadata(result: RetrievalResult) -> dict:
+    """The dict that carries the document's declared ``acl``.
+
+    ``_row_to_result`` flattens every non-standard corpus key into
+    ``metadata``, so a document whose metadata came from ``metadata_with_acl``
+    (``{"metadata": {"acl": [...]}}``) arrives nested one level down, while a
+    corpus with a top-level ``"acl"`` key arrives flat. Accept both.
+    """
+    nested = result.metadata.get("metadata")
+    if isinstance(nested, dict) and nested.get("acl"):
+        return nested
+    return result.metadata
+
+
 def _apply_filters(
     results: list[RetrievalResult], filters: dict | None
 ) -> list[RetrievalResult]:
-    """Post-hoc metadata filter. Pyserini has no native filter support."""
+    """Post-hoc filter. Pyserini has no native filter support.
+
+    ``access_acl`` uses the shared ACL rule (intersect with the declared ACL;
+    undeclared is public). Every other key is a metadata equality test.
+    """
     if not filters:
         return results
+    equality = {k: v for k, v in filters.items() if k != "access_acl"}
     return [
-        r for r in results if all(r.metadata.get(k) == v for k, v in filters.items())
+        r
+        for r in results
+        if acl_allows(_acl_metadata(r), filters)
+        and all(r.metadata.get(k) == v for k, v in equality.items())
     ]
 
 

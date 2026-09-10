@@ -129,6 +129,7 @@ from .tool_agent_runner import (
     ToolCallView,
     _run_tool_agent,
 )
+from src.internal.cache.serving import configure_serving_cache, reset_serving_cache
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,9 @@ class SearchExperienceSettings:
     # shared default_user bucket. Off by default: the CLI is documented as
     # working unauthenticated for local research use.
     memory_require_auth: bool = False
+    # Seconds a retrieval row, web-provider page or rerank score stays in the
+    # process-local serving cache. 0 disables it. The lifespan configures it.
+    search_cache_ttl: int = 300
 
     @classmethod
     def from_app_settings(
@@ -173,6 +177,7 @@ class SearchExperienceSettings:
             allow_client_search_url=_flag("AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL"),
             debug_panels=_flag("AGENTIC_SEARCH_DEBUG_PANELS"),
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
+            search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
 
@@ -1366,9 +1371,14 @@ def create_web_app(
             gate_embedder()  # warm the direct-gate e5 model (no-op when SEMANTIC=0)
         except Exception:
             logger.exception("direct-gate: embedder warmup failed")
+        # Process-local cache behind SearchClient.retrieve, the web providers in
+        # search_tool, and RerankHTTPRankingStage. Owned here so nothing is
+        # cached in a process that never started the web app.
+        configure_serving_cache(settings.search_cache_ttl)
         try:
             yield
         finally:
+            reset_serving_cache()
             if owns_store:
                 db.close()
 

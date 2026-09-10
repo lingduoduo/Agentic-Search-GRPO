@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from urllib.parse import urlunsplit
 
 from ...context.search import SearchResult
 from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohttp
+from ..cache.serving import serving_cache
 from .base import FunctionTool, Tool, ToolEffect, ToolSchema
 from .html_text import _html_to_text
 
@@ -276,27 +278,45 @@ async def search_tool(
             fetch_url=fetch_url,
             filters=filters,
         )
+    if provider not in ("google", "serpapi", "serper"):
+        raise ValueError(
+            "provider must be 'retrieval', 'google', 'serpapi', or 'serper'"
+        )
+    # Web providers are slow and rate-limited; repeats within the TTL are served
+    # from the process-local serving cache. They carry no ACL, so the key is
+    # just the lookup itself. Hits are deep-copied so a caller mutating a page
+    # (or a nested value in its metadata) cannot poison later hits.
+    cache = serving_cache()
+    cache_key = ("web", provider, query, page, page_size)
+    if cache is not None:
+        hit = cache.get(cache_key)
+        if hit is not None:
+            return copy.deepcopy(hit)
     if provider == "google":
-        return await google_custom_search(
+        pages = await google_custom_search(
             query,
             page=page,
             page_size=page_size,
             timeout_seconds=timeout_seconds,
         )
-    if provider == "serpapi":
-        return await serpapi_search(
+    elif provider == "serpapi":
+        pages = await serpapi_search(
             query,
             page=page,
             page_size=page_size,
             timeout_seconds=timeout_seconds,
         )
-    if provider == "serper":
-        return await serper_dev_search(
+    else:
+        pages = await serper_dev_search(
             query,
             page_size=page_size,
             timeout_seconds=timeout_seconds,
         )
-    raise ValueError("provider must be 'retrieval', 'google', 'serpapi', or 'serper'")
+    # Never cache an empty or failed lookup: for a web provider that is usually
+    # a transient failure, and pinning it for the TTL would hide the recovery.
+    if cache is not None and pages and not any(p.error for p in pages):
+        cache.set(cache_key, copy.deepcopy(pages))
+    return pages
 
 
 def _pages_are_usable(pages: list[SearchPage]) -> bool:

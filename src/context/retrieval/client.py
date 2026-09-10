@@ -19,11 +19,17 @@ SearchResult.from_api_item handles all three shapes.
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from urllib.parse import urlparse, urlunparse
 
 from src.context.search import SearchResult
+from src.internal.cache.serving import serving_cache
+
+logger = logging.getLogger(__name__)
 
 
 class _LazyAiohttp:
@@ -111,19 +117,58 @@ class SearchClient:
 
         Raises RuntimeError after max_retries exhausted.
         Uses exponential backoff between retries.
+
+        Repeats within the serving cache's TTL are served per query without a
+        request; only the misses are posted. The serialised ``filters`` are
+        part of the key, so two callers with different access filters never
+        share an entry — and every caller still enforces on what it gets back,
+        so a hit is checked exactly as a miss is.
         """
-        payload = {
-            "queries": queries,
-            "topk": topk or self.config.topk,
-            "return_scores": True,
-        }
-        if filters:
-            payload["filters"] = filters
-        data = await self._post_json(self.config.url, payload, "retrieve")
-        rows = data.get("result", data.get("results", []))
-        if rows and isinstance(rows[0], dict):
-            rows = [rows]
-        return [[SearchResult.from_api_item(item) for item in row] for row in rows]
+        topk = topk or self.config.topk
+        cache = serving_cache()
+        filters_key = (
+            json.dumps(filters, sort_keys=True, default=str) if filters else ""
+        )
+        keys = [("retrieve", self.config.url, q, topk, filters_key) for q in queries]
+        rows_by_index: dict[int, list[dict]] = {}
+        if cache is not None:
+            for index, key in enumerate(keys):
+                hit = cache.get(key)
+                if hit is not None:
+                    # A fresh copy per hit: from_api_item shares nested dicts
+                    # with the row, and a caller may mutate what it gets.
+                    rows_by_index[index] = copy.deepcopy(hit)
+        missing = [i for i in range(len(queries)) if i not in rows_by_index]
+        if missing:
+            payload = {
+                "queries": [queries[i] for i in missing],
+                "topk": topk,
+                "return_scores": True,
+            }
+            if filters:
+                payload["filters"] = filters
+            data = await self._post_json(self.config.url, payload, "retrieve")
+            rows = data.get("result", data.get("results", []))
+            if rows and isinstance(rows[0], dict):
+                rows = [rows]
+            if len(rows) != len(missing):
+                # Never silently drop a query's evidence: queries without a
+                # row get an empty list below, and the gap is logged.
+                logger.warning(
+                    "SearchClient.retrieve: %s returned %d rows for %d queries",
+                    self.config.url,
+                    len(rows),
+                    len(missing),
+                )
+            for index, row in zip(missing, rows):
+                rows_by_index[index] = row
+                # Empty rows are cheap to recompute and may be a transient miss.
+                if cache is not None and row:
+                    cache.set(keys[index], copy.deepcopy(row))
+        return [
+            [SearchResult.from_api_item(item) for item in rows_by_index.get(i, [])]
+            for i in range(len(queries))
+        ]
 
     async def retrieve_one(
         self,

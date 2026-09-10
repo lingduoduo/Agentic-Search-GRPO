@@ -193,12 +193,17 @@ backend:
 | Direct / degraded search | `_enforce_access` on the returned documents |
 | `SearchAgentLoop` | inside the loop, before the documents enter the model's context |
 | Tool agent's corpus `search` | in the tool, which is built per request and carries the caller's filters |
+| `SearchClientRetrievalStage` (a `SearchPipeline` stage; no route is wired to it today) | in the stage, on the candidates the server returned |
 
-Filters are also sent to the retrieval server, and the bundled `demo.py` and
-`hybrid.py` honour them — but that is defense in depth. A third-party backend may
-ignore the field, so the web layer enforces regardless. Documents that declare no
-ACL are public. External web providers receive no internal ACL object; web results
-carry no ACL to filter on.
+Filters are also sent to the retrieval server, and all three bundled servers
+(`demo.py`, `hybrid.py`, and `server.py`'s `RetrievalService`) honour them — but
+that is defense in depth. A third-party backend may ignore the field, so the web
+layer enforces regardless. Documents that declare no ACL are public. External web
+providers receive no internal ACL object; web results carry no ACL to filter on.
+
+The [serving cache](retrieval.md#serving-cache) keys retrieval rows by the
+serialised filters, so a cache hit never crosses an ACL boundary, and the
+enforcement above runs on hits and misses alike.
 
 Enforcement is a post-filter: a restricted document still consumes retrieval
 bandwidth and can displace an accessible one from `top_k` before being dropped.

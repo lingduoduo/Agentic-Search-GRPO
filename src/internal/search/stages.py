@@ -12,6 +12,8 @@ import httpx
 from src.context import ChatMessage, ContextDocument
 from src.context.retrieval.client import SearchClient
 from src.context.search import SearchResult
+from src.internal.cache.serving import serving_cache
+from src.internal.retrieval.acl import acl_allows
 from src.internal.search.process_search_query import weighted_reciprocal_rank_fusion
 
 if TYPE_CHECKING:
@@ -63,6 +65,10 @@ class SearchClientRetrievalStage:
         top_k: int,
     ) -> CandidateSet:
         results = await self._client.retrieve_one(query, topk=top_k, filters=filters)
+        # Enforce, don't just forward: the bundled servers honour access_acl but
+        # a third-party backend need not, and these candidates go on to the
+        # model's context.
+        results = [r for r in results if acl_allows(r.metadata, filters)]
         return CandidateSet(
             query=query,
             candidates=results,
@@ -153,17 +159,31 @@ class RerankHTTPRankingStage:
             }
             for index, candidate in enumerate(candidates.candidates)
         ]
-        async with httpx.AsyncClient() as client:
-            body = {
-                "queries": [query],
-                "documents": [payloads],
-                "return_scores": True,
-            }
-            if self._send_top_k:
-                body["rerank_topk"] = top_k
-            response = await client.post(self._url, json=body, timeout=self._timeout)
-            response.raise_for_status()
-        ranked = response.json()["result"][0]
+        cache = serving_cache()
+        cache_key = (
+            "rerank",
+            self._url,
+            query,
+            top_k if self._send_top_k else None,
+            tuple(p["document"]["contents"] for p in payloads),
+        )
+        ranked = cache.get(cache_key) if cache is not None else None
+        if ranked is None:
+            async with httpx.AsyncClient() as client:
+                body = {
+                    "queries": [query],
+                    "documents": [payloads],
+                    "return_scores": True,
+                }
+                if self._send_top_k:
+                    body["rerank_topk"] = top_k
+                response = await client.post(
+                    self._url, json=body, timeout=self._timeout
+                )
+                response.raise_for_status()
+            ranked = response.json()["result"][0]
+            if cache is not None and ranked:
+                cache.set(cache_key, ranked)
         evidence = []
         for position, item in enumerate(ranked, 1):
             try:
