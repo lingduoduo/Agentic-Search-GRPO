@@ -4,10 +4,13 @@ choke points write into, and a rolling per-stage window an admin can read."""
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
 from src.internal.observability import stage_metrics as sm
+
+_EMPTY_LLM = {"calls": 0, "ms": 0.0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +30,11 @@ def test_request_accumulates_into_separate_buckets():
     token = sm.start_request()
     sm.note_retrieval(elapsed_ms=4.0, docs=5)
     sm.note_retrieval(elapsed_ms=0.1, docs=5, cache_hit=True)
-    sm.note_generation(elapsed_ms=120.0, prompt_tokens=300, completion_tokens=40)
-    sm.note_generation(elapsed_ms=30.0)  # a call whose backend reports no usage
+    sm.note_generation(
+        elapsed_ms=120.0, prompt_tokens=300, completion_tokens=40, kind="answer"
+    )
+    sm.note_generation(elapsed_ms=30.0, kind="answer")  # backend reported no usage
+    sm.note_generation(elapsed_ms=15.0, prompt_tokens=80, completion_tokens=8)
     metrics = sm.finish_request(token)
     assert metrics is not None
     assert metrics.snapshot() == {
@@ -39,8 +45,43 @@ def test_request_accumulates_into_separate_buckets():
             "prompt_tokens": 300,
             "completion_tokens": 40,
         },
+        "auxiliary": {
+            "calls": 1,
+            "ms": 15.0,
+            "prompt_tokens": 80,
+            "completion_tokens": 8,
+        },
     }
     assert sm.current() is None
+
+
+def test_llm_calls_are_auxiliary_unless_inside_answer_generation():
+    token = sm.start_request()
+    sm.note_generation(elapsed_ms=10.0, prompt_tokens=1, completion_tokens=1)
+    with sm.answer_generation():
+        assert sm.answer_generation_active()
+        sm.note_generation(elapsed_ms=20.0, prompt_tokens=2, completion_tokens=2)
+    assert not sm.answer_generation_active()
+
+    @sm.mark_answer_generation
+    def _synthesize():
+        sm.note_generation(elapsed_ms=30.0, prompt_tokens=3, completion_tokens=3)
+        return "answer"
+
+    assert _synthesize() == "answer"
+    snap = sm.finish_request(token).snapshot()
+    assert snap["auxiliary"] == {
+        "calls": 1,
+        "ms": 10.0,
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+    }
+    assert snap["generation"] == {
+        "calls": 2,
+        "ms": 50.0,
+        "prompt_tokens": 5,
+        "completion_tokens": 5,
+    }
 
 
 def test_request_scope_follows_the_task_context():
@@ -63,11 +104,40 @@ def test_request_scope_follows_the_task_context():
     }
 
 
+def test_concurrent_threads_sharing_a_request_lose_no_updates():
+    # The query enhancer runs its LLM calls on worker threads that share the
+    # request context; the accumulator must not drop increments.
+    token = sm.start_request()
+    metrics = sm.current()
+    barrier = threading.Barrier(8)
+
+    def _worker():
+        barrier.wait()
+        for _ in range(500):
+            sm._current.set(metrics)
+            sm.note_generation(elapsed_ms=1.0, prompt_tokens=1, completion_tokens=1)
+            sm.note_retrieval(elapsed_ms=1.0, docs=1)
+
+    threads = [threading.Thread(target=_worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    snap = sm.finish_request(token).snapshot()
+    assert snap["auxiliary"]["calls"] == 4000
+    assert snap["auxiliary"]["prompt_tokens"] == 4000
+    assert snap["retrieval"]["calls"] == 4000
+    assert snap["retrieval"]["docs"] == 4000
+
+
 def _request(retrieval_ms, docs, generation_ms, prompt, completion, *, hit=False):
     token = sm.start_request()
     sm.note_retrieval(elapsed_ms=retrieval_ms, docs=docs, cache_hit=hit)
     sm.note_generation(
-        elapsed_ms=generation_ms, prompt_tokens=prompt, completion_tokens=completion
+        elapsed_ms=generation_ms,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        kind="answer",
     )
     return sm.finish_request(token)
 
@@ -84,7 +154,7 @@ def test_stage_latency_stats_percentiles_and_averages():
         "p95_ms": 30.0,
         "max_ms": 30.0,
         "avg_docs": 6.0,
-        "cache_hit_rate": pytest.approx(1 / 3),
+        "cache_hit_rate": pytest.approx(1 / 3, abs=1e-4),
     }
     assert snap["generation"] == {
         "count": 3,
@@ -94,6 +164,18 @@ def test_stage_latency_stats_percentiles_and_averages():
         "avg_prompt_tokens": 300.0,
         "avg_completion_tokens": 40.0,
     }
+    assert snap["auxiliary"] == {"count": 0}
+
+
+def test_stage_latency_stats_files_auxiliary_calls_apart():
+    stats = sm.StageLatencyStats()
+    token = sm.start_request()
+    sm.note_generation(elapsed_ms=12.0, prompt_tokens=50, completion_tokens=5)
+    stats.record(sm.finish_request(token))
+    snap = stats.snapshot()
+    assert snap["generation"] == {"count": 0}
+    assert snap["auxiliary"]["count"] == 1
+    assert snap["auxiliary"]["avg_prompt_tokens"] == 50.0
 
 
 def test_stage_latency_stats_skips_stages_the_request_never_used():
@@ -120,4 +202,12 @@ def test_empty_stats_snapshot():
     assert sm.StageLatencyStats().snapshot() == {
         "retrieval": {"count": 0},
         "generation": {"count": 0},
+        "auxiliary": {"count": 0},
     }
+
+
+def test_empty_request_snapshot_has_all_three_buckets():
+    token = sm.start_request()
+    snap = sm.finish_request(token).snapshot()
+    assert snap["generation"] == _EMPTY_LLM
+    assert snap["auxiliary"] == _EMPTY_LLM

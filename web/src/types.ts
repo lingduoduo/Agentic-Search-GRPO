@@ -395,9 +395,17 @@ export interface StageLatency {
   avg_completion_tokens?: number;
 }
 
+export interface StageLatencyResponse {
+  retrieval: StageLatency;
+  /** Answer synthesis only. */
+  generation: StageLatency;
+  /** Every other LLM call on the way: query transforms, sufficiency, intent. */
+  auxiliary?: StageLatency;
+}
+
 export interface RouteLatencyResponse {
   routes: RouteLatencyRow[];
-  stages?: { retrieval: StageLatency; generation: StageLatency };
+  stages?: StageLatencyResponse;
 }
 
 export type FeedbackSignal = "thumbs_up" | "thumbs_down";

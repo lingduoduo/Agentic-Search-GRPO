@@ -49,10 +49,18 @@ def test_retrieval_metrics(name):
         "citation_validity",
         "generation.exact_match",
         "generation.n",
+        # Bare classification names belong to whichever block names them.
+        "generation.recall",
+        "generation.precision",
     ],
 )
 def test_generation_metrics(name):
     assert classify_metric(name) == "generation"
+
+
+@pytest.mark.parametrize("name", ["recall", "precision", "retrieval.recall"])
+def test_bare_classification_names_default_to_retrieval(name):
+    assert classify_metric(name) == "retrieval"
 
 
 @pytest.mark.parametrize(
@@ -75,6 +83,8 @@ def test_reward_metrics(name):
         "latency_ms.p99",
         "qt_latency_ms.p99",
         "latency_ms.mean",
+        "latency_ms.n",
+        "qt_latency_ms.n",
         "retrieval_ms",
         "p95_latency",
     ],

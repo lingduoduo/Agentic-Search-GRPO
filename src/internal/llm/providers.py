@@ -376,8 +376,10 @@ class OpenAICompatibleLLM(LLM):
                 ) from None
             raise
         data = resp.json()
-        # The generation side of the request's stage metrics; token counts
-        # come from the provider's own usage block when it sends one.
+        # The request's stage metrics: filed as the answer when called from
+        # inside `generate_answer`, otherwise as an auxiliary LLM call (query
+        # transforms, sufficiency checks, intent). Token counts come from the
+        # provider's own usage block when it sends one.
         usage = data.get("usage") or {}
         note_generation(
             elapsed_ms=(perf_counter() - started) * 1000.0,

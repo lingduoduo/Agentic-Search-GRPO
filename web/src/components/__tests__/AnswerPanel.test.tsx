@@ -53,6 +53,17 @@ describe("AnswerPanel feedback bar", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/thanks/i);
   });
 
+  it("lets the user cancel out of the what-was-off prompt", async () => {
+    const spy = vi.spyOn(api, "submitSessionFeedback").mockResolvedValue({ ok: true });
+    render(<AnswerPanel answer="answer" citations={[]} sessionId="s1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: /not helpful/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.getByRole("group", { name: /rate this answer/i })).toBeInTheDocument();
+  });
+
   it("maps 'Answer' to generation and 'Both' to overall", async () => {
     const spy = vi.spyOn(api, "submitSessionFeedback").mockResolvedValue({ ok: true });
     const { unmount } = render(<AnswerPanel answer="a1" citations={[]} sessionId="s1" />);

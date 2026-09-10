@@ -149,11 +149,16 @@ posts it; `GET /api/admin/evals/summary` and the training loader read it back
 apart (`by_target`, `metadata["human_signal_target"]`).
 
 **Process telemetry** (`GET /api/admin/metrics`, admin only): the per-route
-latency window, the same recent requests split into their retrieval share
-(ms, docs, cache-hit rate) and generation share (ms, prompt/completion
-tokens), and the feedback summary by target. Recorded in every web process;
-this is the production-reachable read of it. Each assistant turn also carries
-its own split as `metadata.stage_metrics`.
+latency window, the same recent `/api/agent` requests split into their
+retrieval share (ms, docs, cache-hit rate), their generation share (answer
+synthesis only: ms, prompt/completion tokens) and their auxiliary LLM calls
+(query transforms, sufficiency checks, intent recognition — kept apart so
+they cannot inflate "generation"), and the feedback summary by target.
+Recorded in every web process; this is the production-reachable read of it.
+Each assistant turn also carries its own split as `metadata.stage_metrics`.
+Only `/api/agent` opens the scope; the `/search`, `/chat` and `/tool` direct
+surfaces and the `web_search` tool (which does not go through
+`SearchClient`) are not counted, and the LiteLLM backend is not hooked.
 
 ### Request paths & dispatch
 

@@ -53,7 +53,7 @@ function FeedbackBar({ sessionId }: { sessionId: string }) {
     return (
       <div className="feedback-bar" role="group" aria-label="What was off?">
         <span>What was off?</span>
-        <button type="button" onClick={() => send("thumbs_down", "retrieval")}>
+        <button type="button" autoFocus onClick={() => send("thumbs_down", "retrieval")}>
           Sources
         </button>
         <button type="button" onClick={() => send("thumbs_down", "generation")}>
@@ -61,6 +61,9 @@ function FeedbackBar({ sessionId }: { sessionId: string }) {
         </button>
         <button type="button" onClick={() => send("thumbs_down", "overall")}>
           Both
+        </button>
+        <button type="button" onClick={() => setState({ phase: "idle" })}>
+          Cancel
         </button>
       </div>
     );
@@ -243,8 +246,8 @@ export const AnswerPanel = memo(function AnswerPanel({
       )}
       <ReactMarkdown components={markdownComponents}>{answer}</ReactMarkdown>
       {answer && sessionId && progressSteps.length === 0 && (
-        // Keyed by the answer so a new answer gets a fresh, un-sent bar.
-        <FeedbackBar key={answer} sessionId={sessionId} />
+        // Keyed by session and answer so a new answer gets a fresh, un-sent bar.
+        <FeedbackBar key={`${sessionId}:${answer}`} sessionId={sessionId} />
       )}
     </article>
   );

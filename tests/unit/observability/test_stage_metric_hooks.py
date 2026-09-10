@@ -106,31 +106,59 @@ def _llm() -> OpenAICompatibleLLM:
     )
 
 
-def test_openai_compatible_complete_notes_tokens_from_usage(request_scope):
-    llm = _llm()
+def _complete(llm, payload):
     resp = MagicMock()
-    resp.json.return_value = {
-        "choices": [{"message": {"content": "hi"}}],
-        "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    with patch.object(llm._session, "post", return_value=resp):
+        llm.complete([{"role": "user", "content": "hello"}])
+
+
+_WITH_USAGE = {
+    "choices": [{"message": {"content": "hi"}}],
+    "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+}
+
+
+def test_openai_compatible_complete_outside_answer_scope_is_auxiliary(request_scope):
+    # Query transforms, sufficiency checks and intent recognition all go
+    # through `complete` too; they must not inflate the generation bucket.
+    _complete(_llm(), _WITH_USAGE)
+    snap = sm.current().snapshot()
+    assert snap["generation"]["calls"] == 0
+    assert snap["auxiliary"]["calls"] == 1
+    assert snap["auxiliary"]["prompt_tokens"] == 12
+    assert snap["auxiliary"]["completion_tokens"] == 3
+    assert snap["auxiliary"]["ms"] >= 0.0
+
+
+def test_openai_compatible_complete_inside_generate_answer_is_the_answer(
+    request_scope,
+):
+    with sm.answer_generation():
+        _complete(_llm(), _WITH_USAGE)
+    snap = sm.current().snapshot()
+    assert snap["generation"] == {
+        "calls": 1,
+        "ms": snap["generation"]["ms"],
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
     }
-    resp.raise_for_status.return_value = None
-    with patch.object(llm._session, "post", return_value=resp):
-        llm.complete([{"role": "user", "content": "hello"}])
-    snap = sm.current().snapshot()["generation"]
-    assert snap["calls"] == 1
-    assert snap["prompt_tokens"] == 12
-    assert snap["completion_tokens"] == 3
-    assert snap["ms"] >= 0.0
+    assert snap["auxiliary"]["calls"] == 0
 
 
-def test_openai_compatible_complete_without_usage_still_counts_the_call(request_scope):
-    llm = _llm()
-    resp = MagicMock()
-    resp.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
-    resp.raise_for_status.return_value = None
-    with patch.object(llm._session, "post", return_value=resp):
-        llm.complete([{"role": "user", "content": "hello"}])
-    snap = sm.current().snapshot()["generation"]
+def test_generate_answer_is_marked_as_the_answer():
+    from src.context.pipeline import generate_answer
+
+    # The decorator is what files `generate_answer`'s LLM call as the answer.
+    assert getattr(generate_answer, "__wrapped__", None) is not None
+
+
+def test_openai_compatible_complete_without_usage_still_counts_the_call(
+    request_scope,
+):
+    _complete(_llm(), {"choices": [{"message": {"content": "hi"}}]})
+    snap = sm.current().snapshot()["auxiliary"]
     assert snap == {
         "calls": 1,
         "ms": snap["ms"],
@@ -147,7 +175,9 @@ def test_local_server_manager_generate_notes_token_lengths(request_scope):
     manager._tokenizer = MagicMock(decode=lambda ids, **_: "x")
     manager._generate_sync = lambda prompt_ids, params, request_id: [7, 8, 9]
     asyncio.run(manager.generate("r1", [1, 2, 3, 4], {}))
-    snap = sm.current().snapshot()["generation"]
-    assert snap["calls"] == 1
-    assert snap["prompt_tokens"] == 4
-    assert snap["completion_tokens"] == 3
+    snap = sm.current().snapshot()
+    # An agent loop's turn is the answer the user reads, never auxiliary.
+    assert snap["generation"]["calls"] == 1
+    assert snap["generation"]["prompt_tokens"] == 4
+    assert snap["generation"]["completion_tokens"] == 3
+    assert snap["auxiliary"]["calls"] == 0

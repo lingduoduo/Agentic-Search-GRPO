@@ -181,19 +181,34 @@ present; the summary JSON carries them and the taxonomy files them under
 @dataclass
 class RequestStageMetrics:
     retrieval_calls, retrieval_cache_hits, retrieval_ms, retrieval_docs
-    generation_calls, generation_ms, prompt_tokens, completion_tokens
-    def snapshot() -> {"retrieval": {...}, "generation": {...}}
+    generation_calls, generation_ms, prompt_tokens, completion_tokens      # answer synthesis
+    auxiliary_calls, auxiliary_ms, auxiliary_prompt_tokens, auxiliary_completion_tokens
+    def snapshot() -> {"retrieval": {...}, "generation": {...}, "auxiliary": {...}}
 
 def start_request() -> Token      # ContextVar, like request_capture
 def finish_request(token) -> RequestStageMetrics | None
 def note_retrieval(*, elapsed_ms, docs, cache_hit=False)   # no-op outside a request
-def note_generation(*, elapsed_ms, prompt_tokens=None, completion_tokens=None)
+def note_generation(*, elapsed_ms, prompt_tokens=None, completion_tokens=None, kind=None)
+def answer_generation()           # context manager; mark_answer_generation is its decorator form
 
 class StageLatencyStats   # rolling deque per stage, like RouteLatencyStats
     record(snapshot); snapshot() -> {"retrieval": {count, p50_ms, p95_ms, max_ms, avg_docs, cache_hit_rate},
-                                     "generation": {count, p50_ms, p95_ms, max_ms, avg_prompt_tokens, avg_completion_tokens}}
+                                     "generation": {count, p50_ms, p95_ms, max_ms, avg_prompt_tokens, avg_completion_tokens},
+                                     "auxiliary":  {same shape as generation}}
 STAGE_LATENCY = StageLatencyStats()
 ```
+
+**Answer versus auxiliary.** Every LLM call goes through the same
+`complete`, including query decomposition, HyDE, step-back, sufficiency
+checks and intent recognition. On the agentic-RAG path that is five or more
+calls per request, most of them retrieval-side prompting, so filing them all
+under "generation" would leave the number unable to attribute anything.
+`note_generation` therefore files a call as `generation` only when
+`answer_generation()` is active — `generate_answer` is decorated with
+`mark_answer_generation`, and the agent loops' `ServerManager.generate` /
+`generate_stream` pass `kind="answer"` directly — and as `auxiliary`
+otherwise. The `note_*` functions take a lock: the query enhancer runs its
+three LLM calls on worker threads that share one request context.
 
 Hook points (each a few lines, no-op when no request is active):
 
@@ -270,7 +285,7 @@ endpoint returns zeros with an empty store.
   two retrievals and one generation into the right buckets;
   `StageLatencyStats.snapshot` percentiles and averages; `SearchClient`
   records elapsed, docs and cache hits; `OpenAICompatibleLLM.complete` records
-  tokens from `usage`; `/api/agent` persists `pipeline_stages.timing` and
+  tokens from `usage`; `/api/agent` persists `metadata.stage_metrics` and
   records into `STAGE_LATENCY`; `/api/debug/latency` returns `stages`;
   `/api/admin/metrics` requires admin and returns the three sections.
 - Feedback: `target` persisted and validated; `by_target` rates; loader

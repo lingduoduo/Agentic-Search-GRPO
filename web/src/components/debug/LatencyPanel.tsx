@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getRouteLatency } from "../../api";
-import type { RouteLatencyRow, StageLatency } from "../../types";
+import type { RouteLatencyRow, StageLatency, StageLatencyResponse } from "../../types";
 
 /**
  * Milliseconds, or a dash.
@@ -20,7 +20,25 @@ function pct(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${(value * 100).toFixed(0)}%` : "—";
 }
 
-function StageTable({ retrieval, generation }: { retrieval: StageLatency; generation: StageLatency }) {
+function llmDetail(stage: StageLatency): string {
+  return `${num(stage.avg_prompt_tokens, 0)} prompt · ${num(stage.avg_completion_tokens, 0)} completion tokens`;
+}
+
+function StageRow({ name, stage, detail }: { name: string; stage: StageLatency; detail: string }) {
+  return (
+    <tr>
+      <th scope="row">{name}</th>
+      <td>{stage.count}</td>
+      <td>{ms(stage.p50_ms)}</td>
+      <td>{ms(stage.p95_ms)}</td>
+      <td>{ms(stage.max_ms)}</td>
+      <td>{detail}</td>
+    </tr>
+  );
+}
+
+function StageTable({ stages }: { stages: StageLatencyResponse }) {
+  const { retrieval, generation, auxiliary } = stages;
   return (
     <table className="latency-panel__table latency-panel__stages" aria-label="Stage latency">
       <caption>Retrieval vs generation (recent requests that used each stage)</caption>
@@ -35,27 +53,15 @@ function StageTable({ retrieval, generation }: { retrieval: StageLatency; genera
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <th scope="row">Retrieval</th>
-          <td>{retrieval.count}</td>
-          <td>{ms(retrieval.p50_ms)}</td>
-          <td>{ms(retrieval.p95_ms)}</td>
-          <td>{ms(retrieval.max_ms)}</td>
-          <td>
-            {num(retrieval.avg_docs)} docs · {pct(retrieval.cache_hit_rate)} cache hits
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">Generation</th>
-          <td>{generation.count}</td>
-          <td>{ms(generation.p50_ms)}</td>
-          <td>{ms(generation.p95_ms)}</td>
-          <td>{ms(generation.max_ms)}</td>
-          <td>
-            {num(generation.avg_prompt_tokens, 0)} prompt · {num(generation.avg_completion_tokens, 0)}{" "}
-            completion tokens
-          </td>
-        </tr>
+        <StageRow
+          name="Retrieval"
+          stage={retrieval}
+          detail={`${num(retrieval.avg_docs)} docs · ${pct(retrieval.cache_hit_rate)} cache hits`}
+        />
+        <StageRow name="Generation" stage={generation} detail={llmDetail(generation)} />
+        {auxiliary && auxiliary.count > 0 && (
+          <StageRow name="Auxiliary LLM calls" stage={auxiliary} detail={llmDetail(auxiliary)} />
+        )}
       </tbody>
     </table>
   );
@@ -63,14 +69,15 @@ function StageTable({ retrieval, generation }: { retrieval: StageLatency; genera
 
 /**
  * Dev-console panel: per-route request latency, slowest p95 first, and the
- * same window split into its retrieval and generation shares.
+ * same window split into its retrieval and generation shares (answer
+ * synthesis; other LLM calls are listed apart as auxiliary).
  *
  * The Request Inspector shows where one request spent its time. This shows
  * which route to inspect, and which side of the pipeline to blame.
  */
 export function LatencyPanel() {
   const [routes, setRoutes] = useState<RouteLatencyRow[] | null>(null);
-  const [stages, setStages] = useState<{ retrieval: StageLatency; generation: StageLatency } | null>(null);
+  const [stages, setStages] = useState<StageLatencyResponse | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -86,6 +93,10 @@ export function LatencyPanel() {
       alive = false;
     };
   }, []);
+
+  const stagesUsed =
+    stages !== null &&
+    (stages.retrieval.count > 0 || stages.generation.count > 0 || (stages.auxiliary?.count ?? 0) > 0);
 
   return (
     <section className="latency-panel" aria-label="Route latency">
@@ -127,9 +138,7 @@ export function LatencyPanel() {
           </tbody>
         </table>
       )}
-      {stages && (stages.retrieval.count > 0 || stages.generation.count > 0) && (
-        <StageTable retrieval={stages.retrieval} generation={stages.generation} />
-      )}
+      {stagesUsed && stages && <StageTable stages={stages} />}
     </section>
   );
 }

@@ -207,7 +207,10 @@ def test_agent_endpoint_persists_stage_metrics_apart_from_pipeline_stages(
     async def fake_run_auto_routed(query, **kwargs):
         # Stand in for the choke points: one retrieval, one generation.
         sm.note_retrieval(elapsed_ms=7.0, docs=3)
-        sm.note_generation(elapsed_ms=90.0, prompt_tokens=120, completion_tokens=15)
+        sm.note_generation(
+            elapsed_ms=90.0, prompt_tokens=120, completion_tokens=15, kind="answer"
+        )
+        sm.note_generation(elapsed_ms=5.0, prompt_tokens=30, completion_tokens=2)
         result = _answer_result(query)
         return (result.answer, result.citations, result.context.documents, "search", {})
 
@@ -229,6 +232,12 @@ def test_agent_endpoint_persists_stage_metrics_apart_from_pipeline_stages(
             "ms": 90.0,
             "prompt_tokens": 120,
             "completion_tokens": 15,
+        },
+        "auxiliary": {
+            "calls": 1,
+            "ms": 5.0,
+            "prompt_tokens": 30,
+            "completion_tokens": 2,
         },
     }
     assert "timing" not in assistant.metadata["pipeline_stages"]

@@ -151,7 +151,15 @@ class SearchClient:
             if filters:
                 payload["filters"] = filters
             started = time.perf_counter()
-            data = await self._post_json(self.config.url, payload, "retrieve")
+            try:
+                data = await self._post_json(self.config.url, payload, "retrieve")
+            except BaseException:
+                # A failed retrieval still spent the request's time; file it
+                # so an outage shows up in the retrieval bucket, not nowhere.
+                note_retrieval(
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0, docs=0
+                )
+                raise
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             rows = data.get("result", data.get("results", []))
             if rows and isinstance(rows[0], dict):

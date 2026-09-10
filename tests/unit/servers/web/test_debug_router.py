@@ -328,19 +328,31 @@ def test_eval_results_groups_retrieval_apart_from_generation(tmp_path, monkeypat
     }
 
 
-def test_latency_endpoint_reports_stages_beside_routes():
+def test_latency_endpoint_reports_stages_beside_routes(monkeypatch):
+    import src.internal.servers.web.debug_router as mod
     from src.internal.observability import stage_metrics as sm
 
+    stats = sm.StageLatencyStats()
+    monkeypatch.setattr(mod, "STAGE_LATENCY", stats)
     token = sm.start_request()
     sm.note_retrieval(elapsed_ms=4.0, docs=3)
-    sm.note_generation(elapsed_ms=40.0, prompt_tokens=100, completion_tokens=10)
-    sm.STAGE_LATENCY.record(sm.finish_request(token))
+    sm.note_generation(
+        elapsed_ms=40.0, prompt_tokens=100, completion_tokens=10, kind="answer"
+    )
+    stats.record(sm.finish_request(token))
 
     body = _client(_ok).get("/api/debug/latency").json()
     assert "routes" in body
-    assert body["stages"]["retrieval"]["count"] >= 1
-    assert body["stages"]["generation"]["count"] >= 1
-    assert body["stages"]["generation"]["avg_completion_tokens"] > 0
+    assert body["stages"]["retrieval"] == {
+        "count": 1,
+        "p50_ms": 4.0,
+        "p95_ms": 4.0,
+        "max_ms": 4.0,
+        "avg_docs": 3.0,
+        "cache_hit_rate": 0.0,
+    }
+    assert body["stages"]["generation"]["avg_completion_tokens"] == 10.0
+    assert body["stages"]["auxiliary"] == {"count": 0}
 
 
 def test_eval_results_drops_non_finite_metrics(tmp_path, monkeypatch):

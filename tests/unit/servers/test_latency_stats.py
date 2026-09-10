@@ -229,5 +229,9 @@ def test_debug_endpoint_is_empty_before_any_request(monkeypatch):
 
     assert TestClient(app).get("/api/debug/latency").json() == {
         "routes": [],
-        "stages": {"retrieval": {"count": 0}, "generation": {"count": 0}},
+        "stages": {
+            "retrieval": {"count": 0},
+            "generation": {"count": 0},
+            "auxiliary": {"count": 0},
+        },
     }

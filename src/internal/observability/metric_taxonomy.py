@@ -26,7 +26,12 @@ _GENERATION_LEAVES = re.compile(
 )
 _REWARD_LEAVES = re.compile(r"^(reward|avg_reward|dim_|side_)")
 _LATENCY_LEAVES = re.compile(r"latency|_ms$")
-_LATENCY_PERCENTILES = frozenset({"p50", "p90", "p95", "p99", "mean", "max", "min"})
+_LATENCY_PERCENTILES = frozenset(
+    {"p50", "p90", "p95", "p99", "mean", "max", "min", "n", "count"}
+)
+# Bare classification names that mean retrieval by default but belong to a
+# generation block when one names them (e.g. ``generation.recall``).
+_BARE_CLASSIFICATION = re.compile(r"^(recall|precision|map)$")
 
 # A parent segment that settles otherwise-ambiguous leaves such as ``n`` or
 # ``num_queries``: eval_runner nests its reranked block, RAGAS-style reports
@@ -44,6 +49,10 @@ def classify_metric(name: str) -> str:
             return "latency"
     if _REWARD_LEAVES.search(leaf):
         return "reward"
+    if _BARE_CLASSIFICATION.search(leaf) and any(
+        p in _GENERATION_PARENTS for p in parents
+    ):
+        return "generation"
     if _RETRIEVAL_LEAVES.search(leaf):
         return "retrieval"
     if _GENERATION_LEAVES.search(leaf):

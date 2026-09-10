@@ -6,6 +6,8 @@ import asyncio
 import time
 from collections.abc import Callable
 
+from src.internal.observability.stage_metrics import mark_answer_generation
+
 from .models import AnswerGenerationRequest
 from .models import AnswerGenerationResult
 from .models import GenerationTimings
@@ -66,6 +68,7 @@ async def retrieve_contexts(
     )
 
 
+@mark_answer_generation
 def generate_answer(
     request: AnswerGenerationRequest,
     *,

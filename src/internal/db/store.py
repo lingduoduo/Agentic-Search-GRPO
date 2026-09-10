@@ -2220,6 +2220,10 @@ class AgenticSearchStore:
             """
         ).fetchall():
             name = str(target_row["target"])
+            if name not in by_target:
+                # Only the three names the router validates; anything else
+                # written through the raw metadata kwarg is not a target.
+                continue
             total_for_target = int(target_row["total"])
             ups_for_target = int(target_row["ups"] or 0)
             by_target[name] = {

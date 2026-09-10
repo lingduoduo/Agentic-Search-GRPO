@@ -39,6 +39,14 @@ describe("LatencyPanel", () => {
           avg_prompt_tokens: 512,
           avg_completion_tokens: 64,
         },
+        auxiliary: {
+          count: 9,
+          p50_ms: 60.5,
+          p95_ms: 120.2,
+          max_ms: 130,
+          avg_prompt_tokens: 90,
+          avg_completion_tokens: 12,
+        },
       },
     });
 
@@ -47,16 +55,34 @@ describe("LatencyPanel", () => {
     const stages = await screen.findByRole("table", { name: /stage latency/i });
     expect(within(stages).getByText("Retrieval")).toBeInTheDocument();
     expect(within(stages).getByText("Generation")).toBeInTheDocument();
+    expect(within(stages).getByText("Auxiliary LLM calls")).toBeInTheDocument();
     expect(within(stages).getByText("4.2")).toBeInTheDocument();
     expect(within(stages).getByText("2100.5")).toBeInTheDocument();
     expect(within(stages).getByText(/5\.0 docs · 25% cache hits/)).toBeInTheDocument();
     expect(within(stages).getByText(/512 prompt · 64 completion tokens/)).toBeInTheDocument();
+    expect(within(stages).getByText(/90 prompt · 12 completion tokens/)).toBeInTheDocument();
+  });
+
+  it("omits the auxiliary row when no request made auxiliary LLM calls", async () => {
+    vi.spyOn(api, "getRouteLatency").mockResolvedValue({
+      routes: [row],
+      stages: {
+        retrieval: { count: 1, p50_ms: 1, p95_ms: 1, max_ms: 1, avg_docs: 1, cache_hit_rate: 0 },
+        generation: { count: 0 },
+        auxiliary: { count: 0 },
+      },
+    });
+
+    render(<LatencyPanel />);
+
+    const stages = await screen.findByRole("table", { name: /stage latency/i });
+    expect(within(stages).queryByText("Auxiliary LLM calls")).not.toBeInTheDocument();
   });
 
   it("omits the stage table when no request used either stage", async () => {
     vi.spyOn(api, "getRouteLatency").mockResolvedValue({
       routes: [row],
-      stages: { retrieval: { count: 0 }, generation: { count: 0 } },
+      stages: { retrieval: { count: 0 }, generation: { count: 0 }, auxiliary: { count: 0 } },
     });
 
     render(<LatencyPanel />);
