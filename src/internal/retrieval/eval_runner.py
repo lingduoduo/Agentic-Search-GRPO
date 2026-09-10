@@ -232,7 +232,8 @@ class _HttpService:
         return results, "http"
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point; ``argv`` defaults to ``sys.argv[1:]``."""
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -279,10 +280,22 @@ if __name__ == "__main__":
         action="store_true",
         help="Score the router against a labeled routing set (query, retriever).",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Also write the metrics JSON to this path (the CI eval gate reads it).",
+    )
+    args = parser.parse_args(argv)
+
+    def _emit(metrics: dict) -> None:
+        text = json.dumps(metrics, indent=2)
+        print(text)
+        if args.output:
+            with open(args.output, "w") as handle:
+                handle.write(text + "\n")
 
     if args.routing_eval:
-        print(json.dumps(run_routing_eval(args.dataset), indent=2))
+        _emit(run_routing_eval(args.dataset))
         raise SystemExit(0)
 
     service = _HttpService(args.retrieval_url) if args.retrieval_url else None
@@ -310,4 +323,8 @@ if __name__ == "__main__":
         compare_baseline=args.compare_baseline,
         qt_slo_ms=args.qt_slo_ms,
     )
-    print(json.dumps(metrics, indent=2))
+    _emit(metrics)
+
+
+if __name__ == "__main__":
+    main()

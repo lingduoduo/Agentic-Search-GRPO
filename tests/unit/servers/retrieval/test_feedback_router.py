@@ -41,6 +41,50 @@ def test_feedback_thumbs_down_persisted():
     assert summary["thumbs_up_rate"] == 0.0
 
 
+def test_feedback_target_is_persisted_and_split_in_the_summary():
+    db = AgenticSearchStore(":memory:")
+    client = _app(db)
+
+    for target, signal in (
+        ("retrieval", "thumbs_down"),
+        ("generation", "thumbs_up"),
+        ("generation", "thumbs_down"),
+    ):
+        resp = client.post(
+            "/api/feedback",
+            json={"session_id": "s1", "signal": signal, "target": target},
+        )
+        assert resp.status_code == 200
+
+    rows = db.list_retrieval_feedback()
+    assert [r["metadata"]["target"] for r in rows] == [
+        "retrieval",
+        "generation",
+        "generation",
+    ]
+    by_target = db.get_feedback_summary()["by_target"]
+    assert by_target["retrieval"] == {"rated": 1, "thumbs_up_rate": 0.0}
+    assert by_target["generation"] == {"rated": 2, "thumbs_up_rate": 0.5}
+    assert by_target["overall"] == {"rated": 0, "thumbs_up_rate": 0.0}
+
+
+def test_feedback_target_defaults_to_overall():
+    db = AgenticSearchStore(":memory:")
+    client = _app(db)
+    client.post("/api/feedback", json={"session_id": "s1", "signal": "thumbs_up"})
+    assert db.list_retrieval_feedback()[0]["metadata"]["target"] == "overall"
+
+
+def test_feedback_invalid_target_rejected():
+    db = AgenticSearchStore(":memory:")
+    client = _app(db)
+    resp = client.post(
+        "/api/feedback",
+        json={"session_id": "s1", "signal": "thumbs_up", "target": "vibes"},
+    )
+    assert resp.status_code == 422
+
+
 def test_feedback_invalid_signal_rejected():
     db = AgenticSearchStore(":memory:")
     client = _app(db)

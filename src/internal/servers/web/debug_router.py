@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field, field_validator
 from src.internal.retrieval.query_transform_factory import (
     build_query_transform_pipeline_from_env,
 )
+from src.internal.observability.metric_taxonomy import flatten_metrics, group_metrics
+from src.internal.observability.stage_metrics import STAGE_LATENCY
 from src.internal.servers.middleware.latency_logging import ROUTE_LATENCY
 
 _MODES = {"sparse", "dense", "hybrid", "graph"}
@@ -60,25 +62,18 @@ def create_debug_router(
     base = _retrieval_base(search_url)
     client = http_client or httpx.Client(timeout=15.0)
 
-    @router.get("/workers")
-    def workers() -> dict:
-        """Indexing-pipeline snapshot placeholder.
-
-        The async ingestion worker fleet was removed; this endpoint now always
-        returns ``metrics: null``. Kept for Dev Console compatibility.
-        """
-        return {"metrics": None}
-
     @router.get("/eval-results")
     def eval_results() -> dict:
         """Read-only listing of evaluation result files.
 
         Scans AGENTIC_SEARCH_EVAL_RESULTS_DIR (default data/eval/) for *.json and
-        returns each file's numeric top-level metrics, newest first. Confined to
-        the configured directory; never raises.
+        returns each file's finite numeric metrics (nested dicts dotted, two
+        levels deep) as ``metrics``, plus the same numbers bucketed by the
+        shared taxonomy as ``groups`` (retrieval / generation / reward /
+        latency / other), newest first. Confined to the configured directory;
+        never raises.
         """
         import json
-        import math
         import os
         from pathlib import Path
 
@@ -97,18 +92,13 @@ def create_debug_router(
                 continue
             if not isinstance(data, dict):
                 continue
-            metrics = {
-                k: v
-                for k, v in data.items()
-                if isinstance(v, (int, float))
-                and not isinstance(v, bool)
-                and math.isfinite(v)
-            }
+            metrics = flatten_metrics(data)
             out.append(
                 {
                     "name": path.name,
                     "modified": mtime,
                     "metrics": metrics,
+                    "groups": group_metrics(metrics),
                 }
             )
         out.sort(key=lambda r: r["modified"], reverse=True)
@@ -120,9 +110,11 @@ def create_debug_router(
 
         Reads the rolling window the latency middleware fills. Complements
         /api/debug/requests, which shows one request's stages but cannot say
-        which route is slow or how often.
+        which route is slow or how often. ``stages`` splits recent requests
+        into their retrieval and generation shares so a slow route can be
+        attributed to one side or the other.
         """
-        return {"routes": ROUTE_LATENCY.snapshot()}
+        return {"routes": ROUTE_LATENCY.snapshot(), "stages": STAGE_LATENCY.snapshot()}
 
     @router.get("/tools")
     def tools() -> dict:

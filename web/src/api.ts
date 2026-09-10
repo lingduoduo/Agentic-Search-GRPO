@@ -11,7 +11,9 @@ import type {
   EvalResultFile,
   QueryTransformResult,
   RetrievalMode,
-  RouteLatencyRow,
+  FeedbackSignal,
+  FeedbackTarget,
+  RouteLatencyResponse,
   ServerHealth,
   DebugToolsResult,
   ToolDiscoverResult,
@@ -78,8 +80,25 @@ export function getEvalResults(): Promise<{ results: EvalResultFile[] }> {
 }
 
 /** Per-route request latency from the dev-console middleware. */
-export function getRouteLatency(): Promise<{ routes: RouteLatencyRow[] }> {
-  return requestJson<{ routes: RouteLatencyRow[] }>("/api/debug/latency");
+export function getRouteLatency(): Promise<RouteLatencyResponse> {
+  return requestJson<RouteLatencyResponse>("/api/debug/latency");
+}
+
+/**
+ * Session-level thumbs, the signal the SFT and feedback-GRPO loaders read.
+ * `target` says whether the sources or the answer were at fault.
+ */
+export function submitSessionFeedback(
+  sessionId: string,
+  signal: FeedbackSignal,
+  target: FeedbackTarget = "overall",
+  init?: Pick<RequestInit, "signal">,
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>("/api/feedback", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, signal, target, source: "answer_panel" }),
+    signal: init?.signal,
+  });
 }
 
 /** Registered tools + the discovery catalog grouped by server (dev console). */

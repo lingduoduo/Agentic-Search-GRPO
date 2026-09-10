@@ -37,6 +37,27 @@ def _write_qa(qa_pairs: list[dict]) -> str:
         return f.name
 
 
+def test_cli_output_flag_writes_the_printed_json(tmp_path, capsys):
+    # The CI eval gate invokes `--output`; until now the parser had no such
+    # flag and the step would have died on argparse the day a baseline landed.
+    from src.internal.retrieval.eval_runner import main
+
+    labels = tmp_path / "routing_labels.jsonl"
+    labels.write_text(
+        json.dumps({"query": "latest pricing sheet", "retriever": "web"}) + "\n"
+    )
+    out = tmp_path / "metrics.json"
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--dataset", str(labels), "--routing-eval", "--output", str(out)])
+
+    assert excinfo.value.code == 0
+    written = json.loads(out.read_text())
+    assert set(written) == {"routing_accuracy", "num_queries"}
+    assert written["num_queries"] == 1
+    assert json.loads(capsys.readouterr().out) == written
+
+
 def test_run_eval_perfect_recall():
     qa = [{"query": "q1", "relevant_doc_ids": ["d1"]}]
     path = _write_qa(qa)

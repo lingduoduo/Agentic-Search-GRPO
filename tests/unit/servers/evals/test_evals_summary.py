@@ -43,6 +43,21 @@ def test_evals_summary_with_no_db_returns_zeros():
     assert resp.json()["rated_queries"] == 0
 
 
+def test_evals_summary_splits_feedback_by_target():
+    db = AgenticSearchStore(":memory:")
+    db.save_retrieval_feedback("s1", "thumbs_down", target="retrieval")
+    db.save_retrieval_feedback("s2", "thumbs_up", target="generation")
+    db.save_retrieval_feedback("s3", "thumbs_up")
+    client = _client(db)
+
+    data = client.get("/api/admin/evals/summary").json()
+    assert data["by_target"] == {
+        "retrieval": {"rated": 1, "thumbs_up_rate": 0.0},
+        "generation": {"rated": 1, "thumbs_up_rate": 1.0},
+        "overall": {"rated": 1, "thumbs_up_rate": 1.0},
+    }
+
+
 def test_evals_summary_reflects_stored_feedback():
     db = AgenticSearchStore(":memory:")
     db.save_retrieval_feedback("s1", "thumbs_up")

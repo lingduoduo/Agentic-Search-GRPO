@@ -20,6 +20,7 @@ vi.mock("../../api", () => ({
   getDebugTools: vi.fn().mockResolvedValue({ registered: [], catalog: [] }),
   discoverTools: vi.fn(),
   runQueryTransform: vi.fn(),
+  submitSessionFeedback: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 beforeEach(() => vi.clearAllMocks());

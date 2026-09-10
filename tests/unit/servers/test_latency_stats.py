@@ -219,9 +219,19 @@ def test_debug_endpoint_reports_the_recorded_routes(monkeypatch):
 def test_debug_endpoint_is_empty_before_any_request(monkeypatch):
     from src.internal.servers.web import debug_router as debug_module
 
+    from src.internal.observability.stage_metrics import StageLatencyStats
+
     monkeypatch.setattr(debug_module, "ROUTE_LATENCY", RouteLatencyStats())
+    monkeypatch.setattr(debug_module, "STAGE_LATENCY", StageLatencyStats())
 
     app = FastAPI()
     app.include_router(debug_module.create_debug_router(search_url="http://x/retrieve"))
 
-    assert TestClient(app).get("/api/debug/latency").json() == {"routes": []}
+    assert TestClient(app).get("/api/debug/latency").json() == {
+        "routes": [],
+        "stages": {
+            "retrieval": {"count": 0},
+            "generation": {"count": 0},
+            "auxiliary": {"count": 0},
+        },
+    }

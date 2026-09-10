@@ -12,13 +12,14 @@ import logging
 import re
 import uuid
 from collections.abc import Iterator
-from time import time
+from time import perf_counter, time
 from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 
 from src.context.models import LLMResponse, LLMTimeoutError
+from src.internal.observability.stage_metrics import note_generation
 from src.context.structured_output import (
     SchemaUnsupportedError,
     StructuredCompletionMetadata,
@@ -357,6 +358,7 @@ class OpenAICompatibleLLM(LLM):
                 },
             }
         timeout = kwargs.get("timeout_override") or 30
+        started = perf_counter()
         try:
             resp = self._session.post(
                 self._endpoint,
@@ -374,6 +376,16 @@ class OpenAICompatibleLLM(LLM):
                 ) from None
             raise
         data = resp.json()
+        # The request's stage metrics: filed as the answer when called from
+        # inside `generate_answer`, otherwise as an auxiliary LLM call (query
+        # transforms, sufficiency checks, intent). Token counts come from the
+        # provider's own usage block when it sends one.
+        usage = data.get("usage") or {}
+        note_generation(
+            elapsed_ms=(perf_counter() - started) * 1000.0,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+        )
         choice = data["choices"][0]
         message = choice["message"]
         content = message.get("content") or ""

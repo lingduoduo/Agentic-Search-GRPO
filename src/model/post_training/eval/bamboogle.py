@@ -43,6 +43,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tqdm import tqdm
 
+from src.model.post_training.reward import reward_sides
+
 if TYPE_CHECKING:
     from src.model.post_training.reward import SearchRewardFunction
 
@@ -149,6 +151,11 @@ class BamboogleSummary:
     exact_match: float
     contains_match: float
     avg_reward: float | None = None
+    # The reward split by side (see ``reward.reward_sides``): what the
+    # documents earned versus what the answer earned. Present whenever
+    # ``avg_reward`` is.
+    avg_reward_retrieval: float | None = None
+    avg_reward_generation: float | None = None
 
     def __str__(self) -> str:
         lines = [
@@ -158,6 +165,10 @@ class BamboogleSummary:
         ]
         if self.avg_reward is not None:
             lines.append(f"avg_reward     : {self.avg_reward:.4f}")
+        if self.avg_reward_retrieval is not None:
+            lines.append(f"  retrieval side  : {self.avg_reward_retrieval:.4f}")
+        if self.avg_reward_generation is not None:
+            lines.append(f"  generation side : {self.avg_reward_generation:.4f}")
         return "\n".join(lines)
 
 
@@ -352,8 +363,10 @@ def evaluate_bamboogle(
 
     total_em = sum(r.exact_match for r in results)
     total_contains = sum(r.contains_match for r in results)
-    n_reward = sum(1 for r in results if r.reward_total is not None)
-    total_reward = sum(r.reward_total for r in results if r.reward_total is not None)
+    rewarded = [r for r in results if r.reward_total is not None]
+    n_reward = len(rewarded)
+    total_reward = sum(r.reward_total for r in rewarded)
+    sides = [reward_sides(r.reward_components or {}) for r in rewarded]
 
     n = len(results)
     summary = BamboogleSummary(
@@ -361,6 +374,12 @@ def evaluate_bamboogle(
         exact_match=total_em / n if n else 0.0,
         contains_match=total_contains / n if n else 0.0,
         avg_reward=total_reward / n_reward if n_reward else None,
+        avg_reward_retrieval=(
+            sum(s["retrieval"] for s in sides) / n_reward if n_reward else None
+        ),
+        avg_reward_generation=(
+            sum(s["generation"] for s in sides) / n_reward if n_reward else None
+        ),
     )
 
     if output_path is not None:

@@ -25,21 +25,10 @@ def _client(handler, db=None) -> TestClient:
     return TestClient(app)
 
 
-def test_workers_without_store_returns_empty_not_500():
+def test_workers_endpoint_is_gone():
+    # It always returned {"metrics": null} and nothing read it.
     client = _client(lambda r: httpx.Response(200, json={}), db=None)
-    resp = client.get("/api/debug/workers")
-    assert resp.status_code == 200
-    assert resp.json()["metrics"] is None
-
-
-def test_workers_with_store_still_returns_null_metrics():
-    from src.internal.db import AgenticSearchStore
-
-    db = AgenticSearchStore(":memory:")
-    client = _client(lambda r: httpx.Response(200, json={}), db=db)
-    resp = client.get("/api/debug/workers")
-    assert resp.status_code == 200
-    assert resp.json()["metrics"] is None
+    assert client.get("/api/debug/workers").status_code == 404
 
 
 class _StubPipeline:
@@ -281,6 +270,89 @@ def test_eval_results_missing_dir_returns_empty(monkeypatch):
     resp = client.get("/api/debug/eval-results")
     assert resp.status_code == 200
     assert resp.json()["results"] == []
+
+
+def test_eval_results_groups_retrieval_apart_from_generation(tmp_path, monkeypatch):
+    # A Bamboogle summary and a reranked eval_runner report side by side: the
+    # flat `metrics` keeps the old keys (plus dotted nested ones) and `groups`
+    # files each number under the taxonomy so recall and EM are never peers.
+    (tmp_path / "bamboogle.summary.json").write_text(
+        json.dumps(
+            {
+                "num_examples": 125,
+                "exact_match": 0.4,
+                "contains_match": 0.6,
+                "avg_reward": 0.3,
+                "avg_reward_retrieval": 0.1,
+                "avg_reward_generation": 0.2,
+            }
+        )
+    )
+    (tmp_path / "retrieval.json").write_text(
+        json.dumps(
+            {
+                "retrieval": {"recall@10": 0.5, "mrr": 0.4, "num_queries": 20},
+                "reranked": {"recall@10": 0.6},
+                "latency_ms": {"p99": 12.5},
+            }
+        )
+    )
+    monkeypatch.setenv("AGENTIC_SEARCH_EVAL_RESULTS_DIR", str(tmp_path))
+
+    results = {
+        r["name"]: r
+        for r in _client(_ok).get("/api/debug/eval-results").json()["results"]
+    }
+
+    bamboogle = results["bamboogle.summary.json"]
+    assert bamboogle["metrics"]["exact_match"] == 0.4
+    assert bamboogle["groups"] == {
+        "generation": {"exact_match": 0.4, "contains_match": 0.6},
+        "reward": {
+            "avg_reward": 0.3,
+            "avg_reward_retrieval": 0.1,
+            "avg_reward_generation": 0.2,
+        },
+        "other": {"num_examples": 125},
+    }
+    retrieval = results["retrieval.json"]
+    assert retrieval["metrics"]["reranked.recall@10"] == 0.6
+    assert retrieval["groups"] == {
+        "retrieval": {
+            "retrieval.recall@10": 0.5,
+            "retrieval.mrr": 0.4,
+            "retrieval.num_queries": 20,
+            "reranked.recall@10": 0.6,
+        },
+        "latency": {"latency_ms.p99": 12.5},
+    }
+
+
+def test_latency_endpoint_reports_stages_beside_routes(monkeypatch):
+    import src.internal.servers.web.debug_router as mod
+    from src.internal.observability import stage_metrics as sm
+
+    stats = sm.StageLatencyStats()
+    monkeypatch.setattr(mod, "STAGE_LATENCY", stats)
+    token = sm.start_request()
+    sm.note_retrieval(elapsed_ms=4.0, docs=3)
+    sm.note_generation(
+        elapsed_ms=40.0, prompt_tokens=100, completion_tokens=10, kind="answer"
+    )
+    stats.record(sm.finish_request(token))
+
+    body = _client(_ok).get("/api/debug/latency").json()
+    assert "routes" in body
+    assert body["stages"]["retrieval"] == {
+        "count": 1,
+        "p50_ms": 4.0,
+        "p95_ms": 4.0,
+        "max_ms": 4.0,
+        "avg_docs": 3.0,
+        "cache_hit_rate": 0.0,
+    }
+    assert body["stages"]["generation"]["avg_completion_tokens"] == 10.0
+    assert body["stages"]["auxiliary"] == {"count": 0}
 
 
 def test_eval_results_drops_non_finite_metrics(tmp_path, monkeypatch):

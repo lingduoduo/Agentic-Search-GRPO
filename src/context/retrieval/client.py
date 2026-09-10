@@ -22,12 +22,14 @@ import asyncio
 import copy
 import json
 import logging
+import time
 from dataclasses import dataclass
 from importlib import import_module
 from urllib.parse import urlparse, urlunparse
 
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
+from src.internal.observability.stage_metrics import note_retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +141,7 @@ class SearchClient:
                     # with the row, and a caller may mutate what it gets.
                     rows_by_index[index] = copy.deepcopy(hit)
         missing = [i for i in range(len(queries)) if i not in rows_by_index]
+        elapsed_ms = 0.0
         if missing:
             payload = {
                 "queries": [queries[i] for i in missing],
@@ -147,7 +150,17 @@ class SearchClient:
             }
             if filters:
                 payload["filters"] = filters
-            data = await self._post_json(self.config.url, payload, "retrieve")
+            started = time.perf_counter()
+            try:
+                data = await self._post_json(self.config.url, payload, "retrieve")
+            except BaseException:
+                # A failed retrieval still spent the request's time; file it
+                # so an outage shows up in the retrieval bucket, not nowhere.
+                note_retrieval(
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0, docs=0
+                )
+                raise
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
             rows = data.get("result", data.get("results", []))
             if rows and isinstance(rows[0], dict):
                 rows = [rows]
@@ -165,6 +178,14 @@ class SearchClient:
                 # Empty rows are cheap to recompute and may be a transient miss.
                 if cache is not None and row:
                     cache.set(keys[index], copy.deepcopy(row))
+        if queries:
+            # The retrieval side of the request's stage metrics: every caller
+            # of the ``retrieval`` provider comes through here.
+            note_retrieval(
+                elapsed_ms=elapsed_ms,
+                docs=sum(len(row) for row in rows_by_index.values()),
+                cache_hit=not missing,
+            )
         return [
             [SearchResult.from_api_item(item) for item in rows_by_index.get(i, [])]
             for i in range(len(queries))

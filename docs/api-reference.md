@@ -139,9 +139,26 @@ deleted; it also means "not yours".
 ```bash
 curl -s -X POST http://localhost:7860/api/feedback \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "sess-123", "signal": "thumbs_up"}'
+  -d '{"session_id": "sess-123", "signal": "thumbs_down", "target": "retrieval"}'
 # → {"ok": true}
 ```
+
+`target` is `retrieval` (the sources were wrong), `generation` (the answer was
+wrong given the sources) or `overall` (default). The answer panel's thumbs bar
+posts it; `GET /api/admin/evals/summary` and the training loader read it back
+apart (`by_target`, `metadata["human_signal_target"]`).
+
+**Process telemetry** (`GET /api/admin/metrics`, admin only): the per-route
+latency window, the same recent `/api/agent` requests split into their
+retrieval share (ms, docs, cache-hit rate), their generation share (answer
+synthesis only: ms, prompt/completion tokens) and their auxiliary LLM calls
+(query transforms, sufficiency checks, intent recognition — kept apart so
+they cannot inflate "generation"), and the feedback summary by target.
+Recorded in every web process; this is the production-reachable read of it.
+Each assistant turn also carries its own split as `metadata.stage_metrics`.
+Only `/api/agent` opens the scope; the `/search`, `/chat` and `/tool` direct
+surfaces and the `web_search` tool (which does not go through
+`SearchClient`) are not counted, and the LiteLLM backend is not hooked.
 
 ### Request paths & dispatch
 

@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Any, Protocol, runtime_checkable
 
+from src.internal.observability.stage_metrics import note_generation
 from src.internal.servers.web import request_capture as _capture
 
 logger = logging.getLogger(__name__)
@@ -307,6 +308,7 @@ class OpenAIServerManager:
         stop = sampling_params.get("stop")
         if stop is not None:
             payload["stop"] = stop
+        started = time.perf_counter()
         try:
             session = self._get_session()
             async with session.post(
@@ -321,7 +323,15 @@ class OpenAIServerManager:
             )
 
         completion_text = data["choices"][0]["text"]
-        return list(self.tokenizer.encode(completion_text))
+        completion_ids = list(self.tokenizer.encode(completion_text))
+        usage = data.get("usage") or {}
+        note_generation(
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            prompt_tokens=usage.get("prompt_tokens") or len(prompt_ids),
+            completion_tokens=usage.get("completion_tokens") or len(completion_ids),
+            kind="answer",
+        )
+        return completion_ids
 
     async def generate_stream(
         self,
@@ -358,6 +368,7 @@ class OpenAIServerManager:
             payload["stop"] = stop
 
         parts: list[str] = []
+        started = time.perf_counter()
         try:
             session = self._get_session()
             async with session.post(
@@ -386,7 +397,14 @@ class OpenAIServerManager:
                 f"Cannot connect to inference server at {self.base_url}. "
                 f"Start one first, e.g.: mlx_lm.server --model {self.model} --port 8080"
             )
-        return list(self.tokenizer.encode("".join(parts)))
+        completion_ids = list(self.tokenizer.encode("".join(parts)))
+        note_generation(
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            prompt_tokens=len(prompt_ids),
+            completion_tokens=len(completion_ids),
+            kind="answer",
+        )
+        return completion_ids
 
 
 class LocalServerManager:
@@ -578,8 +596,16 @@ class LocalServerManager:
         # Run the blocking HF generate() in a worker thread, then decode and
         # emit back on the event loop thread — record_stage relies on a
         # ContextVar that run_in_executor's thread pool does not propagate.
+        started = time.perf_counter()
         response_ids = await loop.run_in_executor(
             None, self._generate_sync, prompt_ids, sampling_params, request_id
+        )
+        # The agent loops' turns are the answer the user reads.
+        note_generation(
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            prompt_tokens=len(prompt_ids),
+            completion_tokens=len(response_ids),
+            kind="answer",
         )
         if _capture.active() is not None:
             _capture.record_stage(
@@ -631,6 +657,7 @@ class LocalServerManager:
                 prompt_ids, sampling_params, request_id, streamer=streamer
             )
 
+        started = time.perf_counter()
         task = loop.run_in_executor(None, _run)
 
         # Drain in the executor too: TextIteratorStreamer.__next__ blocks.
@@ -647,7 +674,14 @@ class LocalServerManager:
             if chunk:
                 await on_token(chunk)
         await task
-        return result.get("ids", [])
+        response_ids = result.get("ids", [])
+        note_generation(
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            prompt_tokens=len(prompt_ids),
+            completion_tokens=len(response_ids),
+            kind="answer",
+        )
+        return response_ids
 
     def _record_truncation(self, request_id: str | None) -> None:
         """Note that *request_id*'s generation was cut short by the wall clock.

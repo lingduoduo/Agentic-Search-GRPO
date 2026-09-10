@@ -68,6 +68,30 @@ def group_reward_components(components: dict[str, float]) -> dict[str, float]:
     }
 
 
+# Which side of the pipeline each reward dimension scores. ``correctness`` and
+# ``citation_support`` judge the answer; ``retrieval_quality`` and
+# ``search_efficiency`` judge the documents and the cost of getting them.
+REWARD_SIDES: dict[str, tuple[str, ...]] = {
+    "retrieval": ("retrieval_quality", "search_efficiency"),
+    "generation": ("correctness", "citation_support"),
+}
+
+
+def reward_sides(components: dict[str, float]) -> dict[str, float]:
+    """Roll the four dimensions up into a retrieval side and a generation side.
+
+    Purely additive over :func:`group_reward_components`: the two values sum
+    to the same pre-scale total the dimensions do, so a reward regression can
+    be attributed to the retriever or the generator without changing any
+    existing value.
+    """
+    dims = group_reward_components(components)
+    return {
+        side: sum(dims[dimension] for dimension in members)
+        for side, members in REWARD_SIDES.items()
+    }
+
+
 def normalize_answer_text(text: str) -> str:
     """Normalize an answer string for simple sparse-reward matching."""
     lowered = text.strip().lower()

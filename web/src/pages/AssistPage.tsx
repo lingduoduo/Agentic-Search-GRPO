@@ -346,6 +346,7 @@ export function AssistPage() {
             documentCount={documents.length}
             progressSteps={progressSteps}
             completedSteps={completedSteps}
+            sessionId={isLoading ? null : sessionId}
           />
           {pendingApprovals.map((approval) => (
             <ToolApprovalCard
