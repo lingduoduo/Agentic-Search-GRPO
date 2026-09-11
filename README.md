@@ -195,5 +195,6 @@ See [Testing](docs/testing.md) for focused suites and integration-test prerequis
 - [Command-line tools](docs/cli.md) — the Go `query` + `memory` CLIs, build, usage, auth, and exit codes
 - [MCP server](docs/mcp.md) — installation, transport, client configuration, tools, and resources
 - [Configuration](docs/configuration.md) — environment variables for providers, services, retrieval, and routing
+- [Workload identity](docs/workload-identity.md) — automated-client authentication, production safeguards, and renewable Redis IAM credentials
 - [Testing](docs/testing.md) — backend and frontend checks, integration tests, and debugging commands
 - [Self-review task reports](docs/development/self-review-reports.md) — validated implementation handoffs and mandatory review gates

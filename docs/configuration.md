@@ -73,9 +73,19 @@ example CLI also honors `AGENTIC_SEARCH_INTENT_TOP_K` when `--intent_index` is s
 
 ## Application and authentication
 
+See [Workload identity](workload-identity.md) for JWT subject mappings, production
+safeguards, Kubernetes token renewal, and Redis IAM configuration. Existing local
+tokens are minted with a one-hour default lifetime; callers must renew them.
+
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `AGENTIC_SEARCH_AUTH_SECRET` | `agentic-search-dev-secret` | JWT signing secret |
+| `AGENTIC_SEARCH_AUTH_SECRET` | `agentic-search-dev-secret` | Local JWT signing secret; a non-default secret is required in production |
+| `AGENTIC_SEARCH_ENVIRONMENT` | `development` | Set to `production` to reject unsafe signing secrets, admin bypass, and local tokens without expiration |
+| `AGENTIC_SEARCH_DEV_ADMIN` | `false` | Development-only admin bypass; forbidden in production |
+| `AGENTIC_SEARCH_JWT_PUBLIC_KEY_URL` | — | Operator-configured HTTPS JWKS endpoint for workload authentication |
+| `AGENTIC_SEARCH_WORKLOAD_ISSUER` | — | Exact trusted HTTPS issuer; workload authentication is opt-in |
+| `AGENTIC_SEARCH_WORKLOAD_AUDIENCE` | — | Expected application audience for workload tokens |
+| `AGENTIC_SEARCH_WORKLOAD_SUBJECTS` | `{}` | JSON subject-to-local-identity mapping; see the workload identity guide |
 | `AGENTIC_SEARCH_SUPER_USERS` | `[]` | JSON list of admin user IDs or emails |
 | `AGENTIC_SEARCH_WEB_DB_PATH` | `:memory:` | SQLite path (`:memory:` for ephemeral) |
 | `AGENTIC_SEARCH_MCP_USER_SCOPED` | — | Comma-separated MCP tool names to mark `user_scoped`, so they are withheld from callers with no user |

@@ -142,3 +142,20 @@ def test_client_supplied_unknown_user_id_does_not_500(client, store):
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "authorization", ["Bearer invalid", "Bearer ", "Basic invalid"]
+)
+def test_invalid_authorization_does_not_retry_valid_cookie(
+    client, store, authorization
+):
+    store.upsert_user(UserRecord(id="alice", email="alice@example.test"))
+    client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="alice"))
+    assert client.get("/me").status_code == 200
+
+    headers = {"Authorization": authorization}
+    assert client.get("/me", headers=headers).status_code == 401
+    response = client.post("/chat/create-chat-session", json={}, headers=headers)
+    assert response.status_code == 200
+    assert store.get_chat_session(response.json()["chat_session_id"]).user_id is None

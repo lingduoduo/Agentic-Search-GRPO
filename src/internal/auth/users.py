@@ -2,8 +2,8 @@
 
 The repo does not depend on a full identity provider, but several server paths
 need a consistent way to represent the caller and pass it into ACL filters.  The
-JWT helpers below intentionally use only the Python standard library so local
-examples and tests do not need an extra auth package.
+Local HS256 tokens and explicitly configured workload federation share the same
+caller identity boundary.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import hashlib
 import hmac
 import json
 import math
-import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -38,7 +37,9 @@ class AuthenticatedUser:
 
 
 def get_auth_secret(secret: str | None = None) -> str:
-    return secret or os.getenv(AUTH_SECRET_ENV) or load_app_settings().auth.secret
+    if secret is not None:
+        return secret
+    return load_app_settings().auth.secret
 
 
 def generate_user_jwt_token(
@@ -64,8 +65,7 @@ def generate_user_jwt_token(
         payload["groups"] = sorted(set(group_ids))
     if tenant_id:
         payload["tenant_id"] = tenant_id
-    if expires_in_seconds is not None:
-        payload["exp"] = now + expires_in_seconds
+    payload["exp"] = now + (3600 if expires_in_seconds is None else expires_in_seconds)
     if extra:
         payload.update(extra)
     return _encode_jwt(payload, get_auth_secret(secret))
@@ -88,9 +88,11 @@ def decode_user_jwt_token(token: str, *, secret: str | None = None) -> dict[str,
                 raise ValueError(f"JWT {claim} must be finite.")
     now = time.time()
     expires_at = payload.get("exp")
+    if load_app_settings().auth.environment == "production" and expires_at is None:
+        raise ValueError("JWT expiration is required.")
     if expires_at is not None and expires_at <= now:
         raise ValueError("JWT has expired.")
-    if payload.get("nbf", now) > now:
+    if any(payload.get(c, now) > now for c in ("iat", "nbf")):
         raise ValueError("JWT is not yet valid.")
     return payload
 
@@ -100,6 +102,19 @@ def user_from_jwt_token(
     *,
     secret: str | None = None,
 ) -> AuthenticatedUser:
+    if secret is None:
+        from .workload_identity import workload_user, token_header
+
+        header = token_header(token)
+        if header.get("alg") != JWT_ALGORITHM:
+            return workload_user(token)
+        # An external issuer must never select the local verifier, even with HS256.
+        try:
+            unverified = json.loads(_b64url_decode(token.split(".")[1]))
+            if not isinstance(unverified, dict) or "iss" in unverified:
+                raise ValueError("Issuer-bearing tokens require workload verification")
+        except (IndexError, UnicodeError, TypeError, RecursionError) as exc:
+            raise ValueError("Malformed JWT") from exc
     payload = decode_user_jwt_token(token, secret=secret)
     user_id = payload.get("sub") or payload.get("user_id")
     if not isinstance(user_id, str) or not user_id.strip():
