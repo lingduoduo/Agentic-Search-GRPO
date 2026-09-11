@@ -1923,12 +1923,6 @@ def create_web_app(
                 mode=mode,
             )
         finally:
-            schedule_compression(
-                working,
-                session_id=session_id,
-                llm=llm,
-                enabled=settings.memory_compression,
-            )
             STAGE_LATENCY.record(_stage_metrics.finish_request(stage_token))
             cap = _capture.active()
             if cap is not None:
@@ -1936,6 +1930,14 @@ def create_web_app(
                 http_request.app.state.request_captures.put(cap.snapshot())
             if capture_token is not None:
                 _capture.reset_capture(capture_token)
+            # Last: a failure to schedule compression must never mask the
+            # request result above or skip the metrics/capture teardown.
+            schedule_compression(
+                working,
+                session_id=session_id,
+                llm=llm,
+                enabled=settings.memory_compression,
+            )
 
     @app.post("/api/agent")
     async def run_agent(

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+import types
 
 import pytest
 
 from src.internal.cache.interface import InMemoryCache
 from src.internal.db import AgenticSearchStore
+from src.internal.memory import working
 from src.internal.memory.working import (
+    SESSION_MEMORY_TTL_SECONDS,
     SUMMARY_PREFIX,
     SessionMemoryState,
     WorkingMemory,
@@ -19,6 +22,17 @@ from src.internal.memory.working import (
     save_state,
     schedule_compression,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_working_memory_module_state():
+    """`_inflight`/`_tasks` are module-level; clear them so tests don't leak
+    session ids or task references into each other."""
+    working._inflight.clear()
+    working._tasks.clear()
+    yield
+    working._inflight.clear()
+    working._tasks.clear()
 
 
 @pytest.fixture()
@@ -56,6 +70,21 @@ def test_save_then_load_roundtrips(cache):
     save_state(cache, "sid", state)
     assert load_state(cache, "sid") == state
     assert cache.get("session_memory:sid") is not None
+
+
+def test_save_state_writes_the_session_memory_ttl(cache):
+    class RecordingCache(InMemoryCache):
+        def __init__(self):
+            super().__init__()
+            self.set_calls: list[tuple] = []
+
+        def set(self, key, value, ex=None):
+            self.set_calls.append((key, value, ex))
+            super().set(key, value, ex=ex)
+
+    recording = RecordingCache()
+    save_state(recording, "sid", SessionMemoryState(summary="s"))
+    assert recording.set_calls[-1][2] == SESSION_MEMORY_TTL_SECONDS
 
 
 def test_load_state_malformed_json_is_default(cache):
@@ -221,6 +250,22 @@ def test_compress_llm_failure_leaves_state_and_allows_retry(store, cache):
     assert load_state(cache, sid).summary == "later"
 
 
+def test_compress_reads_text_off_an_llmresponse_shaped_object(store, cache):
+    # llm.complete can return an LLMResponse (a .text attribute) instead of a
+    # plain str; _complete must unwrap it either way.
+    sid, records = _seed(store, 12)
+
+    class LLMResponseLike:
+        def complete(self, messages, **kwargs):
+            return types.SimpleNamespace(text="from response")
+
+    ok = asyncio.run(
+        compress_session(sid, LLMResponseLike(), pending=records[:2], cache=cache)
+    )
+    assert ok is True
+    assert load_state(cache, sid).summary == "from response"
+
+
 def test_compress_empty_text_leaves_state(store, cache):
     sid, records = _seed(store, 12)
     ok = asyncio.run(
@@ -239,6 +284,27 @@ def test_compress_skips_when_cursor_already_at_last_pending(store, cache):
     ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=cache))
     assert ok is False
     assert llm.prompts == []
+
+
+def test_compress_trims_pending_already_covered_by_a_newer_cursor(store, cache):
+    # Two overlapping compression tasks can run out of order; the stored
+    # cursor may already be ahead of the start of `pending` by the time this
+    # task re-reads state. Already-covered turns must be dropped, not
+    # re-summarized, and the cursor must advance past the whole span given.
+    sid, records = _seed(store, 12)
+    save_state(
+        cache, sid, SessionMemoryState(summary="old", summarized_through=records[1].id)
+    )
+    llm = FakeLLM("new summary")
+    ok = asyncio.run(compress_session(sid, llm, pending=records[:4], cache=cache))
+    assert ok is True
+    user_prompt = llm.prompts[0][-1]["content"]
+    assert "New turns" in user_prompt
+    assert "m2" in user_prompt
+    assert "m3" in user_prompt
+    assert "m0" not in user_prompt
+    assert "m1" not in user_prompt
+    assert load_state(cache, sid).summarized_through == records[3].id
 
 
 def test_compress_no_pending_or_no_llm_is_noop(store, cache):

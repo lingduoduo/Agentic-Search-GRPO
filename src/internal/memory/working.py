@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 40
 SUMMARY_PREFIX = "Earlier in this conversation: "
+SESSION_MEMORY_TTL_SECONDS = 30 * 24 * 3600
 
 _STATE_KEY = "session_memory:{session_id}"
 
@@ -61,7 +62,11 @@ def load_state(cache: CacheBackend, session_id: str) -> SessionMemoryState:
 
 
 def save_state(cache: CacheBackend, session_id: str, state: SessionMemoryState) -> None:
-    cache.set(_STATE_KEY.format(session_id=session_id), json.dumps(asdict(state)))
+    cache.set(
+        _STATE_KEY.format(session_id=session_id),
+        json.dumps(asdict(state)),
+        ex=SESSION_MEMORY_TTL_SECONDS,
+    )
 
 
 @dataclass(frozen=True)
@@ -172,9 +177,16 @@ async def compress_session(
         lock = candidate
         _inflight.add(session_id)
         state = load_state(cache, session_id)
+        # Two overlapping compression tasks can run their tasks out of order;
+        # drop anything up to and including the (possibly newer) stored
+        # cursor so the later cursor is never overwritten by a stale span and
+        # already-covered turns never re-enter the prompt.
+        pending_ids = [r.id for r in pending]
+        if state.summarized_through in pending_ids:
+            pending = pending[pending_ids.index(state.summarized_through) + 1 :]
+            if not pending:
+                return False
         last_id = pending[-1].id
-        if state.summarized_through == last_id:
-            return False
         text = await asyncio.to_thread(
             _complete, llm, _summary_prompt(state.summary, pending)
         )
@@ -194,6 +206,8 @@ async def compress_session(
         logger.warning("session memory compression failed for %s: %s", session_id, exc)
         return False
     finally:
+        # Safe on the lock-not-acquired path too: the pre-`try` guard already
+        # returned for any same-process caller that saw this id in the set.
         _inflight.discard(session_id)
         if lock is not None:
             try:
@@ -216,6 +230,10 @@ def schedule_compression(
 
     Must be called from a running event loop. Returns the task (tests await
     it) or None when nothing was scheduled.
+
+    Tasks are not drained at shutdown; a cancelled task releases its lock and
+    in-flight entry in ``compress_session``'s ``finally``, and the interrupted
+    span is re-summarized on the next turn.
     """
     if not enabled or llm is None or not wm.pending:
         return None
