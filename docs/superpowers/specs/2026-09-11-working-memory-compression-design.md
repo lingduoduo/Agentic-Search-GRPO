@@ -92,7 +92,7 @@ own so a surface that re-caps the messages can re-apply it.
 | Surface | Today | After |
 |---|---|---|
 | Assist, `app.py` | `_trim_history(list_chat_messages(...))`, `MAX_HISTORY_MESSAGES = 40` | `load_working_memory(db, session_id, keep_last=MAX_HISTORY_MESSAGES)` |
-| Search mode, `app.py` | `_trim_history(history, 6)` inside `_build_search_agent_messages` | `_build_search_agent_messages(query, history, summary=wm.summary)`: it caps the tail to 6 as today, then prepends the summary system message when `summary` is non-empty. The existing cap tests pass unchanged |
+| Search mode, `app.py` | `_trim_history(history, 6)` inside `_build_search_agent_messages` | `_build_search_agent_messages` keeps a leading `role == "system"` message (the summary) ahead of the tail it caps to 6. No new argument |
 | Chat, `chat_backend.py` | `[-_MAX_HISTORY_MESSAGES:]` | `load_working_memory(store, session_id, keep_last=40)` |
 | Tools, `tool_backend.py` | `_history()` slice | same |
 
@@ -100,15 +100,19 @@ own so a surface that re-caps the messages can re-apply it.
 `_MAX_HISTORY_MESSAGES` constants are removed. `MAX_HISTORY_MESSAGES` moves to
 `working.py` as the default `keep_last`, and `app.py` re-exports it.
 
-Router construction changes so the Chat and Tool surfaces can schedule the
-task: `create_chat_router(db)` becomes `create_chat_router(db, settings=,
-llm=)` and `create_tool_router(...)` gains `llm=`. Both default to `None`, so
-every existing constructor call and test keeps working with compression off.
+`create_chat_router(db)` becomes `create_chat_router(db, *, llm=None,
+memory_compression=False)` and `create_tool_router(...)` gains the same two
+keyword arguments. A bool rather than the settings object, because the
+settings class lives in `app.py`, which imports both routers. Chat and Tool
+schedule the task right after persisting the user message: their answer comes
+from the local model, so the remote `llm` contends with nothing. Assist
+schedules in its `finally`, after the reply, because there the same `llm`
+produces the answer.
 
 ### Compression
 
 ```python
-async def compress_session(store, session_id, llm, *, pending, cache=None) -> bool
+async def compress_session(session_id, llm, *, pending, cache=None) -> bool
 ```
 
 Scheduled by each surface with `asyncio.create_task` **after** the assistant
@@ -121,6 +125,10 @@ The task:
 1. Takes `cache.lock(f"session_memory:{session_id}:compress", timeout=120)`
    non-blocking. If not acquired, returns `False`: another turn is already
    summarizing this span.
+   The task also keeps a module-level `_inflight` set of session ids being
+   summarized in this process. `_InMemoryCacheLock` always acquires, so on the
+   default backend this set is the real guard; the cache lock covers
+   cross-process deployments.
 2. Re-reads state. If `summarized_through` already equals the last pending id,
    returns `False` (the other task finished first).
 3. Builds one prompt: system `"You compress a conversation. Rewrite the prior
@@ -141,8 +149,8 @@ the span the request saw; a message appended in between is picked up next turn.
 
 `SearchExperienceSettings` gains `memory_compression: bool = False`, populated
 by `_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION")` in `from_app_settings`, and
-documented in `docs/configuration.md`. The Tool router already receives the
-settings object; the Chat router gains it (see Call sites).
+documented in `docs/configuration.md`. The Chat and Tool routers receive
+`memory_compression` as a bool (see Call sites).
 
 Flag off: `load_working_memory` is still the loader (the consolidation is
 unconditional) but the caller passes `cache=None`, which skips state entirely,
