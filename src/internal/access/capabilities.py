@@ -39,13 +39,19 @@ ANONYMOUS = RequestCapabilities(
 )
 
 
-def resolve_capabilities(user, store) -> RequestCapabilities:
+def resolve_capabilities(
+    user, store, *, query: str | None = None, encoder=None
+) -> RequestCapabilities:
     """Map a resolved user (or ``None``) to its capabilities.
 
     ``store`` is required rather than optional because the memory preamble is
     read from it. Keeping it an argument leaves this a plain function with no
     global state, so the agent loops and MCP paths can call it too — something a
     FastAPI dependency could not reach.
+
+    ``query`` and ``encoder`` let the preamble favor memories relevant to the
+    current request once the user is above the injection cap; both are
+    optional and the anonymous short-circuit runs before either is used.
     """
     if user is None or getattr(user, "is_anonymous", False):
         return ANONYMOUS
@@ -57,7 +63,7 @@ def resolve_capabilities(user, store) -> RequestCapabilities:
         group_ids=getattr(user, "group_ids", None),
     )
     try:
-        preamble = memory_preamble(store, user_id)
+        preamble = memory_preamble(store, user_id, query=query, encoder=encoder)
     except Exception as exc:  # noqa: BLE001 — memory must never fail a request
         logger.warning("memory preamble unavailable for %s: %s", user_id, exc)
         preamble = ""

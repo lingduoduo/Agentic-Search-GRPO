@@ -51,6 +51,7 @@ from src.context.models import ContextDocument
 from src.context.models import SearchFilters
 from src.context.search import SearchResult, citation_key
 from src.internal.access.capabilities import resolve_capabilities
+from src.internal.memory.service import maybe_build_encoder
 from src.internal.db import AgenticSearchStore
 from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
@@ -1381,6 +1382,10 @@ def create_web_app(
         )
         _app.state.search_agent_manager = None
         _app.state.search_agent_tokenizer = None
+        # One encoder per process for relevance-aware memory recall. None
+        # unless AGENTIC_SEARCH_MEMORY_SEMANTIC is set; the lexical fallback
+        # needs nothing. Never built per request.
+        _app.state.memory_encoder = maybe_build_encoder()
         if resolved.search_agent_server_url:
             try:
                 from transformers import AutoTokenizer
@@ -1581,7 +1586,12 @@ def create_web_app(
         hook_metadata: dict[str, object] = {}
 
         auth_user = _optional_user_from_request(http_request, db)
-        capabilities = resolve_capabilities(auth_user, db)
+        capabilities = resolve_capabilities(
+            auth_user,
+            db,
+            query=query,
+            encoder=getattr(http_request.app.state, "memory_encoder", None),
+        )
         # Attribution and entitlement both come from the authenticated caller.
         user_id = capabilities.user_id
         # Memory-augmented generation: a signed-in caller's stored memories are
