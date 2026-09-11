@@ -218,7 +218,16 @@ async def _run_tool_agent(
     messages = [{"role": m.role, "content": m.content} for m in history] + [
         {"role": "user", "content": query}
     ]
-    if not any(m["role"] == "system" for m in messages):
+    # A leading system message is working-memory context (the summary of
+    # turns that fell off the tail), not a replacement for the tool-use
+    # prompt: the loop's instructions come first, the summary follows in
+    # the same system message.
+    if messages and messages[0]["role"] == "system":
+        messages[0] = {
+            "role": "system",
+            "content": f"{TOOL_AGENT_SYSTEM_PROMPT}\n\n{messages[0]['content']}",
+        }
+    else:
         messages.insert(0, {"role": "system", "content": TOOL_AGENT_SYSTEM_PROMPT})
     output = await loop.run(
         messages,

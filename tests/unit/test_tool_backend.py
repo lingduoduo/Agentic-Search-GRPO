@@ -185,3 +185,125 @@ def test_no_broker_means_on_approval_none(monkeypatch):
     ) as resp:
         list(resp.iter_lines())
     assert captured["on_approval"] is None
+
+
+def _make_app_with_memory(*, llm=None, memory_compression=False):
+    store = AgenticSearchStore(":memory:")
+    app = FastAPI()
+    app.include_router(
+        create_tool_router(
+            store,
+            search_url="http://x/retrieve",
+            resolved=load_app_settings(),
+            llm=llm,
+            memory_compression=memory_compression,
+        )
+    )
+    app.state.search_agent_manager = object()
+    app.state.search_agent_tokenizer = object()
+    app.state.tool_approval_broker = None
+    app.state._store = store
+    return app
+
+
+def _seed_long(store, n=45):
+    session = store.create_chat_session(title="long")
+    records = [
+        store.add_chat_message(
+            session.id, role="user" if i % 2 == 0 else "assistant", content=f"m{i}"
+        )
+        for i in range(n)
+    ]
+    return session.id, records
+
+
+def _capture_tool_agent(monkeypatch):
+    from src.internal.servers.web import tool_agent_runner
+
+    captured: list = []
+
+    async def fake_run_tool_agent(query, *, history, **kw):
+        captured.append(list(history))
+        return ("ok", [], [], "tool", {"tool_calls": [], "num_turns": 1})
+
+    monkeypatch.setattr(tool_agent_runner, "_run_tool_agent", fake_run_tool_agent)
+    return captured
+
+
+def test_send_tool_flag_off_hands_runner_last_forty(monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import SessionMemoryState, save_state
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    app = _make_app_with_memory()
+    session_id, records = _seed_long(app.state._store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+    captured = _capture_tool_agent(monkeypatch)
+
+    resp = TestClient(app).post(
+        "/tool/send-tool-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert resp.status_code == 200
+    assert len(captured[0]) == 40
+    assert captured[0][0].role == "assistant"
+
+
+def test_send_tool_flag_on_prepends_stored_summary(monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import (
+        SUMMARY_PREFIX,
+        SessionMemoryState,
+        save_state,
+    )
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.tool_backend.schedule_compression",
+        lambda wm, **kw: None,
+    )
+    app = _make_app_with_memory(llm=object(), memory_compression=True)
+    session_id, records = _seed_long(app.state._store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+    captured = _capture_tool_agent(monkeypatch)
+
+    TestClient(app).post(
+        "/tool/send-tool-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert len(captured[0]) == 41
+    assert captured[0][0].role == "system"
+    assert captured[0][0].content == SUMMARY_PREFIX + "S"
+
+
+def test_send_tool_schedules_compression(monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.servers.query_and_chat import tool_backend
+
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
+    sentinel = object()
+    app = _make_app_with_memory(llm=sentinel, memory_compression=True)
+    session_id, _ = _seed_long(app.state._store)
+    _capture_tool_agent(monkeypatch)
+    scheduled: list = []
+
+    def fake_schedule(wm, **kw):
+        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        return None
+
+    monkeypatch.setattr(tool_backend, "schedule_compression", fake_schedule)
+    TestClient(app).post(
+        "/tool/send-tool-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert scheduled == [(5, True, sentinel)]

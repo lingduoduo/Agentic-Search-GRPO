@@ -43,7 +43,6 @@ from src.agents.core.control_flow_trace import (
     ControlFlowRecorder,
     EventSink,
 )
-from src.context import ChatMessage
 from src.context import LLMClient
 from src.context import answer_with_retrieval
 from src.context import build_context_bundle
@@ -130,7 +129,13 @@ from .tool_agent_runner import (
     ToolCallView,
     _run_tool_agent,
 )
+from src.internal.cache.interface import get_cache_backend
 from src.internal.cache.serving import configure_serving_cache, reset_serving_cache
+from src.internal.memory.working import (
+    MAX_HISTORY_MESSAGES,
+    load_working_memory,
+    schedule_compression,
+)
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
 
@@ -157,6 +162,10 @@ class SearchExperienceSettings:
     # shared default_user bucket. Off by default: the CLI is documented as
     # working unauthenticated for local research use.
     memory_require_auth: bool = False
+    # Summarize turns that fall off the history tail into a system message the
+    # next turn sees, using the configured LLM client. Off by default; with no
+    # LLM client the flag is inert.
+    memory_compression: bool = False
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
@@ -180,6 +189,7 @@ class SearchExperienceSettings:
             allow_client_search_url=_flag("AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL"),
             debug_panels=_flag("AGENTIC_SEARCH_DEBUG_PANELS"),
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
+            memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
@@ -370,6 +380,7 @@ def _register_routers(
     debug_panels: bool = False,
     llm: LLMClient | None = None,
     memory_require_auth: bool = False,
+    memory_compression: bool = False,
 ) -> None:
     """Attach all API routers and exception handlers to *app*."""
 
@@ -377,12 +388,22 @@ def _register_routers(
     app.include_router(create_users_router(db, settings))
 
     # --- Core search & chat ---
-    app.include_router(create_chat_router(db))
+    app.include_router(
+        create_chat_router(db, llm=llm, memory_compression=memory_compression)
+    )
     app.include_router(create_search_router(db, search_url=search_url))
 
     from src.internal.servers.query_and_chat.tool_backend import create_tool_router
 
-    app.include_router(create_tool_router(db, search_url=search_url, resolved=settings))
+    app.include_router(
+        create_tool_router(
+            db,
+            search_url=search_url,
+            resolved=settings,
+            llm=llm,
+            memory_compression=memory_compression,
+        )
+    )
     app.include_router(query_basic_router)
     app.include_router(create_query_history_router(db, settings))
 
@@ -614,7 +635,26 @@ async def _run_search_agent(
 ) -> tuple:
     """Run the multi-turn SearchAgentLoop. Assumes a local model is configured."""
     from src import get_registered_agent_loop, resolve_agent_name
-    from src.agents.search import SearchAgentLoopConfig
+    from src.agents.search import SearchAgentLoopConfig, build_search_agent_instruction
+
+    history = list(history or [])
+    summary = ""
+    if history and history[0].role == "system":
+        # Working-memory summary: context, not a prompt. The loop skips its own
+        # instruction when it sees a leading system message, so the summary
+        # rides inside the loop's instruction instead of ahead of it.
+        summary = history.pop(0).content
+    max_turns = 3
+    system_prompt = None
+    if summary:
+        system_prompt = (
+            build_search_agent_instruction(
+                max_search_limit=max_turns,
+                max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+            )
+            + "\n\n"
+            + summary
+        )
 
     loop_cls = get_registered_agent_loop(resolve_agent_name("search_agent"))
     loop = loop_cls(
@@ -623,13 +663,14 @@ async def _run_search_agent(
         search_config=SearchAgentLoopConfig(
             search_url=search_url,
             topk=top_k,
-            max_turns=3,
+            max_turns=max_turns,
             filters=filters,
             allow_internal_knowledge_answer=allow_internal_knowledge_answer,
+            system_prompt=system_prompt,
         ),
     )
     output = await loop.run(
-        _build_search_agent_messages(query, history or []),
+        _build_search_agent_messages(query, history),
         sampling_params={"temperature": 0.0, "max_tokens": 256},
         on_turn=on_turn,
         on_trace=on_trace,
@@ -1425,6 +1466,7 @@ def create_web_app(
         debug_panels=settings.debug_panels,
         llm=llm,
         memory_require_auth=settings.memory_require_auth,
+        memory_compression=settings.memory_compression,
     )
 
     frontend_dist = _frontend_dist_path()
@@ -1551,12 +1593,13 @@ def create_web_app(
 
         session_request = _copy_agent_request(request, user_id=user_id)
         session_id = _ensure_session(db, session_request, auth_user)
-        history = _trim_history(
-            [
-                ChatMessage(role=message.role, content=message.content)
-                for message in db.list_chat_messages(session_id)
-            ]
+        working = load_working_memory(
+            db,
+            session_id,
+            keep_last=MAX_HISTORY_MESSAGES,
+            cache=get_cache_backend() if settings.memory_compression else None,
         )
+        history = working.messages
         db.add_chat_message(session_id, role="user", content=query)
 
         # Resolve the retrieval URL server-side. A client-supplied search_url is
@@ -1887,6 +1930,14 @@ def create_web_app(
                 http_request.app.state.request_captures.put(cap.snapshot())
             if capture_token is not None:
                 _capture.reset_capture(capture_token)
+            # Last: a failure to schedule compression must never mask the
+            # request result above or skip the metrics/capture teardown.
+            schedule_compression(
+                working,
+                session_id=session_id,
+                llm=llm,
+                enabled=settings.memory_compression,
+            )
 
     @app.post("/api/agent")
     async def run_agent(
@@ -2119,8 +2170,6 @@ _VALID_AGENT_MODES = {
     "search_agent",
     "tool_agent",
 }
-
-MAX_HISTORY_MESSAGES = 40
 
 
 def _trim_history(history: list, max_messages: int = MAX_HISTORY_MESSAGES) -> list:
