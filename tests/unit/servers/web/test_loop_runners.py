@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.search import AgenticRAGResult
 from src.agents.core.base import AgentLoopOutput
-from src.context.models import ContextDocument, SearchContextBundle, SearchFilters
+from src.context.models import (
+    ChatMessage,
+    ContextDocument,
+    SearchContextBundle,
+    SearchFilters,
+)
 from src.context.search import SearchResult
 from src.internal.servers.web import app as web_app
 from src.internal.tools import routing_tools as web_app_routing_tools
@@ -67,6 +72,66 @@ async def test_run_search_agent_returns_canonical_tuple(monkeypatch):
     assert documents[0].metadata["source"] == "Local Retrieval"
     assert extra["num_turns"] == 1
     assert extra["control_flow_trace"] == ["e1"]
+
+
+@pytest.mark.asyncio
+async def test_run_search_agent_folds_leading_summary_into_system_prompt(monkeypatch):
+    from src.internal.memory.working import SUMMARY_PREFIX
+
+    captured = {}
+
+    async def fake_run(self, messages, **kw):
+        captured["system_prompt"] = self.search_config.system_prompt
+        captured["messages"] = messages
+        return _search_output()
+
+    monkeypatch.setattr("src.agents.search.SearchAgentLoop.run", fake_run)
+    await web_app._run_search_agent(
+        "q",
+        manager=object(),
+        tokenizer=object(),
+        search_url="http://x",
+        top_k=3,
+        history=[
+            ChatMessage(role="system", content=SUMMARY_PREFIX + "S"),
+            ChatMessage(role="user", content="hi"),
+        ],
+    )
+    system_prompt = captured["system_prompt"]
+    messages = captured["messages"]
+    assert "<search>" in system_prompt
+    assert system_prompt.endswith(SUMMARY_PREFIX + "S")
+    assert all(m["role"] != "system" for m in messages)
+    assert messages[-1] == {"role": "user", "content": "q"}
+
+
+@pytest.mark.asyncio
+async def test_run_search_agent_without_summary_keeps_default_system_prompt(
+    monkeypatch,
+):
+    from src.internal.memory.working import SUMMARY_PREFIX
+
+    captured = {}
+
+    async def fake_run(self, messages, **kw):
+        captured["system_prompt"] = self.search_config.system_prompt
+        captured["messages"] = messages
+        return _search_output()
+
+    monkeypatch.setattr("src.agents.search.SearchAgentLoop.run", fake_run)
+    await web_app._run_search_agent(
+        "q",
+        manager=object(),
+        tokenizer=object(),
+        search_url="http://x",
+        top_k=3,
+        history=[ChatMessage(role="user", content="hi")],
+    )
+    # No summary present: system_prompt is left None on the config, so the
+    # loop resolves its own default instruction, unmodified.
+    system_prompt = captured["system_prompt"]
+    assert "<search>" in system_prompt
+    assert SUMMARY_PREFIX not in system_prompt
 
 
 @pytest.mark.asyncio
@@ -357,12 +422,30 @@ async def test_tool_agent_prepends_tool_use_system_prompt(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_agent_does_not_override_an_existing_system_message(monkeypatch):
+async def test_tool_agent_merges_a_leading_system_message_after_its_own_prompt(
+    monkeypatch,
+):
+    from src.internal.servers.web.tool_agent_runner import TOOL_AGENT_SYSTEM_PROMPT
+
     history = [types.SimpleNamespace(role="system", content="caller system prompt")]
     captured = await _run(monkeypatch, history=history)
     roles = [m["role"] for m in captured["messages"]]
     assert roles.count("system") == 1
-    assert captured["messages"][0]["content"] == "caller system prompt"
+    assert captured["messages"][0]["content"].startswith(TOOL_AGENT_SYSTEM_PROMPT)
+    assert captured["messages"][0]["content"].endswith("caller system prompt")
+
+
+@pytest.mark.asyncio
+async def test_tool_agent_merges_a_leading_working_memory_summary(monkeypatch):
+    from src.internal.memory.working import SUMMARY_PREFIX
+    from src.internal.servers.web.tool_agent_runner import TOOL_AGENT_SYSTEM_PROMPT
+
+    history = [types.SimpleNamespace(role="system", content=SUMMARY_PREFIX + "S")]
+    captured = await _run(monkeypatch, history=history)
+    roles = [m["role"] for m in captured["messages"]]
+    assert roles.count("system") == 1
+    assert captured["messages"][0]["content"].startswith(TOOL_AGENT_SYSTEM_PROMPT)
+    assert captured["messages"][0]["content"].endswith(SUMMARY_PREFIX + "S")
 
 
 # ---------------------------------------------------------------------------

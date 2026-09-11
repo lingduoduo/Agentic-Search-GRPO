@@ -635,7 +635,26 @@ async def _run_search_agent(
 ) -> tuple:
     """Run the multi-turn SearchAgentLoop. Assumes a local model is configured."""
     from src import get_registered_agent_loop, resolve_agent_name
-    from src.agents.search import SearchAgentLoopConfig
+    from src.agents.search import SearchAgentLoopConfig, build_search_agent_instruction
+
+    history = list(history or [])
+    summary = ""
+    if history and history[0].role == "system":
+        # Working-memory summary: context, not a prompt. The loop skips its own
+        # instruction when it sees a leading system message, so the summary
+        # rides inside the loop's instruction instead of ahead of it.
+        summary = history.pop(0).content
+    max_turns = 3
+    system_prompt = None
+    if summary:
+        system_prompt = (
+            build_search_agent_instruction(
+                max_search_limit=max_turns,
+                max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+            )
+            + "\n\n"
+            + summary
+        )
 
     loop_cls = get_registered_agent_loop(resolve_agent_name("search_agent"))
     loop = loop_cls(
@@ -644,13 +663,14 @@ async def _run_search_agent(
         search_config=SearchAgentLoopConfig(
             search_url=search_url,
             topk=top_k,
-            max_turns=3,
+            max_turns=max_turns,
             filters=filters,
             allow_internal_knowledge_answer=allow_internal_knowledge_answer,
+            system_prompt=system_prompt,
         ),
     )
     output = await loop.run(
-        _build_search_agent_messages(query, history or []),
+        _build_search_agent_messages(query, history),
         sampling_params={"temperature": 0.0, "max_tokens": 256},
         on_turn=on_turn,
         on_trace=on_trace,
@@ -2165,18 +2185,12 @@ SEARCH_AGENT_HISTORY_MESSAGES = 6
 def _build_search_agent_messages(query: str, history: list) -> list[dict[str, str]]:
     """Build the SearchAgentLoop message buffer: capped prior turns + the query.
 
-    A leading ``system`` message is the working-memory summary of turns that
-    already fell off the tail; it is kept ahead of the cap. The rest of the
-    history is capped to the last ``SEARCH_AGENT_HISTORY_MESSAGES`` messages
-    and mapped to ``{"role", "content"}`` dicts; the current user query is
-    appended last. ``SearchAgentLoop._with_system_prompt`` prepends the system
-    prompt.
+    History is capped to the last ``SEARCH_AGENT_HISTORY_MESSAGES`` messages and
+    mapped to ``{"role", "content"}`` dicts; the current user query is appended
+    last. ``SearchAgentLoop._with_system_prompt`` prepends the system prompt.
     """
-    leading = history[:1] if history and history[0].role == "system" else []
-    capped = _trim_history(
-        history[len(leading) :], max_messages=SEARCH_AGENT_HISTORY_MESSAGES
-    )
-    messages = [{"role": m.role, "content": m.content} for m in [*leading, *capped]]
+    capped = _trim_history(history, max_messages=SEARCH_AGENT_HISTORY_MESSAGES)
+    messages = [{"role": m.role, "content": m.content} for m in capped]
     messages.append({"role": "user", "content": query})
     return messages
 
