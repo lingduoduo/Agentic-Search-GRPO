@@ -496,6 +496,33 @@ def test_compress_curate_raising_keeps_summary_and_releases(store, cache):
     assert load_state(cache, sid).curated_through == records[3].id
 
 
+def test_compress_curate_cursor_write_failure_still_returns_true(store):
+    sid, records = _seed(store, 12)
+
+    class FlakySecondSetCache(InMemoryCache):
+        def __init__(self):
+            super().__init__()
+            self.set_calls = 0
+
+        def set(self, key, value, ex=None):
+            self.set_calls += 1
+            if self.set_calls == 2:
+                raise RuntimeError("cache down")
+            super().set(key, value, ex=ex)
+
+    flaky = FlakySecondSetCache()
+    ok = asyncio.run(
+        compress_session(
+            sid, FakeLLM("S"), pending=records[:2], cache=flaky, curate=_curator(True)
+        )
+    )
+    assert ok is True
+    state = load_state(flaky, sid)
+    assert state.summary == "S"
+    assert state.summarized_through == records[1].id
+    assert state.curated_through is None
+
+
 def test_compress_without_curate_preserves_curated_through(store, cache):
     sid, records = _seed(store, 12)
     save_state(cache, sid, SessionMemoryState(curated_through="keep-me"))

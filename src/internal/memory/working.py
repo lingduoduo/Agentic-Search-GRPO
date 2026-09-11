@@ -38,7 +38,8 @@ class SessionMemoryState:
     summary: str = ""
     # Id of the last message the summary covers. None until the first compress.
     summarized_through: str | None = None
-    # Reserved for auto-curation (next PR); never written here.
+    # Id of the last message curated into the user's long-term memories.
+    # None until the first successful curation.
     curated_through: str | None = None
 
 
@@ -176,13 +177,18 @@ async def _curate_after_summary(
         return
     if not curated:
         return
-    save_state(
-        cache,
-        session_id,
-        SessionMemoryState(
-            summary=summary, summarized_through=last_id, curated_through=last_id
-        ),
-    )
+    try:
+        save_state(
+            cache,
+            session_id,
+            SessionMemoryState(
+                summary=summary, summarized_through=last_id, curated_through=last_id
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - the summary is already saved
+        logger.warning(
+            "memory auto-curation cursor write failed for %s: %s", session_id, exc
+        )
 
 
 async def compress_session(
