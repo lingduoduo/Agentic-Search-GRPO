@@ -15,7 +15,7 @@ import functools
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from src.context.models import ChatMessage
 from src.internal.cache.interface import CacheBackend, get_cache_backend
@@ -163,7 +163,6 @@ async def _curate_after_summary(
     session_id: str,
     curate: CurateFn,
     pending: list[ChatMessageRecord],
-    summary: str,
     last_id: str,
 ) -> None:
     """Best-effort: curate the span the summary just covered, then move the
@@ -178,13 +177,8 @@ async def _curate_after_summary(
     if not curated:
         return
     try:
-        save_state(
-            cache,
-            session_id,
-            SessionMemoryState(
-                summary=summary, summarized_through=last_id, curated_through=last_id
-            ),
-        )
+        current = load_state(cache, session_id)
+        save_state(cache, session_id, replace(current, curated_through=last_id))
     except Exception as exc:  # noqa: BLE001 - the summary is already saved
         logger.warning(
             "memory auto-curation cursor write failed for %s: %s", session_id, exc
@@ -248,9 +242,7 @@ async def compress_session(
             ),
         )
         if curate is not None:
-            await _curate_after_summary(
-                cache, session_id, curate, pending, text, last_id
-            )
+            await _curate_after_summary(cache, session_id, curate, pending, last_id)
         return True
     except Exception as exc:  # noqa: BLE001 - compression is a delivery detail
         logger.warning("session memory compression failed for %s: %s", session_id, exc)

@@ -257,6 +257,7 @@ async def curate_from_conversation(
     max_turns: int = MAX_CURATION_TURNS,
     *,
     conversation: str | None = None,
+    source: str = "manual",
 ) -> dict[str, Any]:
     # A caller that already holds the text (the compression task, which
     # curates exactly the span it summarized) hands it over; everyone else
@@ -338,6 +339,7 @@ async def curate_from_conversation(
         "tool_calls": tool_call_log,
         "memory_after": after,
         "counts": dict(counts),
+        "source": source,
     }
     record = store.add_memory_trajectory(
         user_id,
@@ -370,8 +372,19 @@ async def curate_span(
     """
     if not records:
         return False
+    # Same rule as the manual path: only a session this user owns may feed
+    # this user's memories. The surfaces let a signed-in caller continue an
+    # ownerless (pre-login) session, so without this an anonymous transcript
+    # would be filed under whoever picked the session up.
+    if not _readable(store.get_chat_session(session_id), user_id):
+        return False
     result = await curate_from_conversation(
-        store, user_id, llm, session_id=session_id, conversation=_format_span(records)
+        store,
+        user_id,
+        llm,
+        session_id=session_id,
+        conversation=_format_span(records),
+        source="auto",
     )
     return result.get("status") == "ok"
 
