@@ -88,23 +88,3 @@ def test_posting_to_another_users_session_is_refused(app_and_store):
     assert response.status_code == 404, (
         f"anonymous caller wrote to another user's session: {response.status_code}"
     )
-
-
-def test_the_auth_audit_does_not_enforce_anything(app_and_store):
-    """Why this survived: the mechanism that looks like a guard is advisory.
-
-    ``check_router_auth`` logs every route as public or "guarded", where
-    *guarded* means only "expected to have per-handler auth". It never verifies
-    that the handler has any. A reader scanning startup logs sees
-    ``/api/sessions/{session_id}`` absent from the public list and reasonably
-    concludes it is protected.
-
-    This test passes today and is not a bug report — it pins the audit's actual
-    contract so the gap above is understood as missing enforcement rather than
-    a bypassed check.
-    """
-    from src.internal.servers.web.auth_check import PUBLIC_ENDPOINT_SPECS
-
-    public_paths = {path for path, _ in PUBLIC_ENDPOINT_SPECS}
-
-    assert "/api/sessions/{session_id}" not in public_paths

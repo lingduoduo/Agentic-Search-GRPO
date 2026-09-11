@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -30,6 +31,7 @@ from pydantic import BaseModel
 
 from src.internal.auth import (
     AuthenticatedUser,
+    extract_bearer_token,
     generate_user_jwt_token,
     user_from_headers,
 )
@@ -69,6 +71,8 @@ def resolve_request_user(request: Request) -> AuthenticatedUser | None:
     user = user_from_headers(request.headers)
     if user:
         return user
+    if extract_bearer_token(request.headers) is not None:
+        return None  # An explicitly supplied invalid bearer cannot borrow a cookie identity.
     cookie_val = request.cookies.get(_COOKIE_NAME)
     if cookie_val:
         try:
@@ -83,7 +87,7 @@ def resolve_request_user(request: Request) -> AuthenticatedUser | None:
 def resolve_active_user(
     request: Request, store: AgenticSearchStore
 ) -> AuthenticatedUser | None:
-    """Resolve the caller, rejecting a token whose user no longer exists.
+    """Resolve an active stored caller and refresh their email and role.
 
     A JWT stays valid until it expires, so it outlives the row it names whenever
     the users table is rebuilt — which the dev default (`:memory:`) does on every
@@ -94,19 +98,28 @@ def resolve_active_user(
     read-only endpoints keep working — the same cookie appearing to succeed and
     fail at once.
 
-    The store is the source of truth: a token with no matching row is treated as
-    unauthenticated, exactly as if no credential had been sent.
+    The store is the source of truth: a token with no active matching row is
+    treated as unauthenticated. Role and email changes take effect immediately.
     """
     user = resolve_request_user(request)
     if user is None or user.is_anonymous:
         return None
-    if store.get_user(user.id) is None:
+    record = store.get_user(user.id)
+    if (
+        record is None
+        or not record.metadata.get("is_active", True)
+        or not store.get_user_active(user.id)
+    ):
         return None
-    return user
+    return replace(
+        user,
+        email=record.email,
+        metadata={**user.metadata, "role": record.metadata.get("role", "basic")},
+    )
 
 
-def _require_auth(request: Request) -> AuthenticatedUser:
-    user = resolve_request_user(request)
+def _require_auth(request: Request, store: AgenticSearchStore) -> AuthenticatedUser:
+    user = resolve_active_user(request, store)
     if user is None or user.is_anonymous:
         raise HTTPException(status_code=401, detail="Authentication required.")
     return user
@@ -115,7 +128,7 @@ def _require_auth(request: Request) -> AuthenticatedUser:
 def _require_admin_role(
     request: Request, store: AgenticSearchStore
 ) -> AuthenticatedUser:
-    user = _require_auth(request)
+    user = _require_auth(request, store)
     record = store.get_user(user.id)
     if record is None or record.metadata.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
@@ -183,7 +196,8 @@ def create_users_router(
             id=record.id,
             email=record.email or "",
             role=record.metadata.get("role", "basic"),
-            is_active=bool(record.metadata.get("is_active", True)),
+            is_active=bool(record.metadata.get("is_active", True))
+            and store.get_user_active(record.id),
         )
 
     def _issue_token(record: UserRecord) -> str:
@@ -245,7 +259,7 @@ def create_users_router(
         ):
             raise HTTPException(status_code=400, detail="Invalid credentials.")
 
-        if not record.metadata.get("is_active", True):
+        if not _user_response(record).is_active:
             raise HTTPException(status_code=403, detail="Account deactivated.")
 
         token = _issue_token(record)
@@ -263,7 +277,7 @@ def create_users_router(
     # ------------------------------------------------------------------
     @router.get("/me")
     def me(request: Request) -> UserResponse:
-        user = _require_auth(request)
+        user = _require_auth(request, store)
         record = store.get_user(user.id)
         if record is None:
             raise HTTPException(status_code=404, detail="User not found.")
@@ -274,7 +288,7 @@ def create_users_router(
     # ------------------------------------------------------------------
     @router.get("/me/permissions")
     def me_permissions(request: Request) -> list[str]:
-        user = _require_auth(request)
+        user = _require_auth(request, store)
         record = store.get_user(user.id)
         if record is None:
             return []
@@ -308,6 +322,7 @@ def create_users_router(
     def activate_user(body: SetStatusRequest, request: Request) -> UserResponse:
         _require_admin_role(request, store)
         record = _get_user_record_by_email(body.user_email)
+        store.set_user_active(record.id, True)
         updated = store.upsert_user(
             UserRecord(
                 id=record.id,
@@ -322,6 +337,7 @@ def create_users_router(
     def deactivate_user(body: SetStatusRequest, request: Request) -> UserResponse:
         _require_admin_role(request, store)
         record = _get_user_record_by_email(body.user_email)
+        store.set_user_active(record.id, False)
         updated = store.upsert_user(
             UserRecord(
                 id=record.id,
@@ -351,7 +367,7 @@ def create_users_router(
             for u in all_users
             if (q is None or (u.email and q.lower() in u.email.lower()))
             and (roles is None or u.metadata.get("role") in roles)
-            and (is_active is None or u.metadata.get("is_active", True) == is_active)
+            and (is_active is None or _user_response(u).is_active == is_active)
         ]
         start = page_num * page_size
         page = filtered[start : start + page_size]

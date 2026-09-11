@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from src.internal.configs import load_app_settings
+from src.internal.servers._auth import make_require_admin
 
 from src.internal.db import AgenticSearchStore
 from src.internal.servers.web.auth_check import PUBLIC_ENDPOINT_SPECS
@@ -68,17 +71,18 @@ def test_get_tenant_usage_limit_overrides_returns_unlimited():
 
 
 def _make_app() -> FastAPI:
-    app = FastAPI()
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    guard = make_require_admin(load_app_settings())
 
     @app.get("/health")
     def health():
         return {"status": "ok"}
 
-    @app.get("/api/data")
+    @app.get("/api/data", dependencies=[Depends(guard)])
     def data():
         return {}
 
-    @app.post("/api/secret")
+    @app.post("/api/secret", dependencies=[Depends(guard)])
     def secret():
         return {}
 
@@ -104,7 +108,7 @@ def test_check_router_auth_warns_for_declared_but_missing_route(caplog):
     import logging
 
     app = _make_app()
-    specs = [("/nonexistent-path", {"GET"})]
+    specs = [("/health", {"GET"}), ("/nonexistent-path", {"GET"})]
     with caplog.at_level(logging.WARNING):
         check_router_auth(app, specs)
     assert any("nonexistent-path" in r.message for r in caplog.records)

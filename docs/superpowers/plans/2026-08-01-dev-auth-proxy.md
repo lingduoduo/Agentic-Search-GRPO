@@ -37,7 +37,14 @@ in the dev workflow section, next to the existing dev-admin guidance.
 
 **Verify:** the documented prefix list matches `web/vite.config.ts` exactly.
 
+✅ Confirmed on 2026-09-10: the documentation includes the auth and page proxies;
+the `/tools` page bypass is also described.
+
 ## Task 5 — Regression check
 
 **Verify:** `cd web && npm run typecheck` clean; `npm run test -- --run` green;
 `pytest` unaffected (no Python changes, run as a sanity check).
+
+✅ Frontend reverified on 2026-09-10 with `npm run test:ci`: typecheck,
+production build and 215 tests pass. `web/dist` contains only `index.html` and
+assets, with no `dev-login.html`.

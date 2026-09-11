@@ -11,8 +11,9 @@ from src.internal.configs import AppSettings
 def make_require_admin(app_settings: AppSettings):
     """Return a FastAPI dependency that enforces super-user access.
 
-    A user is considered admin if they appear in the configured super_users
-    list OR if their JWT token carries role="admin" (set at login time).
+    Active web accounts are admin if listed in configured super_users or their
+    current stored role is admin. Standalone services without a user store use
+    the signed role claim instead.
     """
 
     def _require_admin(request: Request) -> AuthenticatedUser:
@@ -27,6 +28,14 @@ def make_require_admin(app_settings: AppSettings):
                 metadata={"role": "admin"},
             )
         user = user_from_headers(request.headers)
+        # The web app owns a user store: deletion, deactivation and role changes
+        # take effect immediately, even when a previously issued JWT is valid.
+        # Standalone service routers can still use configured stateless tokens.
+        store = getattr(request.app.state, "auth_store", None)
+        if store is not None:
+            from src.internal.servers.users.api import resolve_active_user
+
+            user = resolve_active_user(request, store)
         if user is None or user.is_anonymous:
             raise HTTPException(status_code=401, detail="Authentication required.")
         super_users = app_settings.auth.super_users

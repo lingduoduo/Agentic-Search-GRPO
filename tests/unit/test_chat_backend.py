@@ -208,24 +208,31 @@ def test_delete_cascades_messages(client: TestClient, store: AgenticSearchStore)
 # ---------------------------------------------------------------------------
 
 
-def test_feedback_accepted(client: TestClient):
+def test_feedback_accepted(client: TestClient, store):
+    session = store.create_chat_session()
+    message = store.add_chat_message(session.id, role="assistant", content="answer")
     resp = client.post(
         "/chat/create-chat-message-feedback",
-        json={"chat_message_id": "msg-1", "is_positive": True},
+        json={"chat_message_id": message.id, "is_positive": True},
     )
     assert resp.status_code == 200
+    assert store.get_chat_message(message.id).metadata["feedback"] == "like"
 
 
-def test_feedback_negative(client: TestClient):
+def test_feedback_negative(client: TestClient, store):
+    session = store.create_chat_session()
+    message = store.add_chat_message(session.id, role="assistant", content="answer")
     resp = client.post(
         "/chat/create-chat-message-feedback",
         json={
-            "chat_message_id": "msg-2",
+            "chat_message_id": message.id,
             "is_positive": False,
             "feedback_text": "wrong",
         },
     )
     assert resp.status_code == 200
+    assert store.get_chat_message(message.id).metadata["feedback"] == "dislike"
+    assert store.get_chat_message(message.id).metadata["feedback_text"] == "wrong"
 
 
 # ---------------------------------------------------------------------------

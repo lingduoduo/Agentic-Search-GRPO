@@ -63,6 +63,10 @@ Two caveats:
 
 ## Admin dashboard
 
+Debug panels also require an authenticated admin when enabled. Their request
+traces and retrieval diagnostics use the same admin guard as the dashboard;
+the debug enablement flag alone does not grant access.
+
 The web UI includes admin panels — **Connectors, Manage tools, History, Admin
 overview, Analytics** (top-bar buttons + the observability panels). The tools
 button is labelled *Manage tools*, not *Tools*: the `/tools` nav link goes to the

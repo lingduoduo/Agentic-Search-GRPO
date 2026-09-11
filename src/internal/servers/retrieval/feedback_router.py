@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.internal.db import AgenticSearchStore
+from src.internal.servers._auth import caller_may_use_session
+from src.internal.servers.users.api import resolve_active_user
 
 
 FeedbackTarget = Literal["retrieval", "generation", "overall"]
@@ -36,7 +38,14 @@ def create_feedback_router(db: AgenticSearchStore) -> APIRouter:
     router = APIRouter(tags=["feedback"])
 
     @router.post("/api/feedback", response_model=FeedbackResponse)
-    def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
+    def submit_feedback(
+        request: FeedbackRequest, http_request: Request
+    ) -> FeedbackResponse:
+        session = db.get_chat_session(request.session_id)
+        if session is not None and not caller_may_use_session(
+            session, resolve_active_user(http_request, db)
+        ):
+            raise HTTPException(status_code=404, detail="Session not found")
         db.save_retrieval_feedback(
             request.session_id,
             request.signal,

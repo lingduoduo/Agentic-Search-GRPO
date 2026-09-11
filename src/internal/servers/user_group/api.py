@@ -22,7 +22,7 @@ from fastapi import Request
 from fastapi import Response
 
 from src.internal.auth import AuthenticatedUser
-from src.internal.auth import user_from_headers
+from src.internal.servers.users.api import resolve_active_user
 from src.internal.configs import AppSettings
 from src.internal.db import AgenticSearchStore
 from src.internal.db.models import GroupRecord
@@ -48,7 +48,7 @@ def create_user_group_router(
     _require_admin = make_require_admin(app_settings)
 
     def _require_user(request: Request) -> AuthenticatedUser:
-        user = user_from_headers(request.headers)
+        user = resolve_active_user(request, store)
         if user is None or user.is_anonymous:
             raise HTTPException(status_code=401, detail="Authentication required.")
         return user

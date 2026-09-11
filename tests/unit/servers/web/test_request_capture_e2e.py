@@ -15,6 +15,8 @@ from src.agents.search import AgenticRAGResult
 from src.context.models import SearchContextBundle
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
 from src.internal.servers.web.intent import RouteDecision, RouteStrategy
+from src.internal.auth import generate_user_jwt_token
+from src.internal.db import UserRecord
 
 
 def _stub_agentic_rag_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,6 +61,12 @@ def web_client_debug_on(monkeypatch, tmp_path):
         llm=fake_llm,
     )
     with TestClient(app) as client:
+        app.state.auth_store.upsert_user(
+            UserRecord(id="debug-admin", metadata={"role": "admin"})
+        )
+        client.cookies.set(
+            "fastapiusersauth", generate_user_jwt_token(user_id="debug-admin")
+        )
         yield client
 
 

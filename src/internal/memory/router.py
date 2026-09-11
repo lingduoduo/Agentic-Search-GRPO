@@ -48,6 +48,11 @@ def create_memory_router(
         ``require_auth`` refuses them instead.
         """
         user = user_from_headers(request.headers)
+        store = getattr(request.app.state, "auth_store", None)
+        if store is not None:
+            from src.internal.servers.users.api import resolve_active_user
+
+            user = resolve_active_user(request, store)
         if user is not None:
             return user.id
         if require_auth:

@@ -68,6 +68,7 @@ def test_admin_observability_endpoint_requires_admin(tmp_path):
     store = AgenticSearchStore(tmp_path / "state.sqlite3")
     try:
         _seed_admin_surface(store)
+        store.upsert_user(UserRecord(id=_ADMIN))
         app = create_web_app(
             SearchExperienceSettings(db_path=tmp_path / "unused.sqlite3"),
             app_settings=_settings(),

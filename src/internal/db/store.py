@@ -669,6 +669,12 @@ class AgenticSearchStore:
         self._conn.commit()
         return record
 
+    def get_chat_message(self, message_id: str) -> ChatMessageRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM chat_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        return self._row_to_chat_message(row) if row is not None else None
+
     def list_chat_messages(self, session_id: str) -> list[ChatMessageRecord]:
         rows = self._conn.execute(
             """

@@ -13,14 +13,14 @@ from itertools import islice
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from src.internal.auth import AuthenticatedUser
-from src.internal.servers._auth import caller_may_use_session
+from src.internal.servers._auth import caller_may_use_session, make_require_admin
 from src.internal.configs import AppSettings
 from src.internal.configs import load_app_settings
 from src.internal.llm.interfaces import LLMConfig
@@ -112,6 +112,7 @@ from src.internal.servers.tenants.api import router as tenants_router
 from src.internal.servers.token_rate_limits.api import create_token_rate_limits_router
 from src.internal.servers.user_group.api import create_user_group_router
 from src.internal.servers.users.api import create_users_router
+from src.internal.servers.users.api import _require_auth
 from src.internal.servers.users.api import resolve_active_user
 from src.internal.tools import SearchPage
 from src.internal.tools import fetch_pages_concurrently
@@ -436,7 +437,10 @@ def _register_routers(
     if debug_panels:
         from src.internal.servers.web.debug_router import create_debug_router
 
-        app.include_router(create_debug_router(search_url=search_url, llm=llm, db=db))
+        app.include_router(
+            create_debug_router(search_url=search_url, llm=llm, db=db),
+            dependencies=[Depends(make_require_admin(settings))],
+        )
 
 
 class _WebHybridRetrievalStage:
@@ -1294,6 +1298,8 @@ def create_web_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Fail before seeding, background discovery, or loading a model.
+        check_router_auth(_app, PUBLIC_ENDPOINT_SPECS)
         seed_db(db)
         seed_tools(
             tool_registry,
@@ -1320,7 +1326,6 @@ def create_web_app(
             if mcp_specs
             else None
         )
-        check_router_auth(_app, PUBLIC_ENDPOINT_SPECS)
         _app.state.search_agent_manager = None
         _app.state.search_agent_tokenizer = None
         if resolved.search_agent_server_url:
@@ -1395,6 +1400,7 @@ def create_web_app(
                 db.close()
 
     app = FastAPI(title="Agentic Search Web", lifespan=lifespan)
+    app.state.auth_store = db
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
@@ -1462,9 +1468,12 @@ def create_web_app(
         )
 
     @app.post("/api/sessions")
-    def create_session(request: SessionCreateRequest) -> ChatSessionView:
+    def create_session(
+        request: SessionCreateRequest, http_request: Request
+    ) -> ChatSessionView:
+        caller = _optional_user_from_request(http_request, db)
         session = db.create_chat_session(
-            user_id=request.user_id,
+            user_id=caller.id if caller else None,
             title=request.title or "Search session",
             metadata={"source": "web"},
         )
@@ -1518,13 +1527,8 @@ def create_web_app(
 
         auth_user = _optional_user_from_request(http_request, db)
         capabilities = resolve_capabilities(auth_user, db)
-        # `user_id` is bookkeeping only (session attribution, hook payloads) —
-        # a client-supplied request.user_id names a session, nothing more.
-        # Entitlement (the ACL, the memory preamble, user-scoped tools) comes
-        # only from `capabilities`, which is derived from the authenticated
-        # caller. Letting request.user_id decide entitlement would let an
-        # unauthenticated caller name any user and receive that user's access.
-        user_id = request.user_id or (auth_user.id if auth_user else None)
+        # Attribution and entitlement both come from the authenticated caller.
+        user_id = capabilities.user_id
         # Memory-augmented generation: a signed-in caller's stored memories are
         # injected because they are signed in. Anonymous callers have none.
         user_memory = capabilities.memory_preamble or None
@@ -1905,9 +1909,7 @@ def create_web_app(
     ) -> ToolApprovalDecisionResponse:
         from src.agents.tool import ApprovalDecision
 
-        auth_user = _optional_user_from_request(http_request, db)
-        if auth_user is None:
-            raise HTTPException(status_code=401, detail="Authentication required")
+        auth_user = _require_auth(http_request, db)
         try:
             await http_request.app.state.tool_approval_broker.decide(
                 approval_id,
@@ -2083,14 +2085,8 @@ def _ensure_session(
                 # the caller's message to it.
                 raise HTTPException(status_code=404, detail="Session not found")
             return request.session_id
-    # Only attribute the session to a user the store actually knows. `user_id`
-    # can arrive from the request body as well as from a token, and a session
-    # row for an unknown user violates the chat_sessions.user_id foreign key.
-    # An unrecognised id degrades to an anonymous session rather than a 500.
-    user_id = request.user_id if request.user_id else None
-    if user_id is not None and store.get_user(user_id) is None:
-        logger.info("Ignoring unknown user_id %r for new session", user_id)
-        user_id = None
+    # Body-supplied identities must never attribute a conversation to another user.
+    user_id = caller.id if caller and not caller.is_anonymous else None
     session = store.create_chat_session(
         user_id=user_id,
         title=request.query[:80],

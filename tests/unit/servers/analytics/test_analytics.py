@@ -190,6 +190,7 @@ def test_analytics_rejects_non_admin_user(tmp_path):
 
 def test_analytics_uses_default_30_day_window_when_no_params(tmp_path):
     store = AgenticSearchStore(tmp_path / "live.sqlite3")
+    store.upsert_user(UserRecord(id=_ADMIN_ID))
     settings = AppSettings(auth=AuthSettings(super_users=(_ADMIN_ID,)))
     web = create_web_app(
         SearchExperienceSettings(db_path=tmp_path / "live.sqlite3"),
