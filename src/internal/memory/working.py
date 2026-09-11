@@ -11,13 +11,16 @@ default, Redis when ``CACHE_BACKEND=redis`` -- so no new dependency is added.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
-from dataclasses import asdict, dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, replace
 
 from src.context.models import ChatMessage
 from src.internal.cache.interface import CacheBackend, get_cache_backend
 from src.internal.db.models import ChatMessageRecord
+from src.internal.memory.service import curate_span
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,8 @@ class SessionMemoryState:
     summary: str = ""
     # Id of the last message the summary covers. None until the first compress.
     summarized_through: str | None = None
-    # Reserved for auto-curation (next PR); never written here.
+    # Id of the last message curated into the user's long-term memories.
+    # None until the first successful curation.
     curated_through: str | None = None
 
 
@@ -131,6 +135,11 @@ _inflight: set[str] = set()
 # Strong references to scheduled tasks, so the event loop cannot drop them.
 _tasks: set[asyncio.Task] = set()
 
+# Curates one span of records into a user's long-term memories. Built by
+# ``schedule_compression`` from the store, user and llm; ``compress_session``
+# only ever sees the callable.
+CurateFn = Callable[[list[ChatMessageRecord]], Awaitable[bool]]
+
 
 def _summary_prompt(prior: str, pending: list[ChatMessageRecord]) -> list[dict]:
     turns = "\n".join(f"{r.role.upper()}: {r.content}" for r in pending)
@@ -149,18 +158,49 @@ def _complete(llm, prompt: list[dict]) -> str:
     return (text or "").strip()
 
 
+async def _curate_after_summary(
+    cache: CacheBackend,
+    session_id: str,
+    curate: CurateFn,
+    pending: list[ChatMessageRecord],
+    last_id: str,
+) -> None:
+    """Best-effort: curate the span the summary just covered, then move the
+    curated cursor. A failure is logged and the span is not retried -- the
+    summary is the record, long-term memory is a bonus, and a six-turn
+    tool-calling loop is not worth re-running on every transient error."""
+    try:
+        curated = await curate(pending)
+    except Exception as exc:  # noqa: BLE001 - curation is best-effort
+        logger.warning("memory auto-curation failed for %s: %s", session_id, exc)
+        return
+    if not curated:
+        return
+    try:
+        current = load_state(cache, session_id)
+        save_state(cache, session_id, replace(current, curated_through=last_id))
+    except Exception as exc:  # noqa: BLE001 - the summary is already saved
+        logger.warning(
+            "memory auto-curation cursor write failed for %s: %s", session_id, exc
+        )
+
+
 async def compress_session(
     session_id: str,
     llm,
     *,
     pending: list[ChatMessageRecord],
     cache: CacheBackend | None = None,
+    curate: CurateFn | None = None,
 ) -> bool:
     """Summarize ``pending`` into the session's stored summary.
 
     Returns True when the state advanced. False means nothing to do, another
     task owns this span, or the summarizer failed -- in which case the state
     is untouched and the next turn retries the same span.
+
+    When ``curate`` is given it runs after the summary is saved, over the
+    same span; see ``_curate_after_summary``.
     """
     if not pending or llm is None or session_id in _inflight:
         return False
@@ -201,6 +241,8 @@ async def compress_session(
                 curated_through=state.curated_through,
             ),
         )
+        if curate is not None:
+            await _curate_after_summary(cache, session_id, curate, pending, last_id)
         return True
     except Exception as exc:  # noqa: BLE001 - compression is a delivery detail
         logger.warning("session memory compression failed for %s: %s", session_id, exc)
@@ -225,6 +267,9 @@ def schedule_compression(
     llm,
     enabled: bool,
     cache: CacheBackend | None = None,
+    store=None,
+    user_id: str | None = None,
+    auto_curate: bool = False,
 ) -> asyncio.Task | None:
     """Fire-and-forget ``compress_session`` when there is something to compress.
 
@@ -234,11 +279,22 @@ def schedule_compression(
     Tasks are not drained at shutdown; a cancelled task releases its lock and
     in-flight entry in ``compress_session``'s ``finally``, and the interrupted
     span is re-summarized on the next turn.
+
+    With ``auto_curate`` on, a ``store`` and a ``user_id``, the same task also
+    curates the summarized span into that user's memories. An anonymous
+    session (``user_id`` is None) is never curated: auto-curation is silent,
+    and silently pooling anonymous transcripts into a shared bucket is the
+    leak ``AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH`` exists to prevent.
     """
     if not enabled or llm is None or not wm.pending:
         return None
+    curate: CurateFn | None = None
+    if auto_curate and store is not None and user_id is not None:
+        curate = functools.partial(curate_span, store, user_id, llm, session_id)
     task = asyncio.create_task(
-        compress_session(session_id, llm, pending=wm.pending, cache=cache)
+        compress_session(
+            session_id, llm, pending=wm.pending, cache=cache, curate=curate
+        )
     )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)

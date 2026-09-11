@@ -1621,6 +1621,13 @@ def test_memory_compression_flag_defaults_off_and_reads_env(monkeypatch):
     assert SearchExperienceSettings.from_app_settings().memory_compression is True
 
 
+def test_memory_auto_curate_flag_defaults_off_and_reads_env(monkeypatch):
+    monkeypatch.delenv("AGENTIC_SEARCH_MEMORY_AUTO_CURATE", raising=False)
+    assert SearchExperienceSettings.from_app_settings().memory_auto_curate is False
+    monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_AUTO_CURATE", "true")
+    assert SearchExperienceSettings.from_app_settings().memory_auto_curate is True
+
+
 def _seed_long_session(store, n=45):
     session = store.create_chat_session(title="long")
     records = [
@@ -1726,7 +1733,16 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
     scheduled: list = []
 
     def fake_schedule(wm, **kw):
-        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        scheduled.append(
+            (
+                len(wm.pending),
+                kw["enabled"],
+                kw["llm"],
+                kw["store"],
+                kw["user_id"],
+                kw["auto_curate"],
+            )
+        )
         return None
 
     monkeypatch.setattr(
@@ -1745,7 +1761,9 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
     sentinel_llm = object()
     app = create_web_app(
         SearchExperienceSettings(
-            db_path=tmp_path / "state.sqlite3", memory_compression=True
+            db_path=tmp_path / "state.sqlite3",
+            memory_compression=True,
+            memory_auto_curate=True,
         ),
         store=store,
         llm=sentinel_llm,
@@ -1755,7 +1773,7 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
         json={"query": "follow up", "mode": "chat_once", "session_id": session_id},
     )
 
-    assert scheduled == [(5, True, sentinel_llm)]
+    assert scheduled == [(5, True, sentinel_llm, store, None, True)]
 
 
 def test_register_routers_passes_memory_settings_to_chat_and_tool(
@@ -1763,16 +1781,24 @@ def test_register_routers_passes_memory_settings_to_chat_and_tool(
 ):
     seen: dict = {}
 
-    def fake_chat_router(store, *, llm=None, memory_compression=False):
-        seen["chat"] = (llm, memory_compression)
+    def fake_chat_router(
+        store, *, llm=None, memory_compression=False, memory_auto_curate=False
+    ):
+        seen["chat"] = (llm, memory_compression, memory_auto_curate)
         from fastapi import APIRouter
 
         return APIRouter()
 
     def fake_tool_router(
-        store, *, search_url, resolved, llm=None, memory_compression=False
+        store,
+        *,
+        search_url,
+        resolved,
+        llm=None,
+        memory_compression=False,
+        memory_auto_curate=False,
     ):
-        seen["tool"] = (llm, memory_compression)
+        seen["tool"] = (llm, memory_compression, memory_auto_curate)
         from fastapi import APIRouter
 
         return APIRouter()
@@ -1787,8 +1813,13 @@ def test_register_routers_passes_memory_settings_to_chat_and_tool(
     sentinel = object()
     create_web_app(
         SearchExperienceSettings(
-            db_path=tmp_path / "s.sqlite3", memory_compression=True
+            db_path=tmp_path / "s.sqlite3",
+            memory_compression=True,
+            memory_auto_curate=True,
         ),
         llm=sentinel,
     )
-    assert seen == {"chat": (sentinel, True), "tool": (sentinel, True)}
+    assert seen == {
+        "chat": (sentinel, True, True),
+        "tool": (sentinel, True, True),
+    }

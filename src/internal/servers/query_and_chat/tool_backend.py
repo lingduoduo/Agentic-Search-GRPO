@@ -43,6 +43,7 @@ def create_tool_router(
     resolved,
     llm=None,
     memory_compression: bool = False,
+    memory_auto_curate: bool = False,
 ) -> APIRouter:
     router = APIRouter(prefix="/tool", tags=["tool"])
 
@@ -100,7 +101,13 @@ def create_tool_router(
         # The answer comes from the local model, so the remote llm summarizing
         # now contends with nothing; one site covers both branches.
         schedule_compression(
-            working, session_id=session_id, llm=llm, enabled=memory_compression
+            working,
+            session_id=session_id,
+            llm=llm,
+            enabled=memory_compression,
+            store=store,
+            user_id=capabilities.user_id,
+            auto_curate=memory_auto_curate,
         )
 
         async def _run(on_turn=None, on_approval=None):

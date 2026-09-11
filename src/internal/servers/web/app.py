@@ -166,6 +166,10 @@ class SearchExperienceSettings:
     # next turn sees, using the configured LLM client. Off by default; with no
     # LLM client the flag is inert.
     memory_compression: bool = False
+    # On each compression event, also curate the summarized turns into the
+    # signed-in user's long-term memories. Off by default; inert unless
+    # memory_compression is on; anonymous sessions are never curated.
+    memory_auto_curate: bool = False
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
@@ -190,6 +194,7 @@ class SearchExperienceSettings:
             debug_panels=_flag("AGENTIC_SEARCH_DEBUG_PANELS"),
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
             memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
+            memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
@@ -381,6 +386,7 @@ def _register_routers(
     llm: LLMClient | None = None,
     memory_require_auth: bool = False,
     memory_compression: bool = False,
+    memory_auto_curate: bool = False,
 ) -> None:
     """Attach all API routers and exception handlers to *app*."""
 
@@ -389,7 +395,12 @@ def _register_routers(
 
     # --- Core search & chat ---
     app.include_router(
-        create_chat_router(db, llm=llm, memory_compression=memory_compression)
+        create_chat_router(
+            db,
+            llm=llm,
+            memory_compression=memory_compression,
+            memory_auto_curate=memory_auto_curate,
+        )
     )
     app.include_router(create_search_router(db, search_url=search_url))
 
@@ -402,6 +413,7 @@ def _register_routers(
             resolved=settings,
             llm=llm,
             memory_compression=memory_compression,
+            memory_auto_curate=memory_auto_curate,
         )
     )
     app.include_router(query_basic_router)
@@ -1467,6 +1479,7 @@ def create_web_app(
         llm=llm,
         memory_require_auth=settings.memory_require_auth,
         memory_compression=settings.memory_compression,
+        memory_auto_curate=settings.memory_auto_curate,
     )
 
     frontend_dist = _frontend_dist_path()
@@ -1937,6 +1950,9 @@ def create_web_app(
                 session_id=session_id,
                 llm=llm,
                 enabled=settings.memory_compression,
+                store=db,
+                user_id=user_id,
+                auto_curate=settings.memory_auto_curate,
             )
 
     @app.post("/api/agent")

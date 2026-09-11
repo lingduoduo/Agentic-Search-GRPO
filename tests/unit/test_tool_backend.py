@@ -187,7 +187,9 @@ def test_no_broker_means_on_approval_none(monkeypatch):
     assert captured["on_approval"] is None
 
 
-def _make_app_with_memory(*, llm=None, memory_compression=False):
+def _make_app_with_memory(
+    *, llm=None, memory_compression=False, memory_auto_curate=False
+):
     store = AgenticSearchStore(":memory:")
     app = FastAPI()
     app.include_router(
@@ -197,6 +199,7 @@ def _make_app_with_memory(*, llm=None, memory_compression=False):
             resolved=load_app_settings(),
             llm=llm,
             memory_compression=memory_compression,
+            memory_auto_curate=memory_auto_curate,
         )
     )
     app.state.search_agent_manager = object()
@@ -292,13 +295,24 @@ def test_send_tool_schedules_compression(monkeypatch):
 
     monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
     sentinel = object()
-    app = _make_app_with_memory(llm=sentinel, memory_compression=True)
+    app = _make_app_with_memory(
+        llm=sentinel, memory_compression=True, memory_auto_curate=True
+    )
     session_id, _ = _seed_long(app.state._store)
     _capture_tool_agent(monkeypatch)
     scheduled: list = []
 
     def fake_schedule(wm, **kw):
-        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        scheduled.append(
+            (
+                len(wm.pending),
+                kw["enabled"],
+                kw["llm"],
+                kw["store"],
+                kw["user_id"],
+                kw["auto_curate"],
+            )
+        )
         return None
 
     monkeypatch.setattr(tool_backend, "schedule_compression", fake_schedule)
@@ -306,4 +320,49 @@ def test_send_tool_schedules_compression(monkeypatch):
         "/tool/send-tool-message",
         json={"message": "next", "session_id": session_id, "stream": False},
     )
-    assert scheduled == [(5, True, sentinel)]
+    assert scheduled == [(5, True, sentinel, app.state._store, None, True)]
+
+
+def test_send_tool_schedules_compression_with_signed_in_user(monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.servers.query_and_chat import tool_backend
+
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
+    sentinel = object()
+    app = _make_app_with_memory(
+        llm=sentinel, memory_compression=True, memory_auto_curate=True
+    )
+    session_id, _ = _seed_long(app.state._store)
+    _capture_tool_agent(monkeypatch)
+    scheduled: list = []
+
+    def fake_schedule(wm, **kw):
+        scheduled.append(
+            (
+                len(wm.pending),
+                kw["enabled"],
+                kw["llm"],
+                kw["store"],
+                kw["user_id"],
+                kw["auto_curate"],
+            )
+        )
+        return None
+
+    monkeypatch.setattr(tool_backend, "schedule_compression", fake_schedule)
+
+    class _User:
+        id = "u1"
+        is_anonymous = False
+        email = "u@x"
+
+    monkeypatch.setattr(tool_backend, "resolve_active_user", lambda *a, **k: _User())
+    from src.internal.db import UserRecord
+
+    app.state._store.upsert_user(UserRecord(id="u1", email="u@x"))
+
+    TestClient(app).post(
+        "/tool/send-tool-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert scheduled == [(5, True, sentinel, app.state._store, "u1", True)]

@@ -9,7 +9,11 @@ import os
 import re
 from typing import Any, Callable
 
-from src.internal.db.models import UserMemoryRecord, UserProfileEntryRecord
+from src.internal.db.models import (
+    ChatMessageRecord,
+    UserMemoryRecord,
+    UserProfileEntryRecord,
+)
 from src.internal.memory.tools import build_memory_registry
 
 logger = logging.getLogger(__name__)
@@ -251,8 +255,18 @@ async def curate_from_conversation(
     llm,
     session_id: str | None = None,
     max_turns: int = MAX_CURATION_TURNS,
+    *,
+    conversation: str | None = None,
+    source: str = "manual",
 ) -> dict[str, Any]:
-    sources = _gather_sources(store, user_id, session_id)
+    # A caller that already holds the text (the compression task, which
+    # curates exactly the span it summarized) hands it over; everyone else
+    # reads the user's sessions as before.
+    sources = (
+        conversation
+        if conversation is not None
+        else _gather_sources(store, user_id, session_id)
+    )
     if not sources.strip():
         # A named session that yielded nothing is reported distinctly, so
         # losing access does not read as "nothing to do". One message covers
@@ -325,6 +339,7 @@ async def curate_from_conversation(
         "tool_calls": tool_call_log,
         "memory_after": after,
         "counts": dict(counts),
+        "source": source,
     }
     record = store.add_memory_trajectory(
         user_id,
@@ -338,6 +353,40 @@ async def curate_from_conversation(
         "counts": dict(counts),
         "memory_count": len(after),
     }
+
+
+def _format_span(records: list[ChatMessageRecord]) -> str:
+    text = "\n".join(f"{r.role.upper()}: {r.content}" for r in records)
+    return text[-MEMORY_GATHER_CHAR_BUDGET:]
+
+
+async def curate_span(
+    store, user_id: str, llm, session_id: str, records: list[ChatMessageRecord]
+) -> bool:
+    """Curate one span of a session into *user_id*'s memories.
+
+    The compression task calls this over the turns it just summarized. True
+    means curation ran; False means there was nothing to curate or it did
+    not complete. Formats the span exactly as ``_gather_sources`` formats
+    whole sessions so the curation prompt sees the same shape either way.
+    """
+    if not records:
+        return False
+    # Same rule as the manual path: only a session this user owns may feed
+    # this user's memories. The surfaces let a signed-in caller continue an
+    # ownerless (pre-login) session, so without this an anonymous transcript
+    # would be filed under whoever picked the session up.
+    if not _readable(store.get_chat_session(session_id), user_id):
+        return False
+    result = await curate_from_conversation(
+        store,
+        user_id,
+        llm,
+        session_id=session_id,
+        conversation=_format_span(records),
+        source="auto",
+    )
+    return result.get("status") == "ok"
 
 
 _PROFILE_SYSTEM = (
