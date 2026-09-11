@@ -76,13 +76,16 @@ def create_chat_router(
     *,
     llm=None,
     memory_compression: bool = False,
+    memory_auto_curate: bool = False,
 ) -> APIRouter:
     """Return an APIRouter for chat session endpoints bound to *store*.
 
     ``llm`` and ``memory_compression`` drive working-memory compression: when
     both are set, turns that fall off the history tail are summarized in the
     background and the next turn sees the summary. Plain chat itself still
-    runs on the local model.
+    runs on the local model. ``memory_auto_curate`` additionally curates each
+    summarized span into the signed-in user's memories; anonymous sessions
+    are never curated.
     """
 
     router = APIRouter(prefix="/chat", tags=["chat"])
@@ -232,7 +235,13 @@ def create_chat_router(
         # now contends with nothing; one site covers both the stream and
         # non-stream branches.
         schedule_compression(
-            working, session_id=session_id, llm=llm, enabled=memory_compression
+            working,
+            session_id=session_id,
+            llm=llm,
+            enabled=memory_compression,
+            store=store,
+            user_id=user_id,
+            auto_curate=memory_auto_curate,
         )
 
         if not body.stream:

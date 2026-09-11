@@ -293,14 +293,26 @@ def _seed_long(store, n=45):
     return session.id, records
 
 
-def _client_with(store, monkeypatch, *, llm=None, memory_compression=False):
+def _client_with(
+    store,
+    monkeypatch,
+    *,
+    llm=None,
+    memory_compression=False,
+    memory_auto_curate=False,
+):
     monkeypatch.setattr(
         "src.internal.servers.query_and_chat.chat_backend.resolve_active_user",
         lambda _request, _store: _USER,
     )
     app = FastAPI()
     app.include_router(
-        create_chat_router(store, llm=llm, memory_compression=memory_compression)
+        create_chat_router(
+            store,
+            llm=llm,
+            memory_compression=memory_compression,
+            memory_auto_curate=memory_auto_curate,
+        )
     )
     app.state.search_agent_manager = object()
     app.state.search_agent_tokenizer = object()
@@ -385,7 +397,16 @@ def test_send_chat_schedules_compression(store, monkeypatch):
     scheduled: list = []
 
     def fake_schedule(wm, **kw):
-        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        scheduled.append(
+            (
+                len(wm.pending),
+                kw["enabled"],
+                kw["llm"],
+                kw["store"],
+                kw["user_id"],
+                kw["auto_curate"],
+            )
+        )
         return None
 
     monkeypatch.setattr(
@@ -393,9 +414,15 @@ def test_send_chat_schedules_compression(store, monkeypatch):
         fake_schedule,
     )
     sentinel = object()
-    client = _client_with(store, monkeypatch, llm=sentinel, memory_compression=True)
+    client = _client_with(
+        store,
+        monkeypatch,
+        llm=sentinel,
+        memory_compression=True,
+        memory_auto_curate=True,
+    )
     client.post(
         "/chat/send-chat-message",
         json={"message": "next", "session_id": session_id, "stream": False},
     )
-    assert scheduled == [(5, True, sentinel)]
+    assert scheduled == [(5, True, sentinel, store, _USER_ID, True)]
