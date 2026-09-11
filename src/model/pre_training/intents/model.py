@@ -335,7 +335,20 @@ class IntentIndex:
         return float(selected.mean())
 
     def _similarities(self, vector: np.ndarray) -> np.ndarray:
-        return self._vectors @ np.asarray(vector, dtype=np.float32)
+        query = np.asarray(vector, dtype=np.float32)
+        expected = (self._vectors.shape[1],)
+        if query.shape != expected:
+            # einsum's own error for a mismatched operand is about subscripts,
+            # not about the caller's mistake; say what was expected.
+            raise ValueError(
+                f"query vector has shape {query.shape}; the index expects a "
+                f"single vector of shape {expected}"
+            )
+        # This is a small matrix-vector reduction, not a batched BLAS workload.
+        # BLAS workers can keep spinning after scoring and contend with the
+        # next CPU encoder call. Keep the contraction on the calling thread;
+        # optimize=True may dispatch it back through BLAS.
+        return np.einsum("ij,j->i", self._vectors, query, optimize=False)
 
     def route_scores(
         self, vector: np.ndarray, *, top_k: int = TOP_K

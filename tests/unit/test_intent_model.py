@@ -54,6 +54,13 @@ def _decide(index: IntentIndex, vector, **overrides):
     return index.decide(vector, **{**thresholds, **overrides})
 
 
+@pytest.mark.parametrize("query", [np.array([1.0]), np.ones(2), np.ones((3, 1))])
+def test_scoring_rejects_wrong_query_shape(query):
+    index = _index()
+    with pytest.raises(ValueError, match="shape"):
+        index.route_scores(query)
+
+
 def test_query_on_a_route_axis_picks_that_route_with_full_confidence():
     decision = _decide(_index(), _unit(1, 0, 0))
 
