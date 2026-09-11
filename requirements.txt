@@ -14,7 +14,7 @@ httpx2>=0.28.0
 aiohttp==3.9.3
 beautifulsoup4==4.13.4
 numpy==1.26.4
-redis>=4.0.0
+redis>=6.2.0
 
 # Local model inference stack used by `python -m src.run_agentic_search --local`.
 # MPS on macOS requires torch>=2.3 and transformers>=4.40.
@@ -52,3 +52,6 @@ pytest-asyncio>=0.23.0
 datasets==5.0.0
 mlx-lm>=0.31.3
 playwright
+
+PyJWT[crypto]>=2.10.1,<3
+boto3>=1.34.0

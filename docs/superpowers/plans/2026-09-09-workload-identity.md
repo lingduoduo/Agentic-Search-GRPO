@@ -62,3 +62,12 @@ Files: docs/workload-identity.md; this plan and spec as needed.
 - [ ] Run full `python -m pytest tests/unit -q`, repository Ruff checks, and `git diff --check`.
 - [ ] Independently review security/correctness and resolve findings with regression tests.
 - [ ] Commit and push feature branch; open PR describing behavior, migration and actual validation limits. Do not merge.
+
+
+## Resume record — 2026-09-10
+
+Resumed the existing `security/workload-identity` worktree at `6983007d`; retained the partial authentication implementation and both test files. Inbound authentication and Redis implementation run independently, with dependency declarations, documentation and integrated verification owned by the controller. No new worktree or intermediate planning folder was created.
+
+The user requested completion and workspace cleanup. After verification and PR creation, preserve the feature branch in the main working directory and remove the extra worktree; do not merge into main or deploy cloud resources.
+
+Redis task verification: the resumed baseline produced 9 failures and 1 pass (missing credential provider/configuration checks and unsupported TLS options). The completed implementation passes all 13 Redis IAM tests, including real SigV4 parameters, SDK credential expiry/refresh, primary/replica and async connection construction. Targeted Ruff and whitespace checks passed.

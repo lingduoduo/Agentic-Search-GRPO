@@ -42,6 +42,10 @@ DEFAULT_CONFIG: dict = {
     # -------------------------------------------------------------------------
     "AGENTIC_SEARCH_AUTH_SECRET": "agentic-search-dev-secret",
     "AGENTIC_SEARCH_JWT_PUBLIC_KEY_URL": "",
+    "AGENTIC_SEARCH_ENVIRONMENT": "development",
+    "AGENTIC_SEARCH_WORKLOAD_ISSUER": "",
+    "AGENTIC_SEARCH_WORKLOAD_AUDIENCE": "",
+    "AGENTIC_SEARCH_WORKLOAD_SUBJECTS": "{}",
     "AGENTIC_SEARCH_SUPER_USERS": "[]",
     "AGENTIC_SEARCH_SUPER_API_KEY": "",
     "AUTH_COOKIE_NAME": "fastapiusersauth",

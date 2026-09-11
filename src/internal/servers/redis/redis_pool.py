@@ -24,7 +24,6 @@ from redis.retry import Retry
 from src.shared_configs.contextvars import get_current_tenant_id
 
 from src.internal.servers.redis.iam_auth import configure_redis_iam_auth
-from src.internal.servers.redis.iam_auth import create_redis_ssl_context_if_iam
 from src.internal.servers.redis.tenant_redis_client import TenantRedisClient
 
 logger = logging.getLogger(__name__)
@@ -128,19 +127,20 @@ class RedisPool:
         ssl: bool = False,
     ) -> redis.BlockingConnectionPool:
         if USE_REDIS_IAM_AUTH:
-            ssl_context = create_redis_ssl_context_if_iam()
+            connection_kwargs: dict[str, Any] = {"ssl_ca_certs": ssl_ca_certs}
+            configure_redis_iam_auth(connection_kwargs)
+            connection_kwargs.pop("ssl")
             return redis.BlockingConnectionPool(
                 host=host,
                 port=port,
                 db=db,
-                password=None,
                 max_connections=max_connections,
                 timeout=None,
                 health_check_interval=REDIS_HEALTH_CHECK_INTERVAL,
                 socket_keepalive=True,
                 socket_keepalive_options=REDIS_SOCKET_KEEPALIVE_OPTIONS,
                 connection_class=redis.SSLConnection,
-                ssl_context=ssl_context,
+                **connection_kwargs,
             )
 
         if ssl:
@@ -246,6 +246,7 @@ async def get_async_redis_connection() -> aioredis.Redis:
                 }
 
                 if USE_REDIS_IAM_AUTH:
+                    connection_kwargs["ssl_ca_certs"] = REDIS_SSL_CA_CERTS
                     configure_redis_iam_auth(connection_kwargs)
                 elif REDIS_SSL:
                     ssl_context = ssl.create_default_context()

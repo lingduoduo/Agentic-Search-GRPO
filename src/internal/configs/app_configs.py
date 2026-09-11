@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlparse
 
 from src.shared_configs.intent import (
     DEFAULT_MIN_MODULE_SCORE,
@@ -51,6 +52,10 @@ class ServiceSettings:
 class AuthSettings:
     """Authentication-related process settings."""
 
+    environment: str = "development"
+    workload_issuer: str | None = None
+    workload_audience: str | None = None
+    workload_subjects: dict[str, dict] = field(default_factory=dict, hash=False)
     secret: str = DEFAULT_AUTH_SECRET
     jwt_public_key_url: str | None = None
     super_users: tuple[str, ...] = ()
@@ -59,6 +64,69 @@ class AuthSettings:
     # (no token needed) so the local admin dashboard works without minting a
     # cookie. Default off. NEVER enable in production.
     dev_admin_bypass: bool = False
+
+    def __post_init__(self) -> None:
+        if self.environment not in {"development", "test", "production"}:
+            raise ValueError(
+                "AGENTIC_SEARCH_ENVIRONMENT must be development, test or production"
+            )
+        if self.environment == "production" and (
+            not self.secret.strip()
+            or self.secret == DEFAULT_AUTH_SECRET
+            or self.dev_admin_bypass
+        ):
+            raise ValueError(
+                "Production requires a non-development auth secret and disables dev admin bypass"
+            )
+        configured = (
+            self.jwt_public_key_url,
+            self.workload_issuer,
+            self.workload_audience,
+            self.workload_subjects,
+        )
+        if any(configured):
+            if not all(configured):
+                raise ValueError(
+                    "Workload identity requires JWKS URL, issuer, audience and subject mappings"
+                )
+            for value in (self.jwt_public_key_url, self.workload_issuer):
+                parsed = urlparse(value)
+                if (
+                    parsed.scheme != "https"
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or parsed.fragment
+                ):
+                    raise ValueError(
+                        "Workload identity URLs must use HTTPS without credentials or fragments"
+                    )
+        if not isinstance(self.workload_subjects, dict):
+            raise ValueError("Workload subjects must be a JSON object")
+        for subject, identity in self.workload_subjects.items():
+            if (
+                not isinstance(subject, str)
+                or not subject
+                or not isinstance(identity, dict)
+            ):
+                raise ValueError("Invalid workload subject mapping")
+            if set(identity) - {"user_id", "group_ids", "tenant_id"}:
+                raise ValueError(
+                    "Workload mappings only accept user_id, group_ids and tenant_id"
+                )
+            if not isinstance(identity.get("user_id"), str) or not identity["user_id"]:
+                raise ValueError("Workload mapping requires a local user_id")
+            groups = identity.get("group_ids", [])
+            if not isinstance(groups, list) or any(
+                not isinstance(g, str) or not g for g in groups
+            ):
+                raise ValueError(
+                    "Workload group_ids must be a list of nonempty strings"
+                )
+            if identity.get("tenant_id") is not None and (
+                not isinstance(identity["tenant_id"], str) or not identity["tenant_id"]
+            ):
+                raise ValueError("Workload tenant_id must be a nonempty string")
 
 
 @dataclass(frozen=True)
@@ -243,6 +311,12 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
             web_port=get_env_int(source, "AGENTIC_SEARCH_WEB_PORT", 8080),
         ),
         auth=AuthSettings(
+            environment=source.get("AGENTIC_SEARCH_ENVIRONMENT", "development"),
+            workload_issuer=get_env_str(source, "AGENTIC_SEARCH_WORKLOAD_ISSUER"),
+            workload_audience=get_env_str(source, "AGENTIC_SEARCH_WORKLOAD_AUDIENCE"),
+            workload_subjects=json.loads(
+                source.get("AGENTIC_SEARCH_WORKLOAD_SUBJECTS") or "{}"
+            ),
             secret=get_env_str(
                 source, "AGENTIC_SEARCH_AUTH_SECRET", DEFAULT_AUTH_SECRET
             ),

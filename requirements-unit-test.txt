@@ -15,7 +15,7 @@ numpy==1.26.4
 # scikit-learn powers the lightweight demo/TF-IDF retrieval (servers/retrieval/demo.py)
 # exercised by unit tests — light enough for CI (not one of the mocked heavy ML deps).
 scikit-learn==1.4.2
-redis>=4.0.0
+redis>=6.2.0
 python-dotenv
 mcp>=1.0.0
 fastmcp>=2.0.0
@@ -40,3 +40,6 @@ python-dateutil
 # Raising the aiohttp pin instead would adopt a major SDK release repo-wide with
 # nothing verifying it; lift this cap deliberately, with aiohttp, not by drift.
 openai>=1.0.0,<3
+
+PyJWT[crypto]>=2.10.1,<3
+boto3>=1.34.0
