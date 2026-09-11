@@ -55,7 +55,8 @@ class SessionMemoryState:
 Stored as JSON under `session_memory:<session_id>` via `get_cache_backend()`.
 `load_state(cache, session_id) -> SessionMemoryState` returns the default on a
 missing key or on malformed JSON. `save_state(cache, session_id, state)` writes
-it with no expiry. Both are pure with respect to the store.
+it with a 30-day expiry (`SESSION_MEMORY_TTL_SECONDS`); a session revisited
+later just re-summarizes once. Both are pure with respect to the store.
 
 ### Loading working memory
 
@@ -79,20 +80,32 @@ def load_working_memory(store, session_id, *, keep_last, cache=None) -> WorkingM
    `ChatMessage(role="system", content=SUMMARY_PREFIX + state.summary)` when
    `state.summary` is non-empty and the cursor is known.
 
-`SUMMARY_PREFIX` is `"Earlier in this conversation: "`. The summary is a system
-message so every loop treats it as context rather than as a user turn. Each
-loop prepends its own system prompt ahead of the buffer, and `_crop_prompt_ids`
-protects only that first system message. The summary sits in the croppable
-region like the rest of the history, which is right: under a token overflow it
-is the oldest content and the first to go. `summary` is also returned on its
-own so a surface that re-caps the messages can re-apply it.
+`SUMMARY_PREFIX` is `"Earlier in this conversation: "`. `load_working_memory`
+returns the summary as a leading `role="system"` message, and each surface
+decides where it ends up, because the loops differ:
+
+- **Chat** (`PlainGenerationLoop`, no system prompt of its own): the summary is
+  the first message, so `_crop_prompt_ids` treats it as the protected prefix
+  and crops recent turns first under a token overflow. Deliberate: the recap
+  is short and the only cross-turn context that path has.
+- **Tools** (`tool_agent_runner`): the runner merges the summary after
+  `TOOL_AGENT_SYSTEM_PROMPT` in one system message. The runner used to skip
+  its own prompt when a system message was already present; the summary is
+  context, not a prompt, so it merges instead.
+- **Search mode** (`SearchAgentLoop`): `_run_search_agent` peels the leading
+  system message off the history and appends it to the loop's own
+  instruction, because the loop skips its instruction when it sees a leading
+  system message (the training path relies on that and is unchanged).
+  `_build_search_agent_messages` is unchanged.
+
+`summary` is also returned on its own for callers that want the text.
 
 ### Call sites
 
 | Surface | Today | After |
 |---|---|---|
 | Assist, `app.py` | `_trim_history(list_chat_messages(...))`, `MAX_HISTORY_MESSAGES = 40` | `load_working_memory(db, session_id, keep_last=MAX_HISTORY_MESSAGES)` |
-| Search mode, `app.py` | `_trim_history(history, 6)` inside `_build_search_agent_messages` | `_build_search_agent_messages` keeps a leading `role == "system"` message (the summary) ahead of the tail it caps to 6. No new argument |
+| Search mode, `app.py` | `_trim_history(history, 6)` inside `_build_search_agent_messages` | `_run_search_agent` peels the leading summary message and folds it into the loop's system prompt; `_build_search_agent_messages` is unchanged. |
 | Chat, `chat_backend.py` | `[-_MAX_HISTORY_MESSAGES:]` | `load_working_memory(store, session_id, keep_last=40)` |
 | Tools, `tool_backend.py` | `_history()` slice | same |
 
