@@ -21,7 +21,9 @@ POST  /manage/admin/reset-test-data    – clear all users (integration test mod
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
+import secrets
 from dataclasses import replace
 from typing import Annotated
 
@@ -31,16 +33,17 @@ from pydantic import BaseModel
 
 from src.internal.auth import (
     AuthenticatedUser,
-    extract_bearer_token,
     generate_user_jwt_token,
     user_from_headers,
 )
 from src.internal.configs import AppSettings
 from src.internal.db import AgenticSearchStore
 from src.internal.db.models import UserRecord
+from src.internal.servers._auth import is_admin_user
 
 _COOKIE_NAME = "fastapiusersauth"
 _TOKEN_TTL = 86400 * 7  # 7 days
+_PASSWORD_ITERATIONS = 600_000
 
 
 # ---------------------------------------------------------------------------
@@ -49,12 +52,33 @@ _TOKEN_TTL = 86400 * 7  # 7 days
 
 
 def _hash_password(password: str) -> str:
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), b"agentic-search", 100_000)
-    return dk.hex()
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PASSWORD_ITERATIONS)
+    return f"pbkdf2_sha256${_PASSWORD_ITERATIONS}${salt.hex()}${dk.hex()}"
 
 
 def _verify_password(password: str, stored_hash: str) -> bool:
-    return _hash_password(password) == stored_hash
+    if not isinstance(stored_hash, str):
+        return False
+    try:
+        if "$" not in stored_hash:
+            # Legacy fixed-salt hashes are upgraded after successful login.
+            expected = bytes.fromhex(stored_hash)
+            salt, iterations = b"agentic-search", 100_000
+        else:
+            algorithm, count, encoded_salt, encoded_hash = stored_hash.split("$")
+            if algorithm != "pbkdf2_sha256" or count != str(_PASSWORD_ITERATIONS):
+                return False
+            salt, expected = bytes.fromhex(encoded_salt), bytes.fromhex(encoded_hash)
+            if len(salt) != 16:
+                return False
+            iterations = _PASSWORD_ITERATIONS
+        if len(expected) != 32:
+            return False
+    except ValueError:
+        return False
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return hmac.compare_digest(actual, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +95,7 @@ def resolve_request_user(request: Request) -> AuthenticatedUser | None:
     user = user_from_headers(request.headers)
     if user:
         return user
-    if extract_bearer_token(request.headers) is not None:
+    if "authorization" in request.headers:
         return None  # An explicitly supplied invalid bearer cannot borrow a cookie identity.
     cookie_val = request.cookies.get(_COOKIE_NAME)
     if cookie_val:
@@ -126,11 +150,10 @@ def _require_auth(request: Request, store: AgenticSearchStore) -> AuthenticatedU
 
 
 def _require_admin_role(
-    request: Request, store: AgenticSearchStore
+    request: Request, store: AgenticSearchStore, app_settings: AppSettings
 ) -> AuthenticatedUser:
     user = _require_auth(request, store)
-    record = store.get_user(user.id)
-    if record is None or record.metadata.get("role") != "admin":
+    if not is_admin_user(user, app_settings):
         raise HTTPException(status_code=403, detail="Admin access required.")
     return user
 
@@ -214,30 +237,15 @@ def create_users_router(
     @router.post("/auth/register")
     def register(body: RegisterRequest) -> UserResponse:
         email = body.email.lower().strip()
-        all_users = store.list_users()
-
-        # Reject duplicate
-        for u in all_users:
-            if u.email and u.email.lower() == email:
-                raise HTTPException(status_code=400, detail="Email already registered.")
-
-        role = "admin" if not all_users else "basic"
-
-        from uuid import uuid4
-
-        user_id = f"user_{uuid4().hex}"
-        record = store.upsert_user(
-            UserRecord(
-                id=user_id,
+        password_hash = _hash_password(body.password)
+        try:
+            record = store.register_user(
                 email=email,
                 name=body.username or email,
-                metadata={
-                    "password_hash": _hash_password(body.password),
-                    "role": role,
-                    "is_active": True,
-                },
+                password_hash=password_hash,
             )
-        )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _user_response(record)
 
     # ------------------------------------------------------------------
@@ -261,6 +269,12 @@ def create_users_router(
 
         if not _user_response(record).is_active:
             raise HTTPException(status_code=403, detail="Account deactivated.")
+
+        stored_hash = record.metadata["password_hash"]
+        if "$" not in stored_hash:
+            store.upgrade_password_hash(
+                record.id, stored_hash, _hash_password(form.password)
+            )
 
         token = _issue_token(record)
         response.set_cookie(
@@ -289,11 +303,7 @@ def create_users_router(
     @router.get("/me/permissions")
     def me_permissions(request: Request) -> list[str]:
         user = _require_auth(request, store)
-        record = store.get_user(user.id)
-        if record is None:
-            return []
-        role = record.metadata.get("role", "basic")
-        if role == "admin":
+        if is_admin_user(user, app_settings):
             return ["basic_access", "full_admin_panel_access"]
         return ["basic_access"]
 
@@ -302,7 +312,7 @@ def create_users_router(
     # ------------------------------------------------------------------
     @router.patch("/manage/set-user-role")
     def set_user_role(body: SetRoleRequest, request: Request) -> UserResponse:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         record = _get_user_record_by_email(body.user_email)
         updated = store.upsert_user(
             UserRecord(
@@ -320,7 +330,7 @@ def create_users_router(
     # ------------------------------------------------------------------
     @router.patch("/manage/admin/activate-user")
     def activate_user(body: SetStatusRequest, request: Request) -> UserResponse:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         record = _get_user_record_by_email(body.user_email)
         store.set_user_active(record.id, True)
         updated = store.upsert_user(
@@ -335,7 +345,7 @@ def create_users_router(
 
     @router.patch("/manage/admin/deactivate-user")
     def deactivate_user(body: SetStatusRequest, request: Request) -> UserResponse:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         record = _get_user_record_by_email(body.user_email)
         store.set_user_active(record.id, False)
         updated = store.upsert_user(
@@ -360,7 +370,7 @@ def create_users_router(
         roles: list[str] | None = None,
         is_active: bool | None = None,
     ) -> PaginatedUsers:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         all_users = store.list_users()
         filtered = [
             u
@@ -382,12 +392,12 @@ def create_users_router(
     # ------------------------------------------------------------------
     @router.get("/manage/users/invited")
     def list_invited_users(request: Request) -> list[dict]:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         return []
 
     @router.put("/manage/admin/users")
     def invite_users(body: InviteRequest, request: Request) -> dict:
-        _require_admin_role(request, store)
+        _require_admin_role(request, store, app_settings)
         return {"invited": body.emails}
 
     # ------------------------------------------------------------------

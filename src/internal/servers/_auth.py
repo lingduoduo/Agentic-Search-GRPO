@@ -8,6 +8,16 @@ from src.internal.auth import AuthenticatedUser, user_from_headers
 from src.internal.configs import AppSettings
 
 
+def is_admin_user(user: AuthenticatedUser, app_settings: AppSettings) -> bool:
+    """Evaluate admin privileges after the caller's account state is resolved."""
+    super_users = app_settings.auth.super_users
+    return not user.is_anonymous and (
+        user.metadata.get("role") == "admin"
+        or user.id in super_users
+        or (user.email is not None and user.email in super_users)
+    )
+
+
 def make_require_admin(app_settings: AppSettings):
     """Return a FastAPI dependency that enforces super-user access.
 
@@ -38,12 +48,7 @@ def make_require_admin(app_settings: AppSettings):
             user = resolve_active_user(request, store)
         if user is None or user.is_anonymous:
             raise HTTPException(status_code=401, detail="Authentication required.")
-        super_users = app_settings.auth.super_users
-        in_super_users = user.id in super_users or (
-            user.email is not None and user.email in super_users
-        )
-        has_admin_role = user.metadata.get("role") == "admin"
-        if not in_super_users and not has_admin_role:
+        if not is_admin_user(user, app_settings):
             raise HTTPException(status_code=403, detail="Admin access required.")
         return user
 
@@ -78,4 +83,4 @@ def caller_may_use_session(session, caller) -> bool:
     return caller is not None and caller.id == session.user_id
 
 
-__all__ = ["make_require_admin", "caller_may_use_session"]
+__all__ = ["make_require_admin", "is_admin_user", "caller_may_use_session"]

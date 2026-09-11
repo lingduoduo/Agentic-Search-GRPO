@@ -70,3 +70,25 @@ def test_invalid_bearer_does_not_fall_back_to_cookie(monkeypatch):
         }
     )
     assert resolve_request_user(request) is None
+
+
+@pytest.mark.parametrize(
+    "authorization", ["Bearer", "Bearer ", "Bearer   ", "Bearer\tinvalid"]
+)
+def test_malformed_bearer_cannot_borrow_cookie_identity(monkeypatch, authorization):
+    from starlette.requests import Request
+    from src.internal.servers.users.api import resolve_request_user
+
+    monkeypatch.setenv("AGENTIC_SEARCH_AUTH_SECRET", "malformed-test-secret")
+    cookie = "fastapiusersauth=" + _token({"alg": "HS256"}, {"sub": "alice"})
+    headers = {"Authorization": authorization, "Cookie": cookie}
+    assert user_from_headers(headers) is None
+    request = Request(
+        {
+            "type": "http",
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
+        }
+    )
+    assert resolve_request_user(request) is None

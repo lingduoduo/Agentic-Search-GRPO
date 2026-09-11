@@ -441,6 +441,64 @@ class AgenticSearchStore:
                 pass
         self._conn.commit()
 
+    def register_user(self, *, email: str, name: str, password_hash: str) -> UserRecord:
+        """Create an account, atomically choosing the sole bootstrap admin.
+
+        A write transaction spans uniqueness, role selection and insertion,
+        including when other workers use separate connections to this file.
+        Compare email in Python, matching login's Unicode lowercase semantics.
+        Existing accounts are never overwritten by registration.
+        """
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            users = self.list_users()
+            if any(
+                user.email and user.email.lower() == email.lower() for user in users
+            ):
+                raise ValueError("Email already registered.")
+            record = UserRecord(
+                id=_new_id("user"),
+                email=email,
+                name=name,
+                metadata={
+                    "password_hash": password_hash,
+                    "is_active": True,
+                    "role": "basic" if users else "admin",
+                },
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO users (id, email, name, metadata_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.email,
+                    record.name,
+                    _json_dumps(record.metadata),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+        return record
+
+    def upgrade_password_hash(
+        self, user_id: str, previous_hash: str, password_hash: str
+    ) -> None:
+        """Upgrade a verified hash without overwriting concurrent account edits."""
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE users
+                SET metadata_json = json_set(metadata_json, '$.password_hash', ?),
+                    updated_at = ?
+                WHERE id = ? AND json_extract(metadata_json, '$.password_hash') = ?
+                """,
+                (password_hash, _now(), user_id, previous_hash),
+            )
+
     def upsert_user(self, user: UserRecord) -> UserRecord:
         now = _now()
         created_at = user.created_at or self._created_at("users", user.id, now)
