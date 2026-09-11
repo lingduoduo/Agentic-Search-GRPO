@@ -9,6 +9,18 @@ from src.internal.db.store import AgenticSearchStore
 from src.internal.servers.retrieval.feedback_router import create_feedback_router
 
 
+def _store(*session_ids: str) -> AgenticSearchStore:
+    """A store holding anonymous sessions *session_ids*.
+
+    Feedback is only accepted for a session that exists: the row feeds the
+    training loaders, so the endpoint never writes one for a made-up id.
+    """
+    db = AgenticSearchStore(":memory:")
+    for session_id in session_ids:
+        db.create_chat_session(session_id=session_id, user_id=None)
+    return db
+
+
 def _app(db: AgenticSearchStore) -> TestClient:
     app = FastAPI()
     app.include_router(create_feedback_router(db))
@@ -16,7 +28,7 @@ def _app(db: AgenticSearchStore) -> TestClient:
 
 
 def test_feedback_thumbs_up_persisted():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
 
     resp = client.post(
@@ -29,7 +41,7 @@ def test_feedback_thumbs_up_persisted():
 
 
 def test_feedback_thumbs_down_persisted():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
 
     resp = client.post(
@@ -41,8 +53,22 @@ def test_feedback_thumbs_down_persisted():
     assert summary["thumbs_up_rate"] == 0.0
 
 
+def test_feedback_for_an_unknown_session_is_refused_and_nothing_is_written():
+    # Before this, an unauthenticated caller could write a training-feedback
+    # row against any session id that did not exist locally.
+    db = _store("s1")
+    client = _app(db)
+
+    resp = client.post(
+        "/api/feedback", json={"session_id": "no-such-session", "signal": "thumbs_up"}
+    )
+
+    assert resp.status_code == 404
+    assert db.list_retrieval_feedback() == []
+
+
 def test_feedback_target_is_persisted_and_split_in_the_summary():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
 
     for target, signal in (
@@ -69,14 +95,14 @@ def test_feedback_target_is_persisted_and_split_in_the_summary():
 
 
 def test_feedback_target_defaults_to_overall():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
     client.post("/api/feedback", json={"session_id": "s1", "signal": "thumbs_up"})
     assert db.list_retrieval_feedback()[0]["metadata"]["target"] == "overall"
 
 
 def test_feedback_invalid_target_rejected():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
     resp = client.post(
         "/api/feedback",
@@ -86,7 +112,7 @@ def test_feedback_invalid_target_rejected():
 
 
 def test_feedback_invalid_signal_rejected():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
 
     resp = client.post("/api/feedback", json={"session_id": "s1", "signal": "meh"})
@@ -95,7 +121,7 @@ def test_feedback_invalid_signal_rejected():
 
 
 def test_feedback_multiple_signals_accumulate():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1", "s2", "s3")
     client = _app(db)
 
     client.post("/api/feedback", json={"session_id": "s1", "signal": "thumbs_up"})
@@ -107,7 +133,7 @@ def test_feedback_multiple_signals_accumulate():
 
 
 def test_feedback_router_accepts_optional_metadata():
-    db = AgenticSearchStore(":memory:")
+    db = _store("s1")
     client = _app(db)
 
     resp = client.post(
