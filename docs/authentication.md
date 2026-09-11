@@ -2,16 +2,29 @@
 
 The web backend accepts HS256 bearer tokens and the `fastapiusersauth` login
 cookie. `POST /auth/register` creates an account; the first registered account
-becomes admin. `POST /auth/login` verifies the password and sets the HTTP-only
+becomes admin. Registration selects that role and rejects duplicate emails in
+one database write transaction, so concurrent requests cannot both become the
+first admin, including across connections to the same SQLite file. Duplicate emails
+return 400 without replacing the existing account.
+
+`POST /auth/login` verifies the password and sets the HTTP-only
 cookie. The development helper and proxy setup are described in
 [Frontend](frontend.md#logging-in-search--chat--tools-pages).
+
+New passwords use PBKDF2-HMAC-SHA256 with 600,000 iterations and an independent
+random 16-byte salt. The stored value includes its algorithm, iteration count,
+salt and digest; verification compares digests in constant time. Existing
+fixed-salt hashes remain usable and are upgraded on successful active-account
+login. Failed logins do not alter the hash, and the upgrade preserves other
+account fields and never replaces a newer password hash.
 
 ## Current account state
 
 On the web app, identity must resolve to an active record in its user store.
 Deletion and local or SCIM deactivation invalidate access immediately; admin authorization
 uses the current stored role, not an old role claim in a JWT. Configured
-`super_users` still grant admin access to active accounts. `/me` and
+`super_users` still grant admin access to active accounts, including user
+management and the admin permission returned by `/me/permissions`. `/me` and
 `/me/permissions` return 401 for missing or inactive accounts, which also stops
 MCP authentication delegated to `/me`.
 
@@ -19,8 +32,10 @@ Standalone service routers without the web app's `auth_store` retain their
 configured stateless admin-token support. Tokens alone do not create accounts
 in the web app. CLI-minted tokens must identify an existing active web account.
 
-Invalid bearer credentials do not fall back to a login cookie. Malformed JWT
-headers, identity claims and numeric dates are rejected; expiry is enforced at
+An explicitly supplied Authorization header takes precedence over a login
+cookie, including an empty header, malformed Bearer credentials or an
+unsupported scheme. Invalid authorization never falls back to the cookie.
+Malformed JWT headers, identity claims and numeric dates are rejected; expiry is enforced at
 the expiry instant, and a future `nbf` prevents early use.
 
 ## Conversations and memory

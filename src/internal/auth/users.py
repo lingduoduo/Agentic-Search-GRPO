@@ -149,7 +149,14 @@ def _extract_cookie_token(headers: Mapping[str, str]) -> str | None:
 
 
 def user_from_headers(headers: Mapping[str, str]) -> AuthenticatedUser | None:
-    token = extract_bearer_token(headers) or _extract_cookie_token(headers)
+    # An explicitly supplied authorization header must stand on its own, even
+    # when it is empty or malformed. It must never borrow a cookie's identity.
+    has_authorization = any(key.lower() == "authorization" for key in headers)
+    token = (
+        extract_bearer_token(headers)
+        if has_authorization
+        else _extract_cookie_token(headers)
+    )
     if not token:
         return None
     try:
