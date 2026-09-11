@@ -2,7 +2,12 @@
 
 ## Status
 
-Not started. Written after #532 and #533, both of which this would have caught.
+Implemented on 2026-09-10. Startup now rejects unclassified path/method pairs
+before seeding or background work. The route triage also closed session
+continuation, feedback ownership, forged attribution and debug access gaps.
+See [Authentication](../../authentication.md) for the resulting contract and
+the source heuristic's limits. The historical problem and proposed phases below
+record why this work was needed.
 
 ## Problem
 

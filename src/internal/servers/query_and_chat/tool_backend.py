@@ -19,6 +19,7 @@ from src.context import ChatMessage
 from src.context.models import SearchFilters
 from src.internal.access.capabilities import resolve_capabilities
 from src.internal.db import AgenticSearchStore
+from src.internal.servers._auth import caller_may_use_session
 from src.internal.servers.query_and_chat.models import (
     SendToolMessageRequest,
     ToolAgentMessageResponse,
@@ -45,11 +46,17 @@ def create_tool_router(
         tokenizer = getattr(request.app.state, "search_agent_tokenizer", None)
         return manager, tokenizer
 
-    def _ensure_session(body: SendToolMessageRequest, user_id: str | None) -> str:
-        if body.session_id and store.get_chat_session(body.session_id):
-            return body.session_id
+    def _ensure_session(body: SendToolMessageRequest, user) -> str:
+        if body.session_id:
+            existing = store.get_chat_session(body.session_id)
+            if existing is not None:
+                if not caller_may_use_session(existing, user):
+                    raise HTTPException(
+                        status_code=404, detail="Chat session not found"
+                    )
+                return body.session_id
         session = store.create_chat_session(
-            user_id=user_id,
+            user_id=user.id if user else None,
             title=body.message[:80],
             metadata={"source": "tool"},
             session_id=body.session_id,
@@ -83,8 +90,7 @@ def create_tool_router(
         # "is there a user?" by hand here is how the two spellings drift.
         user = resolve_active_user(http_request, store)
         capabilities = resolve_capabilities(user, store)
-        user_id = capabilities.user_id
-        session_id = _ensure_session(body, user_id)
+        session_id = _ensure_session(body, user)
         history = _history(session_id)
         store.add_chat_message(session_id, role="user", content=body.message)
 

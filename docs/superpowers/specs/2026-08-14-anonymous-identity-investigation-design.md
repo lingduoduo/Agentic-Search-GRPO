@@ -2,9 +2,11 @@
 
 ## Status
 
-Not started. **Deliberately scoped as an investigation first**, because the last
-attempt to spec this was abandoned for lack of a verified premise, and a
-privacy-shaped change built on a guess is worse than no change.
+Investigation and owned-session fixes completed; see the corresponding plan.
+The 2026-09-10 authentication completion extends ownership checks to chat/tool
+continuation and feedback. Per-caller anonymous identity remains a separate
+design decision; the current session-ID capability and optional shared-memory
+contracts are documented in [Authentication](../../authentication.md).
 
 ## Problem
 

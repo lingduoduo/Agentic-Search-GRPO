@@ -169,7 +169,11 @@ def create_chat_router(store: AgenticSearchStore) -> APIRouter:
             raise HTTPException(status_code=404, detail="Chat session not found")
 
     @router.post("/create-chat-message-feedback")
-    def create_chat_feedback(feedback: ChatFeedbackRequest) -> None:
+    def create_chat_feedback(feedback: ChatFeedbackRequest, request: Request) -> None:
+        message = store.get_chat_message(feedback.chat_message_id)
+        if message is None:
+            raise HTTPException(status_code=404, detail="Chat message not found")
+        _session_or_404(message.session_id, request)
         found = store.upsert_message_feedback(
             feedback.chat_message_id,
             feedback.is_positive,
@@ -192,6 +196,7 @@ def create_chat_router(store: AgenticSearchStore) -> APIRouter:
         user = _get_user(http_request)
         user_id = user.id if user and not user.is_anonymous else None
         if body.session_id and store.get_chat_session(body.session_id):
+            _session_or_404(body.session_id, http_request)
             session_id = body.session_id
         else:
             session_id = store.create_chat_session(

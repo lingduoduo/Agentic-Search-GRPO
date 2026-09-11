@@ -8,7 +8,7 @@ Default off must preserve the normal 401/403 behavior.
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from src.internal.configs import AppSettings, AuthSettings
@@ -16,13 +16,13 @@ from src.internal.servers._auth import make_require_admin
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
 
 
-class _Req:
-    headers: dict[str, str] = {}
+def _request():
+    return Request({"type": "http", "headers": [], "app": FastAPI()})
 
 
 def test_bypass_returns_dev_admin_without_headers():
     dep = make_require_admin(AppSettings(auth=AuthSettings(dev_admin_bypass=True)))
-    user = dep(_Req())
+    user = dep(_request())
     assert user.is_anonymous is False
     assert user.metadata.get("role") == "admin"
     assert user.id == "dev-admin"
@@ -31,7 +31,7 @@ def test_bypass_returns_dev_admin_without_headers():
 def test_default_rejects_anonymous():
     dep = make_require_admin(AppSettings(auth=AuthSettings()))
     with pytest.raises(HTTPException) as exc:
-        dep(_Req())
+        dep(_request())
     assert exc.value.status_code == 401
 
 

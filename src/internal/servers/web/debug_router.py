@@ -3,6 +3,8 @@
 Mounted only when DEBUG_PANELS is enabled (see create_web_app). Proxies the
 retrieval server's per-mode /internal/search/* endpoints so the browser can
 inspect sparse/dense/hybrid/graph results without cross-origin calls.
+The web app mounts this router with an admin dependency; custom embeddings
+must attach equivalent authorization when including it.
 """
 
 from __future__ import annotations

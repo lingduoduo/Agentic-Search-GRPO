@@ -6,6 +6,9 @@ This guide collects provider, search-agent, application, retrieval, reranking, q
 
 Copy `.env.example` to `.env`; it is loaded automatically through `python-dotenv`.
 
+See [Authentication](authentication.md) for account state, session ownership,
+anonymous-memory behavior and startup route enforcement.
+
 ## Model and web-search providers
 
 ```bash

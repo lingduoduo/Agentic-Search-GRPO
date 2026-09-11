@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.internal.auth import generate_user_jwt_token
 from src.internal.configs import AppSettings, AuthSettings
+from src.internal.db import UserRecord
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
 from src.internal.tools.registry import tool_registry
 
@@ -52,10 +53,12 @@ def _settings() -> AppSettings:
 
 
 def _make_app(tmp_path):
-    return create_web_app(
+    app = create_web_app(
         SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"),
         app_settings=_settings(),
     )
+    app.state.auth_store.upsert_user(UserRecord(id=_ADMIN))
+    return app
 
 
 def _clear_registry():

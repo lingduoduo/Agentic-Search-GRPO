@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import time
 from collections.abc import Iterable
@@ -74,9 +75,23 @@ def decode_user_jwt_token(token: str, *, secret: str | None = None) -> dict[str,
     """Verify and decode a local HS256 JWT."""
 
     payload = _decode_jwt(token, get_auth_secret(secret))
+    for claim in ("exp", "nbf", "iat"):
+        if claim in payload:
+            value = payload[claim]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"JWT {claim} must be a numeric date.")
+            try:
+                finite = math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError(f"JWT {claim} must be finite.")
+    now = time.time()
     expires_at = payload.get("exp")
-    if expires_at is not None and int(expires_at) < int(time.time()):
+    if expires_at is not None and expires_at <= now:
         raise ValueError("JWT has expired.")
+    if payload.get("nbf", now) > now:
+        raise ValueError("JWT is not yet valid.")
     return payload
 
 
@@ -86,10 +101,17 @@ def user_from_jwt_token(
     secret: str | None = None,
 ) -> AuthenticatedUser:
     payload = decode_user_jwt_token(token, secret=secret)
-    user_id = str(payload.get("sub") or payload.get("user_id") or "")
-    if not user_id:
+    user_id = payload.get("sub") or payload.get("user_id")
+    if not isinstance(user_id, str) or not user_id.strip():
         raise ValueError("JWT subject is required.")
     groups = payload.get("groups") or payload.get("group_ids") or []
+    if not isinstance(groups, list) or any(
+        not isinstance(group, str) for group in groups
+    ):
+        raise ValueError("JWT groups must be a list of strings.")
+    for claim in ("email", "tenant_id"):
+        if payload.get(claim) is not None and not isinstance(payload[claim], str):
+            raise ValueError(f"JWT {claim} must be a string.")
     return AuthenticatedUser(
         id=user_id,
         email=payload.get("email"),
@@ -145,6 +167,7 @@ _REGISTERED_CLAIMS = {
     "tenant_id",
     "iat",
     "exp",
+    "nbf",
 }
 
 
@@ -166,6 +189,8 @@ def _decode_jwt(token: str, secret: str) -> dict[str, Any]:
         raise ValueError("JWT must have three segments.")
     encoded_header, encoded_payload, encoded_signature = parts
     header = json.loads(_b64url_decode(encoded_header))
+    if not isinstance(header, dict):
+        raise ValueError("JWT header must be an object.")
     if header.get("alg") != JWT_ALGORITHM:
         raise ValueError(f"Unsupported JWT algorithm: {header.get('alg')!r}.")
 

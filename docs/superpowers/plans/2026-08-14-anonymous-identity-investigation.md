@@ -75,6 +75,10 @@ not be left behind quietly protecting nothing.
 
 ## Still open
 
+2026-09-10 update: startup route enforcement is implemented, and the remaining
+chat/tool continuation and feedback ownership gaps are closed. The old test
+pinning the advisory audit was replaced by rejection and acceptance tests.
+
 Per-caller anonymous identity (`anon_<uuid4>` or equivalent), which is the
 remaining half of #500's revert. Two signed-out callers who share a session id
 still share the session. That needs its own spec.
