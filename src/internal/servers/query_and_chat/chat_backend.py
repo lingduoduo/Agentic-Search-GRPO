@@ -16,8 +16,13 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
-from src.context import ChatMessage
 from src.internal.auth import AuthenticatedUser
+from src.internal.cache.interface import get_cache_backend
+from src.internal.memory.working import (
+    MAX_HISTORY_MESSAGES,
+    load_working_memory,
+    schedule_compression,
+)
 from src.internal.servers._auth import caller_may_use_session
 from src.internal.db import AgenticSearchStore
 from src.internal.servers.query_and_chat.models import ChatFeedbackRequest
@@ -33,7 +38,6 @@ from src.internal.servers.query_and_chat.models import SendChatMessageRequest
 from src.internal.servers.users.api import resolve_active_user
 
 logger = logging.getLogger(__name__)
-_MAX_HISTORY_MESSAGES = 40
 
 
 async def _run_plain_chat(
@@ -67,8 +71,19 @@ async def _run_plain_chat(
     )
 
 
-def create_chat_router(store: AgenticSearchStore) -> APIRouter:
-    """Return an APIRouter for chat session endpoints bound to *store*."""
+def create_chat_router(
+    store: AgenticSearchStore,
+    *,
+    llm=None,
+    memory_compression: bool = False,
+) -> APIRouter:
+    """Return an APIRouter for chat session endpoints bound to *store*.
+
+    ``llm`` and ``memory_compression`` drive working-memory compression: when
+    both are set, turns that fall off the history tail are summarized in the
+    background and the next turn sees the summary. Plain chat itself still
+    runs on the local model.
+    """
 
     router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -205,11 +220,20 @@ def create_chat_router(store: AgenticSearchStore) -> APIRouter:
                 metadata={"source": "chat"},
                 session_id=body.session_id,
             ).id
-        history = [
-            ChatMessage(role=m.role, content=m.content)
-            for m in store.list_chat_messages(session_id)
-        ][-_MAX_HISTORY_MESSAGES:]
+        working = load_working_memory(
+            store,
+            session_id,
+            keep_last=MAX_HISTORY_MESSAGES,
+            cache=get_cache_backend() if memory_compression else None,
+        )
+        history = working.messages
         store.add_chat_message(session_id, role="user", content=body.message)
+        # The answer comes from the local model, so the remote llm summarizing
+        # now contends with nothing; one site covers both the stream and
+        # non-stream branches.
+        schedule_compression(
+            working, session_id=session_id, llm=llm, enabled=memory_compression
+        )
 
         if not body.stream:
             try:

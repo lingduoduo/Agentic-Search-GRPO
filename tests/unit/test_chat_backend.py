@@ -280,3 +280,122 @@ def test_send_chat_message_streams_answer_then_done(monkeypatch):
     assert types == ["answer", "done"]
     assert events[0]["text"] == "echo: hello"
     assert events[-1]["session_id"]
+
+
+def _seed_long(store, n=45):
+    session = store.create_chat_session(user_id=_USER_ID, title="long")
+    records = [
+        store.add_chat_message(
+            session.id, role="user" if i % 2 == 0 else "assistant", content=f"m{i}"
+        )
+        for i in range(n)
+    ]
+    return session.id, records
+
+
+def _client_with(store, monkeypatch, *, llm=None, memory_compression=False):
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.chat_backend.resolve_active_user",
+        lambda _request, _store: _USER,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_chat_router(store, llm=llm, memory_compression=memory_compression)
+    )
+    app.state.search_agent_manager = object()
+    app.state.search_agent_tokenizer = object()
+    return TestClient(app)
+
+
+def _capture_plain_chat(monkeypatch):
+    captured: list = []
+
+    async def fake_run(message, *, manager, tokenizer, history, on_turn=None, **kw):
+        captured.append(list(history))
+        return "ok"
+
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.chat_backend._run_plain_chat", fake_run
+    )
+    return captured
+
+
+def test_send_chat_flag_off_hands_runner_last_forty(store, monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import SessionMemoryState, save_state
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    session_id, records = _seed_long(store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+    captured = _capture_plain_chat(monkeypatch)
+
+    client = _client_with(store, monkeypatch)
+    resp = client.post(
+        "/chat/send-chat-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert resp.status_code == 200
+    assert len(captured[0]) == 40
+    assert captured[0][0].role == "assistant"
+
+
+def test_send_chat_flag_on_prepends_stored_summary(store, monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import (
+        SUMMARY_PREFIX,
+        SessionMemoryState,
+        save_state,
+    )
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.chat_backend.schedule_compression",
+        lambda wm, **kw: None,
+    )
+    session_id, records = _seed_long(store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+    captured = _capture_plain_chat(monkeypatch)
+
+    client = _client_with(store, monkeypatch, llm=object(), memory_compression=True)
+    client.post(
+        "/chat/send-chat-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert len(captured[0]) == 41
+    assert captured[0][0].role == "system"
+    assert captured[0][0].content == SUMMARY_PREFIX + "S"
+
+
+def test_send_chat_schedules_compression(store, monkeypatch):
+    from src.internal.cache.interface import InMemoryCache
+
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
+    session_id, _ = _seed_long(store)
+    _capture_plain_chat(monkeypatch)
+    scheduled: list = []
+
+    def fake_schedule(wm, **kw):
+        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        return None
+
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.chat_backend.schedule_compression",
+        fake_schedule,
+    )
+    sentinel = object()
+    client = _client_with(store, monkeypatch, llm=sentinel, memory_compression=True)
+    client.post(
+        "/chat/send-chat-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert scheduled == [(5, True, sentinel)]
