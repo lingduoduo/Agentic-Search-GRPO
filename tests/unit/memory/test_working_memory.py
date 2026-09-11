@@ -456,6 +456,35 @@ def test_compress_curates_only_the_post_trim_span(store, cache):
     assert load_state(cache, sid).curated_through == records[3].id
 
 
+def test_curate_cursor_write_preserves_a_newer_summary(store, cache):
+    # Curation can run for several LLM turns, longer than the 120s Redis lock
+    # lease. If another process advanced the summary while this task's
+    # curation was still running, the cursor write must merge onto that newer
+    # state rather than reconstruct and overwrite it.
+    sid, records = _seed(store, 12)
+
+    async def curate(pending):
+        save_state(
+            cache,
+            sid,
+            SessionMemoryState(
+                summary="newer", summarized_through="m_newer", curated_through=None
+            ),
+        )
+        return True
+
+    ok = asyncio.run(
+        compress_session(
+            sid, FakeLLM("S"), pending=records[:2], cache=cache, curate=curate
+        )
+    )
+    assert ok is True
+    state = load_state(cache, sid)
+    assert state.summary == "newer"
+    assert state.summarized_through == "m_newer"
+    assert state.curated_through == records[1].id
+
+
 def test_compress_curate_false_keeps_summary_and_cursor(store, cache):
     sid, records = _seed(store, 12)
     save_state(cache, sid, SessionMemoryState(curated_through="keep-me"))

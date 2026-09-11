@@ -147,6 +147,7 @@ def test_curate_from_conversation_uses_supplied_text_and_skips_the_store():
     assert "USER: I like tea." in prompts[0][1]["content"]
     trajectories = store.list_memory_trajectories("u1")
     assert trajectories[0].session_id == "sess-x"
+    assert trajectories[0].trajectory["source"] == "manual"
 
 
 def test_curate_span_formats_records_and_reports_ok():
@@ -174,14 +175,54 @@ def test_curate_span_formats_records_and_reports_ok():
     assert [r.memory_text for r in store.get_user_memory_records("u1")] == [
         "User lives in Lyon"
     ]
+    assert store.list_memory_trajectories("u1")[0].trajectory["source"] == "auto"
 
 
-def test_curate_span_empty_records_is_false_without_llm():
+def test_curate_span_empty_records_is_false_without_llm(monkeypatch):
     store = AgenticSearchStore(":memory:")
     store.upsert_user(UserRecord(id="u1"))
+    # Owned by the caller so the ownership check (F1) does not itself return
+    # False first -- this test is specifically about the empty-records guard.
+    session = store.create_chat_session(user_id="u1")
+
+    async def _boom(*a, **k):
+        raise AssertionError("must not be entered for an empty span")
+
+    monkeypatch.setattr(service, "curate_from_conversation", _boom)
+
+    assert (
+        asyncio.run(service.curate_span(store, "u1", object(), session.id, [])) is False
+    )
+
+
+def test_curate_span_refuses_ownerless_session():
+    store = AgenticSearchStore(":memory:")
+    store.upsert_user(UserRecord(id="u1"))
+    session = store.create_chat_session()
+    r1 = store.add_chat_message(session.id, role="user", content="I moved to Lyon.")
+    r2 = store.add_chat_message(session.id, role="assistant", content="Nice.")
 
     class _Boom:
         def stream(self, *a, **k):
-            raise AssertionError("LLM must not be called for an empty span")
+            raise AssertionError("LLM must not be called for an ownerless session")
 
-    assert asyncio.run(service.curate_span(store, "u1", _Boom(), "s", [])) is False
+    ok = asyncio.run(service.curate_span(store, "u1", _Boom(), session.id, [r1, r2]))
+    assert ok is False
+    assert store.get_user_memory_records("u1") == []
+
+
+def test_curate_span_refuses_another_users_session():
+    store = AgenticSearchStore(":memory:")
+    store.upsert_user(UserRecord(id="u1"))
+    store.upsert_user(UserRecord(id="u2"))
+    session = store.create_chat_session(user_id="u2")
+    r1 = store.add_chat_message(session.id, role="user", content="I moved to Lyon.")
+    r2 = store.add_chat_message(session.id, role="assistant", content="Nice.")
+
+    class _Boom:
+        def stream(self, *a, **k):
+            raise AssertionError("LLM must not be called for another user's session")
+
+    ok = asyncio.run(service.curate_span(store, "u1", _Boom(), session.id, [r1, r2]))
+    assert ok is False
+    assert store.get_user_memory_records("u1") == []
