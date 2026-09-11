@@ -23,6 +23,10 @@ MAX_CURATION_TURNS = 6
 MEMORY_GATHER_CHAR_BUDGET = 12000
 MEMORY_INJECTION_MAX = 20
 
+# Above the cap, this many preamble slots go to relevance hits for the
+# current query; the rest stay the most recent memories.
+MEMORY_RELEVANT_SLOTS = MEMORY_INJECTION_MAX // 2
+
 Encoder = Callable[[list[str]], Any]  # list[str] -> np.ndarray
 
 _MEMORY_PREAMBLE_HEADER = (
@@ -33,19 +37,66 @@ _MEMORY_PREAMBLE_HEADER = (
 
 
 def memory_preamble(
-    store, user_id: str, *, max_items: int = MEMORY_INJECTION_MAX
+    store,
+    user_id: str,
+    *,
+    max_items: int = MEMORY_INJECTION_MAX,
+    query: str | None = None,
+    encoder: Encoder | None = None,
 ) -> str:
-    """Format the user's most-recent active memories as a system-prompt preamble.
+    """Format the user's active memories as a system-prompt preamble.
 
     Returns an instructional block (leading blank line included) listing up to
     *max_items* memories, or ``""`` when the user has none. The instructional
     wording is what drives proactive use (e.g. warn about a stored allergy).
+
+    At or below the cap every memory is listed. Above it, and given a
+    *query*, half the slots go to the memories most relevant to that query
+    (``search_memories``) and the rest to the most recent ones, so an old but
+    relevant fact still reaches the model while recent facts stay always
+    present. Without a query the most recent *max_items* are listed.
     """
     memories = store.get_user_memories(user_id)
     if not memories:
         return ""
-    recent = memories[-max_items:]
-    return _MEMORY_PREAMBLE_HEADER + "\n".join(f"- {m}" for m in recent)
+    if len(memories) <= max_items or not (query or "").strip():
+        chosen = memories[-max_items:]
+    else:
+        chosen = _select_relevant(store, user_id, query, memories, max_items, encoder)
+    return _MEMORY_PREAMBLE_HEADER + "\n".join(f"- {m}" for m in chosen)
+
+
+def _select_relevant(
+    store,
+    user_id: str,
+    query: str,
+    memories: list[str],
+    max_items: int,
+    encoder: Encoder | None,
+) -> list[str]:
+    """Relevance hits first, then newest-first fill, returned in chronological order."""
+    try:
+        hits = search_memories(
+            store,
+            user_id,
+            query,
+            max_results=min(MEMORY_RELEVANT_SLOTS, max_items),
+            encoder=encoder,
+        )
+    except Exception as exc:  # noqa: BLE001 — recall is best-effort
+        logger.warning("relevant memory recall failed for %s: %s", user_id, exc)
+        return memories[-max_items:]
+    selected: list[str] = []
+    for record, _score in hits:
+        if record.memory_text not in selected:
+            selected.append(record.memory_text)
+    for text in reversed(memories):
+        if len(selected) >= max_items:
+            break
+        if text not in selected:
+            selected.append(text)
+    keep = set(selected)
+    return [m for m in memories if m in keep]
 
 
 def maybe_build_encoder() -> Encoder | None:
