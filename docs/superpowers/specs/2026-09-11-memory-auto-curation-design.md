@@ -33,7 +33,8 @@ PR 3 (relevance-aware recall above the 20-memory cap) is separate.
 - Curating anonymous sessions. See Whose memory.
 - Retrying a failed curation. See Failure.
 - Any change to what curation stores, the curation prompt, consolidation,
-  or profiles.
+  or profiles. The auto path sees only the dropped span, so a fact restated
+  in a still-retained turn is invisible to it; accepted.
 - Any change inside `src/agents/`.
 
 ## Design
@@ -52,6 +53,13 @@ turn that off. Auto-curation is silent, so silently filing anonymous
 transcripts into a shared bucket is the cross-caller leak the require-auth
 work closed. Anonymous sessions therefore skip curation entirely, regardless
 of the require-auth flag. `user_id is None` means no curation.
+
+`curate_span` also applies the manual path's ownership rule (`_readable`):
+only a session owned by `user_id` may feed that user's memories. A session
+started signed-out is ownerless forever, so its turns are never auto-curated
+even after the caller signs in; that is the same cost the manual path already
+accepts, and it stops an ownerless transcript being filed under whoever
+continues it.
 
 ### Scoping curation to the span
 
@@ -96,11 +104,13 @@ async def compress_session(session_id, llm, *, pending, cache=None,
 After `save_state` succeeds for the summary, and only then:
 
 1. If `curate` is `None`, return `True` as today.
-2. Otherwise `await curate(pending)` inside its own `try`. On `True`, re-read
-   nothing: write `SessionMemoryState(summary=text, summarized_through=last_id,
-   curated_through=last_id)`. On `False` or an exception, log at warning and
-   leave `curated_through` as it was. Either way return `True`: the summary
-   advanced, which is what the return value reports.
+2. Otherwise `await curate(pending)` inside its own `try`. On `True`,
+   re-read the state and write it back with only `curated_through` set to
+   `last_id`, so a summary or cursor another process advanced while curation
+   ran is preserved (curation can outlive the 120 s lock lease). On `False`
+   or an exception, log at warning and leave `curated_through` as it was.
+   Either way return `True`: the summary advanced, which is what the return
+   value reports.
 
 `pending` here is the span after the stale-cursor trim, so curation and the
 summary cover the same messages. The lock and in-flight guard already wrap
@@ -151,10 +161,17 @@ Curation is best-effort on top of a correct summary:
   the record.
 - A cache write failure after curation: caught by `compress_session`'s
   existing boundary; the summary write already landed, so the only loss is
-  the curated cursor, which means the span may be curated a second time if a
-  later stale task overlaps it. Acceptable; `consolidate_memories` dedups.
+  the curated cursor, which means the span may then be curated a second
+  time; nothing runs `consolidate_memories` automatically, so such
+  duplicates persist until a human runs it.
 - Nothing in this path can fail a request or raise out of the task; the
   existing never-raise boundary covers the new code.
+- Two sessions of one user overflowing together run two curation loops
+  against the same memory bucket. The memory tools are id-scoped and degrade
+  to "memory not found", so there is no corruption or cross-user write, but
+  lost updates and duplicate adds are possible; accepted for a best-effort
+  path. A process restart mid-curation leaves that span's memory writes
+  partially applied with `curated_through` unmoved; also accepted.
 
 ## Testing
 
