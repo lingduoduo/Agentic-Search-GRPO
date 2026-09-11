@@ -1612,3 +1612,147 @@ def test_real_intent_index_abstention_uses_classifier_fallback(monkeypatch, tmp_
     assert response.status_code == 200
     assert llm.calls == 1
     assert calls == [("chat", "vendor renewal discussion request")]
+
+
+def test_memory_compression_flag_defaults_off_and_reads_env(monkeypatch):
+    monkeypatch.delenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", raising=False)
+    assert SearchExperienceSettings.from_app_settings().memory_compression is False
+    monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", "true")
+    assert SearchExperienceSettings.from_app_settings().memory_compression is True
+
+
+def _seed_long_session(store, n=45):
+    session = store.create_chat_session(title="long")
+    records = [
+        store.add_chat_message(
+            session.id, role="user" if i % 2 == 0 else "assistant", content=f"msg {i}"
+        )
+        for i in range(n)
+    ]
+    return session.id, records
+
+
+def test_run_agent_prepends_stored_summary_when_flag_on(monkeypatch, tmp_path):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import (
+        SUMMARY_PREFIX,
+        SessionMemoryState,
+        save_state,
+    )
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    # Never let a developer's OPENAI_API_KEY turn this into a live call.
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.schedule_compression", lambda wm, **kw: None
+    )
+    captured: list = []
+
+    async def fake_answer(question, *, llm=None, chat_history=None, **kw):
+        captured.append(list(chat_history or []))
+        return _answer_result(question)
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.answer_with_retrieval", fake_answer
+    )
+
+    store = AgenticSearchStore(tmp_path / "state.sqlite3")
+    session_id, records = _seed_long_session(store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+
+    app = create_web_app(
+        SearchExperienceSettings(
+            db_path=tmp_path / "state.sqlite3", memory_compression=True
+        ),
+        store=store,
+    )
+    TestClient(app).post(
+        "/api/agent",
+        json={"query": "follow up", "mode": "chat_once", "session_id": session_id},
+    )
+
+    assert len(captured) == 1
+    assert captured[0][0].role == "system"
+    assert captured[0][0].content == SUMMARY_PREFIX + "S"
+    assert len(captured[0]) == 41
+
+
+def test_run_agent_flag_off_ignores_stored_summary(monkeypatch, tmp_path):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import SessionMemoryState, save_state
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    captured: list = []
+
+    async def fake_answer(question, *, llm=None, chat_history=None, **kw):
+        captured.append(list(chat_history or []))
+        return _answer_result(question)
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.answer_with_retrieval", fake_answer
+    )
+
+    store = AgenticSearchStore(tmp_path / "state.sqlite3")
+    session_id, records = _seed_long_session(store)
+    save_state(
+        cache,
+        session_id,
+        SessionMemoryState(summary="S", summarized_through=records[4].id),
+    )
+
+    app = create_web_app(
+        SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"), store=store
+    )
+    TestClient(app).post(
+        "/api/agent",
+        json={"query": "follow up", "mode": "chat_once", "session_id": session_id},
+    )
+
+    # Flag off: no summary system message is injected ahead of the tail.
+    assert [m.role for m in captured[0]][:1] != ["system"]
+    assert len(captured[0]) == 40
+
+
+def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
+    from src.internal.cache.interface import InMemoryCache
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    scheduled: list = []
+
+    def fake_schedule(wm, **kw):
+        scheduled.append((len(wm.pending), kw["enabled"], kw["llm"]))
+        return None
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.schedule_compression", fake_schedule
+    )
+
+    async def fake_answer(question, **kw):
+        return _answer_result(question)
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.answer_with_retrieval", fake_answer
+    )
+
+    store = AgenticSearchStore(tmp_path / "state.sqlite3")
+    session_id, _ = _seed_long_session(store)
+    sentinel_llm = object()
+    app = create_web_app(
+        SearchExperienceSettings(
+            db_path=tmp_path / "state.sqlite3", memory_compression=True
+        ),
+        store=store,
+        llm=sentinel_llm,
+    )
+    TestClient(app).post(
+        "/api/agent",
+        json={"query": "follow up", "mode": "chat_once", "session_id": session_id},
+    )
+
+    assert scheduled == [(5, True, sentinel_llm)]

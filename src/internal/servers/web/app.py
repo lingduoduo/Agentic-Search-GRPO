@@ -43,7 +43,6 @@ from src.agents.core.control_flow_trace import (
     ControlFlowRecorder,
     EventSink,
 )
-from src.context import ChatMessage
 from src.context import LLMClient
 from src.context import answer_with_retrieval
 from src.context import build_context_bundle
@@ -130,7 +129,13 @@ from .tool_agent_runner import (
     ToolCallView,
     _run_tool_agent,
 )
+from src.internal.cache.interface import get_cache_backend
 from src.internal.cache.serving import configure_serving_cache, reset_serving_cache
+from src.internal.memory.working import (
+    MAX_HISTORY_MESSAGES,
+    load_working_memory,
+    schedule_compression,
+)
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
 
@@ -157,6 +162,10 @@ class SearchExperienceSettings:
     # shared default_user bucket. Off by default: the CLI is documented as
     # working unauthenticated for local research use.
     memory_require_auth: bool = False
+    # Summarize turns that fall off the history tail into a system message the
+    # next turn sees, using the configured LLM client. Off by default; with no
+    # LLM client the flag is inert.
+    memory_compression: bool = False
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
@@ -180,6 +189,7 @@ class SearchExperienceSettings:
             allow_client_search_url=_flag("AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL"),
             debug_panels=_flag("AGENTIC_SEARCH_DEBUG_PANELS"),
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
+            memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
@@ -1551,12 +1561,13 @@ def create_web_app(
 
         session_request = _copy_agent_request(request, user_id=user_id)
         session_id = _ensure_session(db, session_request, auth_user)
-        history = _trim_history(
-            [
-                ChatMessage(role=message.role, content=message.content)
-                for message in db.list_chat_messages(session_id)
-            ]
+        working = load_working_memory(
+            db,
+            session_id,
+            keep_last=MAX_HISTORY_MESSAGES,
+            cache=get_cache_backend() if settings.memory_compression else None,
         )
+        history = working.messages
         db.add_chat_message(session_id, role="user", content=query)
 
         # Resolve the retrieval URL server-side. A client-supplied search_url is
@@ -1880,6 +1891,12 @@ def create_web_app(
                 mode=mode,
             )
         finally:
+            schedule_compression(
+                working,
+                session_id=session_id,
+                llm=llm,
+                enabled=settings.memory_compression,
+            )
             STAGE_LATENCY.record(_stage_metrics.finish_request(stage_token))
             cap = _capture.active()
             if cap is not None:
@@ -2120,8 +2137,6 @@ _VALID_AGENT_MODES = {
     "tool_agent",
 }
 
-MAX_HISTORY_MESSAGES = 40
-
 
 def _trim_history(history: list, max_messages: int = MAX_HISTORY_MESSAGES) -> list:
     """Keep only the tail of chat history to avoid overflowing the LLM context."""
@@ -2138,12 +2153,18 @@ SEARCH_AGENT_HISTORY_MESSAGES = 6
 def _build_search_agent_messages(query: str, history: list) -> list[dict[str, str]]:
     """Build the SearchAgentLoop message buffer: capped prior turns + the query.
 
-    History is capped to the last ``SEARCH_AGENT_HISTORY_MESSAGES`` messages and
-    mapped to ``{"role", "content"}`` dicts; the current user query is appended
-    last. ``SearchAgentLoop._with_system_prompt`` prepends the system prompt.
+    A leading ``system`` message is the working-memory summary of turns that
+    already fell off the tail; it is kept ahead of the cap. The rest of the
+    history is capped to the last ``SEARCH_AGENT_HISTORY_MESSAGES`` messages
+    and mapped to ``{"role", "content"}`` dicts; the current user query is
+    appended last. ``SearchAgentLoop._with_system_prompt`` prepends the system
+    prompt.
     """
-    capped = _trim_history(history, max_messages=SEARCH_AGENT_HISTORY_MESSAGES)
-    messages = [{"role": m.role, "content": m.content} for m in capped]
+    leading = history[:1] if history and history[0].role == "system" else []
+    capped = _trim_history(
+        history[len(leading) :], max_messages=SEARCH_AGENT_HISTORY_MESSAGES
+    )
+    messages = [{"role": m.role, "content": m.content} for m in [*leading, *capped]]
     messages.append({"role": "user", "content": query})
     return messages
 
