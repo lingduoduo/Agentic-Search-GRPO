@@ -1756,3 +1756,39 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
     )
 
     assert scheduled == [(5, True, sentinel_llm)]
+
+
+def test_register_routers_passes_memory_settings_to_chat_and_tool(
+    monkeypatch, tmp_path
+):
+    seen: dict = {}
+
+    def fake_chat_router(store, *, llm=None, memory_compression=False):
+        seen["chat"] = (llm, memory_compression)
+        from fastapi import APIRouter
+
+        return APIRouter()
+
+    def fake_tool_router(
+        store, *, search_url, resolved, llm=None, memory_compression=False
+    ):
+        seen["tool"] = (llm, memory_compression)
+        from fastapi import APIRouter
+
+        return APIRouter()
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.create_chat_router", fake_chat_router
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.tool_backend.create_tool_router",
+        fake_tool_router,
+    )
+    sentinel = object()
+    create_web_app(
+        SearchExperienceSettings(
+            db_path=tmp_path / "s.sqlite3", memory_compression=True
+        ),
+        llm=sentinel,
+    )
+    assert seen == {"chat": (sentinel, True), "tool": (sentinel, True)}

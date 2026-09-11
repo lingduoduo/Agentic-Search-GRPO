@@ -15,10 +15,15 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.context import ChatMessage
 from src.context.models import SearchFilters
 from src.internal.access.capabilities import resolve_capabilities
+from src.internal.cache.interface import get_cache_backend
 from src.internal.db import AgenticSearchStore
+from src.internal.memory.working import (
+    MAX_HISTORY_MESSAGES,
+    load_working_memory,
+    schedule_compression,
+)
 from src.internal.servers._auth import caller_may_use_session
 from src.internal.servers.query_and_chat.models import (
     SendToolMessageRequest,
@@ -30,14 +35,14 @@ from src.internal.servers.users.api import resolve_active_user
 
 logger = logging.getLogger(__name__)
 
-_MAX_HISTORY_MESSAGES = 40
-
 
 def create_tool_router(
     store: AgenticSearchStore,
     *,
     search_url: str = "http://localhost:8000/retrieve",
     resolved,
+    llm=None,
+    memory_compression: bool = False,
 ) -> APIRouter:
     router = APIRouter(prefix="/tool", tags=["tool"])
 
@@ -63,13 +68,6 @@ def create_tool_router(
         )
         return session.id
 
-    def _history(session_id: str) -> list[ChatMessage]:
-        msgs = [
-            ChatMessage(role=m.role, content=m.content)
-            for m in store.list_chat_messages(session_id)
-        ]
-        return msgs[-_MAX_HISTORY_MESSAGES:]
-
     @router.post("/send-tool-message", response_model=None)
     async def send_tool_message(body: SendToolMessageRequest, http_request: Request):
         # Deferred to call time: tool_agent_runner lives inside src.internal.servers.web,
@@ -91,8 +89,19 @@ def create_tool_router(
         user = resolve_active_user(http_request, store)
         capabilities = resolve_capabilities(user, store)
         session_id = _ensure_session(body, user)
-        history = _history(session_id)
+        working = load_working_memory(
+            store,
+            session_id,
+            keep_last=MAX_HISTORY_MESSAGES,
+            cache=get_cache_backend() if memory_compression else None,
+        )
+        history = working.messages
         store.add_chat_message(session_id, role="user", content=body.message)
+        # The answer comes from the local model, so the remote llm summarizing
+        # now contends with nothing; one site covers both branches.
+        schedule_compression(
+            working, session_id=session_id, llm=llm, enabled=memory_compression
+        )
 
         async def _run(on_turn=None, on_approval=None):
             answer, _citations, documents, _intent, extra = await _run_tool_agent(

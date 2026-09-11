@@ -380,6 +380,7 @@ def _register_routers(
     debug_panels: bool = False,
     llm: LLMClient | None = None,
     memory_require_auth: bool = False,
+    memory_compression: bool = False,
 ) -> None:
     """Attach all API routers and exception handlers to *app*."""
 
@@ -387,12 +388,22 @@ def _register_routers(
     app.include_router(create_users_router(db, settings))
 
     # --- Core search & chat ---
-    app.include_router(create_chat_router(db))
+    app.include_router(
+        create_chat_router(db, llm=llm, memory_compression=memory_compression)
+    )
     app.include_router(create_search_router(db, search_url=search_url))
 
     from src.internal.servers.query_and_chat.tool_backend import create_tool_router
 
-    app.include_router(create_tool_router(db, search_url=search_url, resolved=settings))
+    app.include_router(
+        create_tool_router(
+            db,
+            search_url=search_url,
+            resolved=settings,
+            llm=llm,
+            memory_compression=memory_compression,
+        )
+    )
     app.include_router(query_basic_router)
     app.include_router(create_query_history_router(db, settings))
 
@@ -1435,6 +1446,7 @@ def create_web_app(
         debug_panels=settings.debug_panels,
         llm=llm,
         memory_require_auth=settings.memory_require_auth,
+        memory_compression=settings.memory_compression,
     )
 
     frontend_dist = _frontend_dist_path()
