@@ -160,11 +160,17 @@ async def compress_session(
     if not pending or llm is None or session_id in _inflight:
         return False
     cache = cache if cache is not None else get_cache_backend()
-    lock = cache.lock(_LOCK_KEY.format(session_id=session_id), timeout=120)
-    if not lock.acquire(blocking=False):
-        return False
-    _inflight.add(session_id)
+    # None until acquired: ``cache.lock(...)`` and ``lock.acquire(...)`` are
+    # I/O on real backends (Redis, Postgres) and can raise, so they must sit
+    # inside the try below; `lock` only becomes non-None once acquired, which
+    # is also what tells `finally` whether a release is owed.
+    lock = None
     try:
+        candidate = cache.lock(_LOCK_KEY.format(session_id=session_id), timeout=120)
+        if not candidate.acquire(blocking=False):
+            return False
+        lock = candidate
+        _inflight.add(session_id)
         state = load_state(cache, session_id)
         last_id = pending[-1].id
         if state.summarized_through == last_id:
@@ -189,7 +195,13 @@ async def compress_session(
         return False
     finally:
         _inflight.discard(session_id)
-        lock.release()
+        if lock is not None:
+            try:
+                lock.release()
+            except Exception as exc:  # noqa: BLE001 - release is best-effort
+                logger.warning(
+                    "session memory lock release failed for %s: %s", session_id, exc
+                )
 
 
 def schedule_compression(

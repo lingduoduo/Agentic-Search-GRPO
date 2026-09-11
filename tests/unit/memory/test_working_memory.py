@@ -267,6 +267,26 @@ def test_concurrent_compress_calls_llm_once(store, cache):
     assert len(llm.prompts) == 1
 
 
+def test_compress_lock_failure_leaves_state_and_clears_inflight(store, cache):
+    sid, records = _seed(store, 12)
+
+    class BrokenCache(InMemoryCache):
+        def lock(self, name, timeout=None):
+            raise RuntimeError("redis down")
+
+    broken = BrokenCache()
+    llm = FakeLLM()
+    ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=broken))
+    assert ok is False
+    assert load_state(broken, sid) == SessionMemoryState()
+    assert llm.prompts == []
+
+    # A second call on the same session, against a healthy cache, must still
+    # succeed -- proving the failed lock attempt did not leave `_inflight` set.
+    ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=cache))
+    assert ok is True
+
+
 # --- schedule_compression -----------------------------------------------------
 
 
