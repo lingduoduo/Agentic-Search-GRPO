@@ -10,12 +10,13 @@ default, Redis when ``CACHE_BACKEND=redis`` -- so no new dependency is added.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
 
 from src.context.models import ChatMessage
-from src.internal.cache.interface import CacheBackend
+from src.internal.cache.interface import CacheBackend, get_cache_backend
 from src.internal.db.models import ChatMessageRecord
 
 logger = logging.getLogger(__name__)
@@ -108,3 +109,107 @@ def load_working_memory(
     # No summary, or its cursor is not in this session's dropped prefix (state
     # lost, or the cap grew so the covered turns are back in the tail): start over.
     return WorkingMemory(messages=messages, summary="", pending=list(dropped))
+
+
+_LOCK_KEY = "session_memory:{session_id}:compress"
+_SUMMARY_MAX_TOKENS = 400
+_SUMMARY_SYSTEM = (
+    "You compress a conversation. Rewrite the prior summary and the new turns "
+    "into one concise summary that keeps facts, decisions, user preferences, "
+    "and open questions. Output the summary only."
+)
+
+# Sessions being summarized in this process. `_InMemoryCacheLock` always
+# acquires, so on the default backend this set is the real mutual exclusion;
+# the cache lock below covers a Redis deployment with several processes.
+_inflight: set[str] = set()
+# Strong references to scheduled tasks, so the event loop cannot drop them.
+_tasks: set[asyncio.Task] = set()
+
+
+def _summary_prompt(prior: str, pending: list[ChatMessageRecord]) -> list[dict]:
+    turns = "\n".join(f"{r.role.upper()}: {r.content}" for r in pending)
+    return [
+        {"role": "system", "content": _SUMMARY_SYSTEM},
+        {
+            "role": "user",
+            "content": f"Prior summary:\n{prior or '(none)'}\n\nNew turns:\n{turns}",
+        },
+    ]
+
+
+def _complete(llm, prompt: list[dict]) -> str:
+    raw = llm.complete(prompt, max_tokens=_SUMMARY_MAX_TOKENS, temperature=0.0)
+    text = raw if isinstance(raw, str) else getattr(raw, "text", "")
+    return (text or "").strip()
+
+
+async def compress_session(
+    session_id: str,
+    llm,
+    *,
+    pending: list[ChatMessageRecord],
+    cache: CacheBackend | None = None,
+) -> bool:
+    """Summarize ``pending`` into the session's stored summary.
+
+    Returns True when the state advanced. False means nothing to do, another
+    task owns this span, or the summarizer failed -- in which case the state
+    is untouched and the next turn retries the same span.
+    """
+    if not pending or llm is None or session_id in _inflight:
+        return False
+    cache = cache if cache is not None else get_cache_backend()
+    lock = cache.lock(_LOCK_KEY.format(session_id=session_id), timeout=120)
+    if not lock.acquire(blocking=False):
+        return False
+    _inflight.add(session_id)
+    try:
+        state = load_state(cache, session_id)
+        last_id = pending[-1].id
+        if state.summarized_through == last_id:
+            return False
+        text = await asyncio.to_thread(
+            _complete, llm, _summary_prompt(state.summary, pending)
+        )
+        if not text:
+            return False
+        save_state(
+            cache,
+            session_id,
+            SessionMemoryState(
+                summary=text,
+                summarized_through=last_id,
+                curated_through=state.curated_through,
+            ),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - compression is a delivery detail
+        logger.warning("session memory compression failed for %s: %s", session_id, exc)
+        return False
+    finally:
+        _inflight.discard(session_id)
+        lock.release()
+
+
+def schedule_compression(
+    wm: WorkingMemory,
+    *,
+    session_id: str,
+    llm,
+    enabled: bool,
+    cache: CacheBackend | None = None,
+) -> asyncio.Task | None:
+    """Fire-and-forget ``compress_session`` when there is something to compress.
+
+    Must be called from a running event loop. Returns the task (tests await
+    it) or None when nothing was scheduled.
+    """
+    if not enabled or llm is None or not wm.pending:
+        return None
+    task = asyncio.create_task(
+        compress_session(session_id, llm, pending=wm.pending, cache=cache)
+    )
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return task

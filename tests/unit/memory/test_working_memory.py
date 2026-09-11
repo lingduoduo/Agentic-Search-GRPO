@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 
 import pytest
 
@@ -10,9 +12,12 @@ from src.internal.db import AgenticSearchStore
 from src.internal.memory.working import (
     SUMMARY_PREFIX,
     SessionMemoryState,
+    WorkingMemory,
+    compress_session,
     load_state,
     load_working_memory,
     save_state,
+    schedule_compression,
 )
 
 
@@ -148,3 +153,171 @@ def test_default_keep_last_is_forty(store, cache):
     wm = load_working_memory(store, sid, cache=cache)
     assert len(wm.messages) == 40
     assert len(wm.pending) == 5
+
+
+class FakeLLM:
+    def __init__(self, text="SUMMARY", *, delay=0.0, fail=False):
+        self.text, self.delay, self.fail = text, delay, fail
+        self.prompts: list[list[dict]] = []
+
+    def complete(self, messages, **kwargs):
+        self.prompts.append(messages)
+        if self.delay:
+            time.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("llm down")
+        return self.text
+
+
+# --- compress_session ---------------------------------------------------------
+
+
+def test_compress_advances_cursor_and_stores_text(store, cache):
+    sid, records = _seed(store, 12)
+    pending = records[:2]
+    ok = asyncio.run(
+        compress_session(sid, FakeLLM("they said hi"), pending=pending, cache=cache)
+    )
+    assert ok is True
+    state = load_state(cache, sid)
+    assert state.summary == "they said hi"
+    assert state.summarized_through == records[1].id
+    assert state.curated_through is None
+
+
+def test_compress_prompt_carries_prior_summary_and_every_turn(store, cache):
+    sid, records = _seed(store, 12)
+    save_state(
+        cache,
+        sid,
+        SessionMemoryState(summary="PRIOR", summarized_through=records[0].id),
+    )
+    llm = FakeLLM()
+    asyncio.run(compress_session(sid, llm, pending=records[1:3], cache=cache))
+    user_prompt = llm.prompts[0][-1]["content"]
+    assert "PRIOR" in user_prompt
+    assert "USER: m2" in user_prompt
+    assert "ASSISTANT: m1" in user_prompt
+
+
+def test_compress_preserves_curated_through(store, cache):
+    sid, records = _seed(store, 12)
+    save_state(cache, sid, SessionMemoryState(curated_through="keep-me"))
+    asyncio.run(compress_session(sid, FakeLLM(), pending=records[:2], cache=cache))
+    assert load_state(cache, sid).curated_through == "keep-me"
+
+
+def test_compress_llm_failure_leaves_state_and_allows_retry(store, cache):
+    sid, records = _seed(store, 12)
+    ok = asyncio.run(
+        compress_session(sid, FakeLLM(fail=True), pending=records[:2], cache=cache)
+    )
+    assert ok is False
+    assert load_state(cache, sid) == SessionMemoryState()
+    ok = asyncio.run(
+        compress_session(sid, FakeLLM("later"), pending=records[:2], cache=cache)
+    )
+    assert ok is True
+    assert load_state(cache, sid).summary == "later"
+
+
+def test_compress_empty_text_leaves_state(store, cache):
+    sid, records = _seed(store, 12)
+    ok = asyncio.run(
+        compress_session(sid, FakeLLM("   "), pending=records[:2], cache=cache)
+    )
+    assert ok is False
+    assert load_state(cache, sid) == SessionMemoryState()
+
+
+def test_compress_skips_when_cursor_already_at_last_pending(store, cache):
+    sid, records = _seed(store, 12)
+    save_state(
+        cache, sid, SessionMemoryState(summary="done", summarized_through=records[1].id)
+    )
+    llm = FakeLLM()
+    ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=cache))
+    assert ok is False
+    assert llm.prompts == []
+
+
+def test_compress_no_pending_or_no_llm_is_noop(store, cache):
+    sid, records = _seed(store, 12)
+    assert (
+        asyncio.run(compress_session(sid, FakeLLM(), pending=[], cache=cache)) is False
+    )
+    assert (
+        asyncio.run(compress_session(sid, None, pending=records[:2], cache=cache))
+        is False
+    )
+
+
+def test_concurrent_compress_calls_llm_once(store, cache):
+    sid, records = _seed(store, 12)
+    llm = FakeLLM(delay=0.05)
+
+    async def both():
+        return await asyncio.gather(
+            compress_session(sid, llm, pending=records[:2], cache=cache),
+            compress_session(sid, llm, pending=records[:2], cache=cache),
+        )
+
+    results = asyncio.run(both())
+    assert sorted(results) == [False, True]
+    assert len(llm.prompts) == 1
+
+
+# --- schedule_compression -----------------------------------------------------
+
+
+def _wm(pending):
+    return WorkingMemory(messages=[], summary="", pending=pending)
+
+
+def test_schedule_returns_none_when_disabled_or_no_llm_or_nothing_pending(store, cache):
+    sid, records = _seed(store, 12)
+
+    async def run():
+        assert (
+            schedule_compression(
+                _wm(records[:2]),
+                session_id=sid,
+                llm=FakeLLM(),
+                enabled=False,
+                cache=cache,
+            )
+            is None
+        )
+        assert (
+            schedule_compression(
+                _wm(records[:2]), session_id=sid, llm=None, enabled=True, cache=cache
+            )
+            is None
+        )
+        assert (
+            schedule_compression(
+                _wm([]), session_id=sid, llm=FakeLLM(), enabled=True, cache=cache
+            )
+            is None
+        )
+
+    asyncio.run(run())
+    assert load_state(cache, sid) == SessionMemoryState()
+
+
+def test_schedule_runs_compress_in_background(store, cache):
+    sid, records = _seed(store, 12)
+
+    async def run():
+        task = schedule_compression(
+            _wm(records[:2]),
+            session_id=sid,
+            llm=FakeLLM("bg"),
+            enabled=True,
+            cache=cache,
+        )
+        assert task is not None
+        await task
+
+    asyncio.run(run())
+    assert load_state(cache, sid).summary == "bg"
