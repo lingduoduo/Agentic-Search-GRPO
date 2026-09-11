@@ -143,8 +143,12 @@ curl -s -X POST http://localhost:7860/api/feedback \
 # → {"ok": true}
 ```
 
-`target` is `retrieval` (the sources were wrong), `generation` (the answer was
-wrong given the sources) or `overall` (default). The answer panel's thumbs bar
+`session_id` must name a session that exists and that the caller may use
+(an anonymous session's id is its capability, as for every other session
+route); anything else is `404` and nothing is written. The rows feed the SFT
+and feedback-GRPO loaders, so the endpoint never accepts feedback for a
+session it does not know. `target` is `retrieval` (the sources were wrong),
+`generation` (the answer was wrong given the sources) or `overall` (default). The answer panel's thumbs bar
 posts it; `GET /api/admin/evals/summary` and the training loader read it back
 apart (`by_target`, `metadata["human_signal_target"]`).
 

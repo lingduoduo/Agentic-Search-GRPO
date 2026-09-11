@@ -41,8 +41,13 @@ def create_feedback_router(db: AgenticSearchStore) -> APIRouter:
     def submit_feedback(
         request: FeedbackRequest, http_request: Request
     ) -> FeedbackResponse:
+        # An unknown session id is refused, not accepted: this row feeds the
+        # SFT and feedback-GRPO loaders, so accepting feedback for a session
+        # that does not exist would let an unauthenticated caller write
+        # training data. A known session is refused unless the caller may use
+        # it (an anonymous session's id is its capability, as elsewhere).
         session = db.get_chat_session(request.session_id)
-        if session is not None and not caller_may_use_session(
+        if session is None or not caller_may_use_session(
             session, resolve_active_user(http_request, db)
         ):
             raise HTTPException(status_code=404, detail="Session not found")
