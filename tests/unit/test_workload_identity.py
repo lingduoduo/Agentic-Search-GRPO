@@ -90,13 +90,17 @@ class Response:
         {"exp": None},
         {"iat": None},
         {"sub": None},
-        {"exp": int(time.time()) + 4000},
-        {"iat": int(time.time()) + 100},
-        {"nbf": int(time.time()) + 100},
+        # Callables are resolved inside the test: a timestamp fixed at
+        # collection time drifts into the past over a long suite run.
+        {"exp": lambda now: now + 4000},
+        {"iat": lambda now: now + 100},
+        {"nbf": lambda now: now + 100},
     ],
 )
 def test_invalid_workloads_rejected(federation, monkeypatch, overrides):
     sign, keys = federation
+    now = int(time.time())
+    overrides = {k: v(now) if callable(v) else v for k, v in overrides.items()}
     monkeypatch.setattr(
         "src.internal.auth.workload_identity._open_jwks", lambda *a, **k: Response(keys)
     )
