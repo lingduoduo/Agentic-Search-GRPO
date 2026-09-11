@@ -169,3 +169,15 @@ def test_memory_preamble_search_failure_degrades_to_recency(monkeypatch):
     assert pre.count("\n- ") == MEMORY_INJECTION_MAX
     assert "User is allergic to peanuts" not in pre
     store.close()
+
+
+def test_memory_preamble_above_cap_deduplicates_identical_texts():
+    store = AgenticSearchStore(":memory:")
+    _seed_above_cap(store)
+    store.add_user_memory("u1", "User is allergic to peanuts")  # duplicate, now newest
+    pre = memory_preamble(store, "u1", query="thai food with peanuts")
+    bullets = [line[2:] for line in pre.split("\n") if line.startswith("- ")]
+    assert len(bullets) == MEMORY_INJECTION_MAX
+    assert bullets.count("User is allergic to peanuts") == 1
+    assert bullets[0] == "User is allergic to peanuts"  # first occurrence position
+    store.close()

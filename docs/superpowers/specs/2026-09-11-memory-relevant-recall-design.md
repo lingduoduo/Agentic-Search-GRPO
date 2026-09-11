@@ -74,8 +74,8 @@ def memory_preamble(store, user_id, *, max_items=MEMORY_INJECTION_MAX,
 Ties, duplicates, and the lexical fallback: `search_memories` returns fewer
 than the slot count when few memories overlap the query; the fill then takes
 more recent ones, so the block is always `max_items` long above the cap.
-Two memories with identical text are the same text in the set, which is
-harmless.
+Two memories with identical text produce one bullet, at the first
+occurrence; the store never deduplicates rows, so the preamble must.
 
 ### Threading the query and the encoder
 

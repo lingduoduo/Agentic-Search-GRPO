@@ -96,7 +96,12 @@ def _select_relevant(
         if text not in selected:
             selected.append(text)
     keep = set(selected)
-    return [m for m in memories if m in keep]
+    ordered: list[str] = []
+    for text in memories:
+        if text in keep:
+            ordered.append(text)
+            keep.discard(text)
+    return ordered
 
 
 def maybe_build_encoder() -> Encoder | None:
