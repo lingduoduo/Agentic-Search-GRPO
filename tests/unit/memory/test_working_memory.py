@@ -661,3 +661,68 @@ def test_curate_cursor_write_skips_merge_when_reread_is_blank(store):
     assert state.summary == "S"
     assert state.summarized_through == records[1].id
     assert state.curated_through is None
+
+
+class StateWritingLLM(FakeLLM):
+    """Simulates another process writing the session state while this task's
+    summarizer call is in flight (the 120s lock lease can expire mid-call)."""
+
+    def __init__(self, text, *, cache, sid, write):
+        super().__init__(text)
+        self._cache, self._sid, self._write = cache, sid, write
+
+    def complete(self, messages, **kwargs):
+        save_state(self._cache, self._sid, self._write)
+        return super().complete(messages, **kwargs)
+
+
+def test_compress_skips_write_when_cursor_moved_during_llm_call(store, cache):
+    sid, records = _seed(store, 12)
+    newer = SessionMemoryState(summary="newer", summarized_through="m_newer")
+    llm = StateWritingLLM("S", cache=cache, sid=sid, write=newer)
+    curate = _curator(True)
+    ok = asyncio.run(
+        compress_session(sid, llm, pending=records[:2], cache=cache, curate=curate)
+    )
+    assert ok is False
+    assert load_state(cache, sid) == newer
+    assert curate.calls == []
+
+
+def test_compress_write_preserves_curated_through_changed_during_llm_call(store, cache):
+    sid, records = _seed(store, 12)
+    moved = SessionMemoryState(curated_through="moved")  # cursor unchanged (None)
+    llm = StateWritingLLM("S", cache=cache, sid=sid, write=moved)
+    ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=cache))
+    assert ok is True
+    state = load_state(cache, sid)
+    assert state.summary == "S"
+    assert state.summarized_through == records[1].id
+    assert state.curated_through == "moved"
+
+
+def test_compress_first_summary_writes_despite_failed_reread(store):
+    class ReadsFailOnDemand(InMemoryCache):
+        fail_reads = False
+
+        def get(self, key):
+            if self.fail_reads:
+                raise RuntimeError("redis blip")
+            return super().get(key)
+
+    cache = ReadsFailOnDemand()
+    sid, records = _seed(store, 12)
+
+    class FailReadsLLM(FakeLLM):
+        def complete(self, messages, **kwargs):
+            cache.fail_reads = True  # the post-LLM re-read, not the pre-read
+            return super().complete(messages, **kwargs)
+
+    ok = asyncio.run(
+        compress_session(sid, FailReadsLLM("S"), pending=records[:2], cache=cache)
+    )
+    assert ok is True
+    cache.fail_reads = False
+    state = load_state(cache, sid)
+    assert state.summary == "S"
+    assert state.summarized_through == records[1].id

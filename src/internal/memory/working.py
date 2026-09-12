@@ -243,14 +243,24 @@ async def compress_session(
         )
         if not text:
             return False
+        # The summarizer call can outlive the 120s lock lease. Re-read before
+        # writing: if the cursor moved meanwhile, another process summarized
+        # a later span and this text is stale -- writing it would roll the
+        # session back and re-cover (and re-curate) those turns. A blank
+        # re-read on a session that had a cursor counts as moved: better to
+        # leave state alone than to write over a value the read did not see.
+        current = load_state(cache, session_id)
+        if current.summarized_through != state.summarized_through:
+            logger.warning(
+                "session memory compression skipped for %s: cursor moved during "
+                "summarization",
+                session_id,
+            )
+            return False
         save_state(
             cache,
             session_id,
-            SessionMemoryState(
-                summary=text,
-                summarized_through=last_id,
-                curated_through=state.curated_through,
-            ),
+            replace(current, summary=text, summarized_through=last_id),
         )
         if curate is not None:
             await _curate_after_summary(cache, session_id, curate, pending, last_id)
