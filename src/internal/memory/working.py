@@ -178,6 +178,17 @@ async def _curate_after_summary(
         return
     try:
         current = load_state(cache, session_id)
+        if current.summarized_through is None and not current.summary:
+            # load_state degrades a read failure, bad JSON, or an expired key
+            # to a blank state. Merging onto that would write summary="" over
+            # the summary this task saved a moment ago; leaving the cursor
+            # unmoved is the same accepted outcome as a failed cursor write.
+            logger.warning(
+                "memory auto-curation cursor merge skipped for %s: state re-read "
+                "came back blank",
+                session_id,
+            )
+            return
         save_state(cache, session_id, replace(current, curated_through=last_id))
     except Exception as exc:  # noqa: BLE001 - the summary is already saved
         logger.warning(
