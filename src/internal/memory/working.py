@@ -207,8 +207,9 @@ async def compress_session(
     """Summarize ``pending`` into the session's stored summary.
 
     Returns True when the state advanced. False means nothing to do, another
-    task owns this span, or the summarizer failed -- in which case the state
-    is untouched and the next turn retries the same span.
+    task owns this span or advanced past it while this one ran, or the
+    summarizer failed -- in every case this task wrote nothing, and the next
+    turn recomputes ``pending`` from whatever cursor is stored.
 
     When ``curate`` is given it runs after the summary is saved, over the
     same span; see ``_curate_after_summary``.
