@@ -109,3 +109,44 @@ def test_client_supplied_user_id_without_auth_gets_no_memory_or_acl(monkeypatch)
     assert captured["user_memory"] is None
     assert captured["filters"] == SearchFilters(access_acl=["public"])
     store.close()
+
+
+def test_assist_passes_query_and_app_state_encoder_to_capabilities(monkeypatch):
+    store = AgenticSearchStore(":memory:")
+    store.upsert_user(UserRecord(id="u1"))
+    captured: dict = {}
+    monkeypatch.setattr(web_app, "answer_with_retrieval", _capturing_awr(captured))
+    seen: dict = {}
+    real = web_app.resolve_capabilities
+
+    def recording(user, db, *, query=None, encoder=None):
+        seen.update(query=query, encoder=encoder)
+        return real(user, db, query=query, encoder=encoder)
+
+    monkeypatch.setattr(web_app, "resolve_capabilities", recording)
+    app = create_web_app(SearchExperienceSettings(), store=store)
+    sentinel = object()
+    app.state.memory_encoder = sentinel
+    client = TestClient(app)
+    client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
+    client.post(
+        "/api/agent", json={"query": "Recommend Thai food", "mode": "chat_once"}
+    )
+    assert seen == {"query": "Recommend Thai food", "encoder": sentinel}
+
+
+def test_lifespan_builds_the_memory_encoder_once(monkeypatch):
+    calls: list = []
+    sentinel = object()
+
+    def fake_build():
+        calls.append(1)
+        return sentinel
+
+    monkeypatch.setattr(web_app, "maybe_build_encoder", fake_build)
+    app = create_web_app(
+        SearchExperienceSettings(), store=AgenticSearchStore(":memory:")
+    )
+    with TestClient(app):
+        assert app.state.memory_encoder is sentinel
+    assert calls == [1]

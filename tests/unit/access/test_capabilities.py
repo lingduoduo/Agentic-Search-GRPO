@@ -63,3 +63,29 @@ def test_a_store_failure_degrades_to_no_memory():
     caps = resolve_capabilities(AuthenticatedUser(id="u1"), _Broken())
     assert caps.memory_preamble == ""
     assert caps.user_id == "u1"
+
+
+def test_query_and_encoder_are_forwarded_to_the_preamble(monkeypatch):
+    seen: dict = {}
+
+    def fake_preamble(store, user_id, *, query=None, encoder=None, **kw):
+        seen.update(user_id=user_id, query=query, encoder=encoder)
+        return "pre"
+
+    monkeypatch.setattr(
+        "src.internal.access.capabilities.memory_preamble", fake_preamble
+    )
+    sentinel = object()
+    caps = resolve_capabilities(
+        AuthenticatedUser(id="u1"), _Store(), query="thai", encoder=sentinel
+    )
+    assert caps.memory_preamble == "pre"
+    assert seen == {"user_id": "u1", "query": "thai", "encoder": sentinel}
+
+
+def test_anonymous_never_reaches_the_preamble_even_with_a_query(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("preamble must not run for anonymous")
+
+    monkeypatch.setattr("src.internal.access.capabilities.memory_preamble", boom)
+    assert resolve_capabilities(None, _Store(), query="thai").memory_preamble == ""

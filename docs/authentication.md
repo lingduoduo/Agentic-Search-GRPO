@@ -57,6 +57,10 @@ access through both HTTP and MCP. Web memory requests also check active account
 state. Signing in selects the caller's memory bucket and document permissions;
 it does not select a different search route.
 
+Above 20 memories, half the injected slots go to the memories most relevant
+to the current question and half to the most recent, so the 10 most recent
+are always present and older ones surface when relevant.
+
 ## Admin and debug surfaces
 
 The debug router is mounted only when debug panels are enabled, and all its web

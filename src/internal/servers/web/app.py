@@ -56,6 +56,7 @@ from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
 from src.internal.hooks import HookSoftFailed
 from src.internal.hooks import execute_hook
+from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
 from src.internal.search.models import RankedEvidence
@@ -1381,6 +1382,10 @@ def create_web_app(
         )
         _app.state.search_agent_manager = None
         _app.state.search_agent_tokenizer = None
+        # One encoder per process for relevance-aware memory recall. None
+        # unless AGENTIC_SEARCH_MEMORY_SEMANTIC is set; the lexical fallback
+        # needs nothing. Never built per request.
+        _app.state.memory_encoder = maybe_build_encoder()
         if resolved.search_agent_server_url:
             try:
                 from transformers import AutoTokenizer
@@ -1581,7 +1586,18 @@ def create_web_app(
         hook_metadata: dict[str, object] = {}
 
         auth_user = _optional_user_from_request(http_request, db)
-        capabilities = resolve_capabilities(auth_user, db)
+        # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
+        # needs user_id, which comes from capabilities; memory selection
+        # therefore sees the raw query.
+        # Memory recall may run the e5 encoder over every stored memory; keep
+        # that off the event loop, matching the direct-gate embedder above.
+        capabilities = await asyncio.to_thread(
+            resolve_capabilities,
+            auth_user,
+            db,
+            query=query,
+            encoder=getattr(http_request.app.state, "memory_encoder", None),
+        )
         # Attribution and entitlement both come from the authenticated caller.
         user_id = capabilities.user_id
         # Memory-augmented generation: a signed-in caller's stored memories are
