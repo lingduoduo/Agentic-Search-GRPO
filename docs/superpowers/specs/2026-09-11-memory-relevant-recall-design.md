@@ -60,7 +60,10 @@ def memory_preamble(store, user_id, *, max_items=MEMORY_INJECTION_MAX,
    unchanged.
 3. Otherwise `_select_relevant(store, user_id, query, memories, max_items,
    encoder)`:
-   - `hits = search_memories(store, user_id, query, max_results=min(MEMORY_RELEVANT_SLOTS, max_items), encoder=encoder)`,
+   - The lexical leg (no encoder) scores on `_content_query(query)`, which
+     drops function words, so the query is never matched on tokens like "to"
+     or "for"; the e5 leg scores on the original query.
+   - `hits = search_memories(store, user_id, search_query, max_results=min(MEMORY_RELEVANT_SLOTS, max_items // 2), encoder=encoder)`,
      a list of `(record, score)`; take `record.memory_text` in rank order.
    - Fill: walk `memories` newest-first, adding texts not already selected,
      until `max_items` are chosen.
@@ -76,6 +79,18 @@ than the slot count when few memories overlap the query; the fill then takes
 more recent ones, so the block is always `max_items` long above the cap.
 Two memories with identical text produce one bullet, at the first
 occurrence; the store never deduplicates rows, so the preamble must.
+
+### Trade-off
+
+Below the cap nothing changes. Above it, the 10 most recent memories stay
+always present; positions 11–20 of the old recency rule become displaceable
+by relevance hits. For a user with 30 memories, 10 memories that were in
+every prompt no longer are. The lexical leg matches on content tokens only
+(function words dropped); with no content overlap all 20 slots fall back to
+recency. The e5 leg ranks by embedding similarity and takes the top 10
+without a floor: e5 similarities have a high baseline, so a floor would be
+arbitrary, and the top 10 of a user's memories are the most related ones by
+construction.
 
 ### Threading the query and the encoder
 
