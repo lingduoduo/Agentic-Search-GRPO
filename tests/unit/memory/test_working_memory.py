@@ -629,3 +629,35 @@ def test_schedule_disabled_never_curates_even_with_auto_curate(store, cache):
 
     assert asyncio.run(run()) is None
     assert load_state(cache, sid) == SessionMemoryState()
+
+
+def test_curate_cursor_write_skips_merge_when_reread_is_blank(store):
+    # load_state turns a cache read failure into a blank state. If the cursor
+    # merge trusted that blank, it would write summary="" over the summary
+    # this same task saved a moment earlier. The merge must skip instead.
+    class ReadsFailOnDemand(InMemoryCache):
+        fail_reads = False
+
+        def get(self, key):
+            if self.fail_reads:
+                raise RuntimeError("redis blip")
+            return super().get(key)
+
+    cache = ReadsFailOnDemand()
+    sid, records = _seed(store, 12)
+
+    async def curate(pending):
+        cache.fail_reads = True  # the cursor re-read, not the summary write
+        return True
+
+    ok = asyncio.run(
+        compress_session(
+            sid, FakeLLM("S"), pending=records[:2], cache=cache, curate=curate
+        )
+    )
+    assert ok is True
+    cache.fail_reads = False
+    state = load_state(cache, sid)
+    assert state.summary == "S"
+    assert state.summarized_through == records[1].id
+    assert state.curated_through is None
