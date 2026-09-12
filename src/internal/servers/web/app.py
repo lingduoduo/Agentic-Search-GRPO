@@ -51,12 +51,12 @@ from src.context.models import ContextDocument
 from src.context.models import SearchFilters
 from src.context.search import SearchResult, citation_key
 from src.internal.access.capabilities import resolve_capabilities
-from src.internal.memory.service import maybe_build_encoder
 from src.internal.db import AgenticSearchStore
 from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
 from src.internal.hooks import HookSoftFailed
 from src.internal.hooks import execute_hook
+from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
 from src.internal.search.models import RankedEvidence
@@ -1586,7 +1586,13 @@ def create_web_app(
         hook_metadata: dict[str, object] = {}
 
         auth_user = _optional_user_from_request(http_request, db)
-        capabilities = resolve_capabilities(
+        # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
+        # needs user_id, which comes from capabilities; memory selection
+        # therefore sees the raw query.
+        # Memory recall may run the e5 encoder over every stored memory; keep
+        # that off the event loop, matching the direct-gate embedder above.
+        capabilities = await asyncio.to_thread(
+            resolve_capabilities,
             auth_user,
             db,
             query=query,

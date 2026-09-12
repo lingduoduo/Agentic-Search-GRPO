@@ -53,8 +53,11 @@ def memory_preamble(
     At or below the cap every memory is listed. Above it, and given a
     *query*, half the slots go to the memories most relevant to that query
     (``search_memories``) and the rest to the most recent ones, so an old but
-    relevant fact still reaches the model while recent facts stay always
+    relevant fact still reaches the model while the 10 most recent stay always
     present. Without a query the most recent *max_items* are listed.
+
+    Above the cap with a query, duplicate texts collapse to one bullet; the
+    plain recency path lists rows as stored.
     """
     memories = store.get_user_memories(user_id)
     if not memories:
@@ -66,6 +69,24 @@ def memory_preamble(
     return _MEMORY_PREAMBLE_HEADER + "\n".join(f"- {m}" for m in chosen)
 
 
+_QUERY_STOPWORDS = frozenset(
+    "a an and are as at be but by can do for from has have how i if in is it "
+    "its me my of on or our so that the their them they this to was we what "
+    "when where which who will with would you your".split()
+)
+
+
+def _content_query(query: str) -> str:
+    """The query with function words dropped, for the token-overlap scorer.
+
+    The lexical leg counts any shared token, so a natural-language question
+    would otherwise select old memories on "to" and "for". The e5 leg gets
+    the original query; embeddings already weigh content over function words.
+    """
+    tokens = [t for t in _tokenize(query) if t not in _QUERY_STOPWORDS and len(t) >= 3]
+    return " ".join(tokens)
+
+
 def _select_relevant(
     store,
     user_id: str,
@@ -75,12 +96,15 @@ def _select_relevant(
     encoder: Encoder | None,
 ) -> list[str]:
     """Relevance hits first, then newest-first fill, returned in chronological order."""
+    search_query = query if encoder is not None else _content_query(query)
+    if not search_query:
+        return memories[-max_items:]
     try:
         hits = search_memories(
             store,
             user_id,
-            query,
-            max_results=min(MEMORY_RELEVANT_SLOTS, max_items),
+            search_query,
+            max_results=min(MEMORY_RELEVANT_SLOTS, max_items // 2),
             encoder=encoder,
         )
     except Exception as exc:  # noqa: BLE001 — recall is best-effort
