@@ -183,7 +183,9 @@ async def test_hybrid_corpus_branch_stays_raw(monkeypatch):
 
     async def fake_expanded(query, **_kwargs):
         seen.append(query)
-        return SearchQueryResult(executed_queries=[query], results=[])
+        return SearchQueryResult(
+            original_query=query, executed_queries=[query], results=[]
+        )
 
     monkeypatch.setattr(
         "src.internal.servers.web.app.run_expanded_search", fake_expanded

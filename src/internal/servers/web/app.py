@@ -2557,6 +2557,7 @@ async def _run_hybrid_search(
     top_k: int,
     filters: SearchFilters | None,
     source_provider: str,
+    domain: str = "general",
 ) -> _HybridSearchResult:
     if source_provider == "retrieval":
         # Path A — corpus retrieval with its own query expansion pipeline.
@@ -2596,7 +2597,7 @@ async def _run_hybrid_search(
         browser_docs: list[ContextDocument] = []
         if browser_search_url:
             browser_docs = await _run_browser_search(
-                query,
+                prepare_domain_query(query, domain),
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
@@ -2620,16 +2621,24 @@ async def _run_hybrid_search(
                 return []
             # IDs are globally reassigned by _finalize_hybrid -> _reindex_documents, so starting at 0 here is safe.
             return await _run_browser_search(
-                query,
+                prepare_domain_query(query, domain),
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
             )
+        # One hint per dispatched query. Applied here rather than before
+        # _expanded_queries: hinting the base query would feed the topic word
+        # to the LLM expander and duplicate it into every variant. The corpus
+        # is never hinted — a topic word there is just another scored term.
+        dispatched = [
+            eq if provider == "retrieval" else prepare_domain_query(eq, domain)
+            for eq in executed_queries
+        ]
         page_lists: list[list[SearchPage]] = list(
             await asyncio.gather(
                 *[
                     search_tool(
-                        expanded_query,
+                        dispatched_query,
                         provider=provider,
                         search_url=search_url,
                         page_size=top_k,
@@ -2641,7 +2650,7 @@ async def _run_hybrid_search(
                             else {}
                         ),
                     )
-                    for expanded_query in executed_queries
+                    for dispatched_query in dispatched
                 ]
             )
         )
@@ -2651,12 +2660,12 @@ async def _run_hybrid_search(
             it = iter(enriched)
             page_lists = [list(islice(it, len(pages))) for pages in page_lists]
         docs: list[ContextDocument] = []
-        for expanded_query, pages in zip(executed_queries, page_lists):
+        for dispatched_query, pages in zip(dispatched, page_lists):
             docs.extend(
                 _documents_from_search_pages(
                     pages,
                     source_provider=provider,
-                    query=expanded_query,
+                    query=dispatched_query,
                     start_index=len(docs) + 1,
                     entry_point="hybrid_search",
                 )
