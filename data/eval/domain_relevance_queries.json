@@ -1,0 +1,85 @@
+{
+  "k": 10,
+  "domains": {
+    "resource": [
+      {"query": "open datasets for image classification", "authority_hosts": ["kaggle.com", "huggingface.co", "data.gov", "zenodo.org"]},
+      {"query": "public api directory", "authority_hosts": ["github.com", "publicapis.dev", "rapidapi.com", "programmableweb.com"]},
+      {"query": "climate data archive", "authority_hosts": ["noaa.gov", "data.gov", "copernicus.eu", "zenodo.org"]}
+    ],
+    "social_media": [
+      {"query": "what people are saying about remote work", "authority_hosts": ["reddit.com", "x.com", "twitter.com", "linkedin.com", "threads.net"]},
+      {"query": "community discussion mechanical keyboards", "authority_hosts": ["reddit.com", "discord.com", "news.ycombinator.com", "quora.com"]},
+      {"query": "influencer marketing engagement rates", "authority_hosts": ["instagram.com", "tiktok.com", "linkedin.com", "hootsuite.com", "sproutsocial.com"]}
+    ],
+    "finance": [
+      {"query": "etf expense ratio comparison", "authority_hosts": ["morningstar.com", "bloomberg.com", "investopedia.com", "sec.gov", "ft.com"]},
+      {"query": "federal reserve interest rate decision", "authority_hosts": ["federalreserve.gov", "reuters.com", "bloomberg.com", "wsj.com", "ft.com"]},
+      {"query": "carbon credit pricing", "authority_hosts": ["bloomberg.com", "reuters.com", "spglobal.com", "icapcarbonaction.com"]}
+    ],
+    "academic": [
+      {"query": "transformer attention mechanism", "authority_hosts": ["arxiv.org", "doi.org", "acm.org", "ieee.org", "openreview.net"]},
+      {"query": "replication crisis in psychology", "authority_hosts": ["doi.org", "nature.com", "science.org", "apa.org", "pubmed.ncbi.nlm.nih.gov"]},
+      {"query": "soil carbon sequestration measurement", "authority_hosts": ["doi.org", "nature.com", "arxiv.org", "sciencedirect.com", "usda.gov"]}
+    ],
+    "legal": [
+      {"query": "fair use four factor test", "authority_hosts": ["law.cornell.edu", "copyright.gov", "supremecourt.gov", "courtlistener.com", "justia.com"]},
+      {"query": "gdpr data subject access request deadline", "authority_hosts": ["gdpr-info.eu", "edpb.europa.eu", "ico.org.uk", "eur-lex.europa.eu"]},
+      {"query": "employee non compete enforceability", "authority_hosts": ["law.cornell.edu", "ftc.gov", "justia.com", "nolo.com", "courtlistener.com"]}
+    ],
+    "health": [
+      {"query": "statin side effects evidence", "authority_hosts": ["pubmed.ncbi.nlm.nih.gov", "nih.gov", "cdc.gov", "mayoclinic.org", "nhs.uk", "cochrane.org"]},
+      {"query": "measles vaccination schedule", "authority_hosts": ["cdc.gov", "who.int", "nhs.uk", "aap.org", "nih.gov"]},
+      {"query": "air pollution respiratory outcomes", "authority_hosts": ["who.int", "epa.gov", "pubmed.ncbi.nlm.nih.gov", "thelancet.com", "nih.gov"]}
+    ],
+    "business": [
+      {"query": "saas net revenue retention benchmarks", "authority_hosts": ["hbr.org", "mckinsey.com", "bain.com", "gartner.com", "bvp.com"]},
+      {"query": "supply chain resilience strategy", "authority_hosts": ["mckinsey.com", "hbr.org", "deloitte.com", "bcg.com", "gartner.com"]},
+      {"query": "carbon accounting for corporates", "authority_hosts": ["ghgprotocol.org", "cdp.net", "deloitte.com", "mckinsey.com", "sciencebasedtargets.org"]}
+    ],
+    "security": [
+      {"query": "log4shell mitigation guidance", "authority_hosts": ["cisa.gov", "nvd.nist.gov", "mitre.org", "apache.org", "sans.org"]},
+      {"query": "owasp top ten injection", "authority_hosts": ["owasp.org", "cisa.gov", "portswigger.net", "mitre.org", "nist.gov"]},
+      {"query": "ransomware incident response plan", "authority_hosts": ["cisa.gov", "nist.gov", "sans.org", "fbi.gov", "ncsc.gov.uk"]}
+    ],
+    "ip": [
+      {"query": "software patent eligibility alice test", "authority_hosts": ["uspto.gov", "law.cornell.edu", "supremecourt.gov", "wipo.int", "justia.com"]},
+      {"query": "trademark opposition procedure", "authority_hosts": ["uspto.gov", "wipo.int", "euipo.europa.eu", "inta.org"]},
+      {"query": "open source license compatibility", "authority_hosts": ["opensource.org", "gnu.org", "fsf.org", "apache.org", "choosealicense.com"]}
+    ],
+    "code": [
+      {"query": "python asyncio gather exception handling", "authority_hosts": ["docs.python.org", "stackoverflow.com", "github.com", "realpython.com"]},
+      {"query": "rust borrow checker lifetime error", "authority_hosts": ["doc.rust-lang.org", "stackoverflow.com", "github.com", "rust-lang.org"]},
+      {"query": "postgres index performance tuning", "authority_hosts": ["postgresql.org", "stackoverflow.com", "github.com", "percona.com", "citusdata.com"]}
+    ],
+    "energy": [
+      {"query": "grid scale battery storage cost", "authority_hosts": ["nrel.gov", "iea.org", "energy.gov", "eia.gov", "bnef.com"]},
+      {"query": "small modular reactor licensing", "authority_hosts": ["nrc.gov", "iaea.org", "energy.gov", "world-nuclear.org"]},
+      {"query": "green hydrogen production cost", "authority_hosts": ["iea.org", "nrel.gov", "energy.gov", "irena.org"]}
+    ],
+    "environment": [
+      {"query": "ocean acidification coral reefs", "authority_hosts": ["noaa.gov", "epa.gov", "nature.com", "ipcc.ch", "unep.org"]},
+      {"query": "microplastics in drinking water", "authority_hosts": ["who.int", "epa.gov", "nih.gov", "unep.org", "nature.com"]},
+      {"query": "peatland restoration carbon", "authority_hosts": ["ipcc.ch", "unep.org", "iucn.org", "nature.com", "gov.uk"]}
+    ],
+    "agriculture": [
+      {"query": "cover crop nitrogen fixation rates", "authority_hosts": ["usda.gov", "extension.org", "fao.org", "sare.org"]},
+      {"query": "integrated pest management brassica", "authority_hosts": ["usda.gov", "extension.org", "fao.org", "epa.gov"]},
+      {"query": "drought tolerant maize varieties", "authority_hosts": ["cgiar.org", "fao.org", "usda.gov", "cimmyt.org"]}
+    ],
+    "travel": [
+      {"query": "schengen visa transit rules", "authority_hosts": ["schengenvisainfo.com", "europa.eu", "gov.uk", "travel.state.gov"]},
+      {"query": "best time to visit patagonia", "authority_hosts": ["lonelyplanet.com", "tripadvisor.com", "nationalgeographic.com", "roughguides.com"]},
+      {"query": "night train routes across europe", "authority_hosts": ["seat61.com", "raileurope.com", "interrail.eu", "lonelyplanet.com"]}
+    ],
+    "film": [
+      {"query": "anamorphic lens cinematography", "authority_hosts": ["imdb.com", "ascmag.com", "nofilmschool.com", "premiumbeat.com", "bfi.org.uk"]},
+      {"query": "cannes palme d'or winners", "authority_hosts": ["imdb.com", "festival-cannes.com", "bfi.org.uk", "variety.com", "hollywoodreporter.com"]},
+      {"query": "film financing tax incentives", "authority_hosts": ["variety.com", "hollywoodreporter.com", "bfi.org.uk", "imdb.com"]}
+    ],
+    "gaming": [
+      {"query": "unreal engine nanite performance", "authority_hosts": ["unrealengine.com", "gamedeveloper.com", "github.com", "reddit.com", "docs.unrealengine.com"]},
+      {"query": "speedrun glitch categories", "authority_hosts": ["speedrun.com", "reddit.com", "youtube.com", "twitch.tv"]},
+      {"query": "game accessibility guidelines", "authority_hosts": ["gameaccessibilityguidelines.com", "igda.org", "gamedeveloper.com", "xbox.com"]}
+    ]
+  }
+}

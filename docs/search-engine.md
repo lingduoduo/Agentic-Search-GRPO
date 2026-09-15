@@ -110,12 +110,70 @@ usually fit `security` or `code`.
 Domains are query hints, not guaranteed category filters. They do not promise
 source authority, freshness, or access to private social content. Added words
 can reduce recall; use `general` to search without the hint. Unit tests verify
-query handling, not improvements in real-world search relevance.
+query handling, not improvements in real-world search relevance; the measured
+relevance result is below and found no detectable improvement.
 
 For non-general multi-query calls, tool metadata includes the original sanitized
 `queries`, canonical `domain`, and `executed_queries`. Single-query tool output
 keeps its existing formatted response. See [MCP](mcp.md#web-search-domain-hints)
 for MCP response metadata.
+
+### Does selecting a domain help? Measured, and the answer is: not detectably
+
+The taxonomy shipped with a standing condition — no quality claim without
+comparing general and domain runs on labelled queries across every category.
+That comparison has now been run, and it did not find an effect.
+
+Run it yourself:
+
+```bash
+python -m examples.run_domain_relevance_eval --dry-run   # cost, no calls
+python -m examples.run_domain_relevance_eval
+```
+
+The labelled set is `data/eval/domain_relevance_queries.json`: 16 topic domains,
+three queries each, every query carrying the URL hosts an on-topic result should
+come from. `general` is excluded because its hint is empty. Each query runs
+twice against SerpAPI — once raw, once hinted — and each arm is scored by
+**authority precision**, the share of its top 10 results served by those hosts.
+Every response is cached under `data/eval/cache/`, so a re-run costs no quota.
+
+**Result, 48 queries, 37 usable after exclusions:**
+
+| Measure | Value |
+|---|---|
+| Mean authority-precision delta (domain − general) | **+0.016** |
+| Paired permutation p (two-sided, n=37) | **0.33** |
+| Cliff's delta | 0.081 (negligible) |
+| Empty-result rate, general → domain | 0.125 → 0.146 |
+| Mean result overlap (Jaccard) between arms | 0.13 – 0.64 by domain |
+
+The pooled effect is not distinguishable from zero. Per-domain means run from
++0.17 (`security`) to −0.06 (`gaming`), and eight of sixteen are negative —
+consistent with noise rather than a signal.
+
+The overlap figures make the null more interesting than a flat "nothing
+happened". The hint *substantially changes which results come back* — arms
+share as little as 13% of their URLs — but the results it swaps in are not more
+likely to come from topic-authoritative sources. The feature does something; it
+just does not do the thing it was hoped to do. The domain arm also came back
+empty slightly more often, which is the cost side of the same coin.
+
+**How to read this.** Authority precision measures source alignment, not answer
+quality: an `arxiv.org` paper is not automatically a better answer than a good
+blog post, and this evaluation cannot tell them apart. The unit of analysis is
+the query, not the result, so n is 37 rather than 370. Per-domain figures are
+descriptive only — three queries cannot support a per-domain claim, and sixteen
+tests at that size under multiplicity correction could not reject anything, so
+no per-domain p-values are computed. A query whose arm errored or returned
+nothing is excluded, because a delta against a failed call measures the failure.
+
+Most importantly, at this sample size a null means **no effect was detected**,
+not that no effect exists. The honest summary is that domain hints are not shown
+to improve source alignment, and nothing in this repository should claim they
+do. A `general` negative control runs alongside the real queries and must show a
+zero delta and an overlap of 1.0; if it does not, the harness is mispairing arms
+and the run is rejected rather than reported.
 
 ### Domains over HTTP and in the web UI
 
@@ -150,8 +208,8 @@ only the provider call and its cache key carry the hint. Selecting two
 different domains for one query therefore produces two cache entries.
 
 MCP indexed-document search and the vector/web search-agent component still do
-not expose a domain selector. As above, no relevance improvement is claimed:
-what is verified is that a selected domain reaches the provider.
+not expose a domain selector. No relevance improvement is claimed: the
+evaluation above ran the comparison and did not detect one.
 
 The corpus-backed `/search/send-search-message` endpoint deliberately has no
 domain field. It queries the local index only, where topic hints do not apply.

@@ -1,0 +1,115 @@
+{
+  "interpretable": true,
+  "excluded_count": 11,
+  "empty_rate_general": 0.125,
+  "empty_rate_domain": 0.14583333333333334,
+  "paired": {
+    "n": 37,
+    "mean_delta": 0.0159051909051909,
+    "p_value": 0.33033483258370816,
+    "cliffs_delta": 0.08108108108108109
+  },
+  "control": {
+    "n": 3,
+    "max_abs_delta": 0.0,
+    "min_jaccard": 1.0
+  },
+  "per_domain": {
+    "resource": {
+      "mean_delta": -0.05555555555555556,
+      "mean_jaccard": 0.5902777777777778,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "social_media": {
+      "mean_delta": 0.09523809523809523,
+      "mean_jaccard": 0.13333333333333333,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "finance": {
+      "mean_delta": 0.05555555555555555,
+      "mean_jaccard": 0.3351648351648352,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "academic": {
+      "mean_delta": -0.004629629629629632,
+      "mean_jaccard": 0.46446886446886443,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "legal": {
+      "mean_delta": 0.1111111111111111,
+      "mean_jaccard": 0.6363636363636364,
+      "n_usable": 1,
+      "excluded": 2
+    },
+    "health": {
+      "mean_delta": -0.05555555555555555,
+      "mean_jaccard": 0.5923076923076923,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "business": {
+      "mean_delta": -0.037037037037037035,
+      "mean_jaccard": 0.33085664335664333,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "security": {
+      "mean_delta": 0.17407407407407405,
+      "mean_jaccard": 0.22264957264957266,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "ip": {
+      "mean_delta": 0.0,
+      "mean_jaccard": 0.47301587301587306,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "code": {
+      "mean_delta": 0.010714285714285713,
+      "mean_jaccard": 0.5185185185185185,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "energy": {
+      "mean_delta": 0.013888888888888895,
+      "mean_jaccard": 0.12916666666666665,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "environment": {
+      "mean_delta": -0.05555555555555555,
+      "mean_jaccard": 0.26666666666666666,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "agriculture": {
+      "mean_delta": 0.0,
+      "mean_jaccard": 0.6363636363636364,
+      "n_usable": 1,
+      "excluded": 2
+    },
+    "travel": {
+      "mean_delta": 0.05555555555555555,
+      "mean_jaccard": 0.3351648351648352,
+      "n_usable": 2,
+      "excluded": 1
+    },
+    "film": {
+      "mean_delta": 0.041666666666666664,
+      "mean_jaccard": 0.4662004662004662,
+      "n_usable": 3,
+      "excluded": 0
+    },
+    "gaming": {
+      "mean_delta": -0.06428571428571428,
+      "mean_jaccard": 0.5681818181818181,
+      "n_usable": 2,
+      "excluded": 1
+    }
+  }
+}
