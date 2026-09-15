@@ -7,7 +7,7 @@ import copy
 import json
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import parse_qsl
@@ -118,6 +118,7 @@ SearchProvider = Literal["retrieval", "google", "serpapi", "serper"]
 GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
 SERPAPI_SEARCH_ENDPOINT = "https://serpapi.com/search.json"
 SERPER_DEV_ENDPOINT = "https://google.serper.dev/search"
+DEFAULT_RETRIEVAL_URL = "http://localhost:8000/retrieve"
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -348,7 +349,7 @@ async def search_tool(
     provider: SearchProvider = "retrieval",
     page: int = 1,
     page_size: int = 5,
-    search_url: str = "http://localhost:8000/retrieve",
+    search_url: str = DEFAULT_RETRIEVAL_URL,
     timeout_seconds: int = 15,
     max_retries: int = 3,
     fetch_url: str | None = None,
@@ -434,7 +435,7 @@ def make_web_cascade_search(
         query: str,
         *,
         provider: SearchProvider = "serpapi",
-        search_url: str = "http://localhost:8000/retrieve",
+        search_url: str = DEFAULT_RETRIEVAL_URL,
         page: int = 1,
         page_size: int = 5,
         timeout_seconds: int = 15,
@@ -490,7 +491,7 @@ async def search_for_list(
     query: str,
     *,
     provider: SearchProvider = "retrieval",
-    search_url: str = "http://localhost:8000/retrieve",
+    search_url: str = DEFAULT_RETRIEVAL_URL,
     page: int = 1,
     page_size: int = 5,
 ) -> list[dict[str, str]]:
@@ -518,7 +519,7 @@ async def search_for_tool_string(
     query: str,
     *,
     provider: SearchProvider = "retrieval",
-    search_url: str = "http://localhost:8000/retrieve",
+    search_url: str = DEFAULT_RETRIEVAL_URL,
     page: int = 1,
     page_size: int = 5,
 ) -> str:
@@ -590,7 +591,7 @@ async def search_for_detail(
     query: str,
     *,
     provider: SearchProvider = "retrieval",
-    search_url: str = "http://localhost:8000/retrieve",
+    search_url: str = DEFAULT_RETRIEVAL_URL,
     page: int = 1,
     page_size: int = 5,
     chunk_size: int = 500,
@@ -612,16 +613,10 @@ async def search_for_detail(
         ]
     )
     content_iter = iter(contents)
-
-    sections: list[str] = []
-    for page in pages:
-        if page.error:
-            sections.append(f"Error: {page.error}")
-            continue
-        sections.append(
-            f"Title: {page.title}\nURL: {page.url}\nContent: {next(content_iter, '')}"
-        )
-    return "\n\n".join(sections) if sections else "No results found."
+    return _render_sections(
+        pages,
+        lambda page: f"Title: {page.title}\nURL: {page.url}\nContent: {next(content_iter, '')}",
+    )
 
 
 class MultiQueryWebSearchTool(Tool):
@@ -637,7 +632,7 @@ class MultiQueryWebSearchTool(Tool):
         search_fn: Any = None,
         *,
         provider: SearchProvider = "retrieval",
-        search_url: str = "http://localhost:8000/retrieve",
+        search_url: str = DEFAULT_RETRIEVAL_URL,
         page_size: int = 5,
         timeout_seconds: int = 15,
     ) -> None:
@@ -721,7 +716,7 @@ class MultiQueryWebSearchTool(Tool):
 def build_search_tool(
     *,
     provider: SearchProvider = "retrieval",
-    search_url: str = "http://localhost:8000/retrieve",
+    search_url: str = DEFAULT_RETRIEVAL_URL,
     page_size: int = 5,
 ) -> FunctionTool:
     """Build a FunctionTool for ToolAgentLoop search usage."""
@@ -751,16 +746,17 @@ def build_search_tool(
     )
 
 
-def format_search_pages(pages: list[SearchPage]) -> str:
-    sections: list[str] = []
-    for page in pages:
-        if page.error:
-            sections.append(f"Error: {page.error}")
-            continue
-        sections.append(
-            f"Title: {page.title}\nSummary: {page.summary}\nURL: {page.url}"
-        )
+def _render_sections(pages: list[SearchPage], body: Callable[[SearchPage], str]) -> str:
+    """Render one section per page in order; an error replaces that page's body."""
+    sections = [f"Error: {p.error}" if p.error else body(p) for p in pages]
     return "\n\n".join(sections) if sections else "No results found."
+
+
+def format_search_pages(pages: list[SearchPage]) -> str:
+    return _render_sections(
+        pages,
+        lambda page: f"Title: {page.title}\nSummary: {page.summary}\nURL: {page.url}",
+    )
 
 
 def _redact_secret_params(text: str) -> str:
@@ -1042,10 +1038,11 @@ class DomainSearch:
     async def extract(
         self, url: str, *, max_length: int = 5000
     ) -> list[dict[str, str]]:
+        parsed = urlsplit(url) if isinstance(url, str) else None
         if (
-            not isinstance(url, str)
-            or urlsplit(url).scheme not in ("http", "https")
-            or not urlsplit(url).netloc
+            parsed is None
+            or parsed.scheme not in ("http", "https")
+            or not parsed.netloc
         ):
             raise ValueError("url must be an HTTP(S) URL")
         if (

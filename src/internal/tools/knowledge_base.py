@@ -16,13 +16,14 @@ from .public_data import public_data_tools
 from .registry import ToolRegistry
 from .routing_tools import build_rag_routing_tool, build_search_routing_tool
 from .search import (
+    DEFAULT_RETRIEVAL_URL,
     DomainSearch,
     MultiQueryWebSearchTool,
     build_domain_search_tools,
     make_web_cascade_search,
 )
 
-DEFAULT_SEARCH_URL = "http://localhost:8000/retrieve"
+DEFAULT_SEARCH_URL = DEFAULT_RETRIEVAL_URL
 
 
 def tool_knowledge_base(

@@ -16,6 +16,11 @@ search service, credentials, provider adapter, or CLI is introduced.
 - The former `search_domains.py`, `domain_search.py`, and
   `domain_search_tools.py` modules are consolidated into this single module;
   repository callers import their functions directly from `search.py`.
+  Within the module, the retrieval-URL default is the single
+  `DEFAULT_RETRIEVAL_URL` constant and section rendering goes through one
+  `_render_sections` helper. The three `search_for_*` helpers, the two domain
+  schema builders, and the `SearchPage` versus capability result shapes stay
+  separate: each serves a different published contract.
 - `knowledge_base.py` seeds the four feature tools and shares the existing web
   callback and public-data tool instances with the domain service.
 - MCP's search module exposes the same operations using `DomainSearch`. Its web
