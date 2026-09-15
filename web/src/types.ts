@@ -41,6 +41,9 @@ export interface AgentExperienceRequest {
   source_provider?: SearchSourceProvider;
   mode?: AgentMode;
   route?: "chat" | "search" | "tool";
+  // One of the 17 DOMAIN_REGISTRY identifiers, or "general". Honored by auto,
+  // search_tool, and hybrid_search; other modes reject a non-general value.
+  domain?: string;
 }
 
 export interface ClarificationOptionView {
@@ -500,4 +503,11 @@ export interface ConversationTurn {
   toolCalls?: ToolCallTraceView[];
   progress?: string[];
   pending?: boolean;
+}
+
+// Mirrors the GET /api/search-domains payload in
+// src/internal/servers/web/app.py. Order is the registry's order.
+export interface SearchDomainOption {
+  name: string;
+  description: string;
 }

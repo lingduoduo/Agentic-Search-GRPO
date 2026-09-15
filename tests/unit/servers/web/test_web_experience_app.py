@@ -635,6 +635,7 @@ def test_run_agent_search_tool_mode_returns_documents(monkeypatch, tmp_path):
         browser_search_url=None,
         rerank_url=None,
         filters=None,
+        domain="general",
     ):
         return docs
 

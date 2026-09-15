@@ -54,6 +54,8 @@ PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
     ("/search/search-history", {"GET"}),
     # Classification accepts only caller-supplied text, not stored documents.
     ("/search/search-flow-classification", {"POST"}),
+    # Static taxonomy constants; no stored data and no caller input.
+    ("/api/search-domains", {"GET"}),
     # Shared anonymous memory is intentional unless MEMORY_REQUIRE_AUTH is on.
     # Each handler resolves its bucket and enforces that deployment switch.
     ("/api/memory/save", {"POST"}),

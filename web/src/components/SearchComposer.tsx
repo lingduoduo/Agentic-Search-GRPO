@@ -2,7 +2,7 @@
 import { memo } from "react";
 import type { FormEvent } from "react";
 import { Loader2, Search } from "lucide-react";
-import type { SearchSourceProvider } from "../types";
+import type { SearchDomainOption, SearchSourceProvider } from "../types";
 
 const SOURCE_OPTIONS: Array<{
   value: SearchSourceProvider;
@@ -38,13 +38,23 @@ interface SearchComposerProps {
   // When false (default), the Source picker is hidden — the backend uses "auto"
   // fan-out. Shown only in dev (?dev=1).
   showSourcePicker?: boolean;
+  // The topic domain is a product control, not a dev affordance: it is always
+  // rendered. Options come from GET /api/search-domains so the 17 identifiers
+  // and their order live in one place.
+  domain?: string;
+  domainOptions?: SearchDomainOption[];
   onQueryChange: (value: string) => void;
   onSearchUrlChange: (value: string) => void;
   onTopKChange: (value: number) => void;
   onSourceProviderChange: (value: SearchSourceProvider) => void;
+  onDomainChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
   onExampleSelect?: (value: string) => void;
 }
+
+const DEFAULT_DOMAIN_OPTIONS: SearchDomainOption[] = [
+  { name: "general", description: "Broad or mixed-topic search; default" },
+];
 
 export const SearchComposer = memo(function SearchComposer({
   query,
@@ -54,10 +64,13 @@ export const SearchComposer = memo(function SearchComposer({
   isLoading,
   showUrlField = false,
   showSourcePicker = false,
+  domain = "general",
+  domainOptions = DEFAULT_DOMAIN_OPTIONS,
   onQueryChange,
   onSearchUrlChange,
   onTopKChange,
   onSourceProviderChange,
+  onDomainChange,
   onSubmit,
   onExampleSelect,
 }: SearchComposerProps) {
@@ -116,6 +129,20 @@ export const SearchComposer = memo(function SearchComposer({
             <input value={searchUrl} onChange={(e) => onSearchUrlChange(e.target.value)} />
           </label>
         )}
+
+        <label>
+          Domain
+          <select
+            value={domain}
+            onChange={(e) => onDomainChange(e.currentTarget.value)}
+          >
+            {domainOptions.map((opt) => (
+              <option key={opt.name} value={opt.name} title={opt.description}>
+                {opt.name.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label>
           Top K

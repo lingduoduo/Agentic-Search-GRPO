@@ -9,6 +9,8 @@ vi.mock("../../api", () => ({
     .mockResolvedValue({ id: "s1", messages: [], title: null, user_id: null }),
   runAgent: vi.fn(),
   streamAgent: vi.fn(),
+  // The Assist composer loads the domain taxonomy on mount.
+  fetchSearchDomains: vi.fn().mockResolvedValue({ domains: [] }),
   getAdminSummary: vi.fn().mockRejectedValue(new Error("no admin")),
   getAnalyticsByLLM: vi.fn().mockRejectedValue(new Error()),
   getAnalyticsByPersona: vi.fn().mockRejectedValue(new Error()),

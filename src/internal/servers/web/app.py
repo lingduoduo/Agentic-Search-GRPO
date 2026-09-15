@@ -117,6 +117,11 @@ from src.internal.servers.users.api import resolve_active_user
 from src.internal.tools import SearchPage
 from src.internal.tools import fetch_pages_concurrently
 from src.internal.tools import search_tool
+from src.internal.tools.search import (
+    DOMAIN_REGISTRY,
+    normalize_search_domain,
+    prepare_domain_query,
+)
 
 from .static import APP_CSS
 from .static import APP_HTML
@@ -265,6 +270,14 @@ class AgentExperienceRequest(BaseModel):
         description=(
             "Optional route chosen by the user after a clarification: 'chat', "
             "'search', or 'tool'. Skips the router and dispatches directly."
+        ),
+    )
+    domain: str = Field(
+        default="general",
+        description=(
+            "Optional topic query hint applied to web search providers only. "
+            "One of the 17 identifiers in DOMAIN_REGISTRY, or 'general' "
+            "(default) to leave the query unchanged. Not a result filter."
         ),
     )
 
@@ -488,12 +501,14 @@ class _WebHybridRetrievalStage:
         browser_search_url,
         rerank_url,
         source_provider,
+        domain="general",
     ) -> None:
         self._llm = llm
         self._search_url = search_url
         self._browser_search_url = browser_search_url
         self._rerank_url = rerank_url
         self._source_provider = source_provider
+        self._domain = domain
 
     async def retrieve(self, query, history, filters, top_k) -> CandidateSet:
         result = await _run_hybrid_search(
@@ -505,6 +520,7 @@ class _WebHybridRetrievalStage:
             top_k=top_k,
             filters=filters,
             source_provider=self._source_provider,
+            domain=self._domain,
         )
         candidates = [
             SearchResult(
@@ -574,6 +590,7 @@ async def _auto_search_pipeline(
     history: list,
     source_provider: str,
     extra: dict,
+    domain: str = "general",
 ) -> tuple:
     """Run the shared stage composer as the grounded degraded fallback."""
     pipeline = SearchPipeline(
@@ -583,6 +600,7 @@ async def _auto_search_pipeline(
             browser_search_url=browser_search_url,
             rerank_url=rerank_url,
             source_provider=source_provider,
+            domain=domain,
         ),
         _WebEvidenceStage(),
         _WebSearchAnswerStage(source_provider),
@@ -927,6 +945,7 @@ async def _run_search_direct_or_escalate(
     filters,
     history: list,
     source_provider: str,
+    domain: str = "general",
     on_turn=None,
 ) -> tuple:
     """Direct retrieval first; return docs when the query matches, else escalate.
@@ -992,6 +1011,7 @@ async def _run_search_direct_or_escalate(
             history=history,
             source_provider=source_provider,
             extra=escalate_extra,
+            domain=domain,
         )
 
     # Explicit non-default source: honor it via the existing escalation path
@@ -1092,6 +1112,7 @@ async def _run_search_direct_or_escalate(
                     rerank_url=rerank_url,
                     top_k=top_k,
                     filters=None,
+                    domain=domain,
                 )
             except Exception as exc:
                 logger.warning("%s fallback failed for %r: %s", provider, query, exc)
@@ -1173,6 +1194,7 @@ async def _run_auto_routed(
     history: list,
     resolved,
     source_provider: str = "retrieval",
+    domain: str = "general",
     on_turn=None,
     on_approval=None,
     on_claim=None,
@@ -1273,6 +1295,7 @@ async def _run_auto_routed(
             filters=filters,
             history=history,
             source_provider=source_provider,
+            domain=domain,
             on_turn=on_turn,
         )
         extra.update(run_extra)
@@ -1307,6 +1330,7 @@ async def _run_auto_routed(
             history=history,
             source_provider=source_provider,
             extra=extra,
+            domain=domain,
         )
 
 
@@ -1544,6 +1568,16 @@ def create_web_app(
             messages=[],
         )
 
+    @app.get("/api/search-domains")
+    def list_search_domains() -> dict[str, list[dict[str, str]]]:
+        """Expose the taxonomy so the UI has one source for names and order."""
+        return {
+            "domains": [
+                {"name": name, "description": entry.description}
+                for name, entry in DOMAIN_REGISTRY.items()
+            ]
+        }
+
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str, http_request: Request) -> ChatSessionView:
         session = db.get_chat_session(session_id)
@@ -1583,6 +1617,12 @@ def create_web_app(
         query = request.query.strip()
         if not query:
             raise HTTPException(status_code=422, detail="query is required")
+        try:
+            # Before any provider call, per the taxonomy spec.
+            domain = normalize_search_domain(request.domain)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _reject_domain_for_mode(domain, request.mode)
         hook_metadata: dict[str, object] = {}
 
         auth_user = _optional_user_from_request(http_request, db)
@@ -1685,6 +1725,7 @@ def create_web_app(
                         source_provider=_normalize_source_provider(
                             request.source_provider
                         ),
+                        domain=domain,
                         on_turn=on_turn,
                         on_approval=on_approval,
                         on_claim=on_claim,
@@ -1724,6 +1765,7 @@ def create_web_app(
                         rerank_url=settings.rerank_url,
                         top_k=top_k,
                         filters=_filters_payload(filters),
+                        domain=domain,
                     )
                     # Serializing the filters for the wire and enforcing on the
                     # result are one change: the server may ignore what it was
@@ -1768,6 +1810,7 @@ def create_web_app(
                         top_k=top_k,
                         filters=filters,
                         source_provider=source_provider,
+                        domain=domain,
                     )
                     answer = _search_only_answer(
                         "Hybrid search",
@@ -2203,6 +2246,31 @@ _VALID_AGENT_MODES = {
     "tool_agent",
 }
 
+# Modes where one caller-supplied query reaches a provider. Agent loops build
+# their own per-round queries inside src/agents, so a single entry-point hint
+# cannot apply exactly once across rounds; chat_once does no retrieval.
+_DOMAIN_HONORING_MODES = {"search_tool", "hybrid_search"}
+
+
+def _reject_domain_for_mode(domain: str, mode: str | None) -> None:
+    """Refuse a real domain on a mode that would ignore it.
+
+    Dropping the field quietly is what the taxonomy spec's rollout boundary
+    exists to prevent, so this raises rather than shrugging. ``general`` is
+    always fine: it leaves the query unchanged, so no mode can ignore it.
+    """
+    if domain == "general" or mode is None:
+        return
+    resolved = _MODE_ALIASES.get(mode, mode)
+    if resolved not in _DOMAIN_HONORING_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"mode {resolved!r} does not support a search domain; use "
+                "'search_tool', 'hybrid_search', or omit mode for auto"
+            ),
+        )
+
 
 def _trim_history(history: list, max_messages: int = MAX_HISTORY_MESSAGES) -> list:
     """Keep only the tail of chat history to avoid overflowing the LLM context."""
@@ -2321,6 +2389,7 @@ async def _run_direct_search(
     rerank_url: str | None = None,
     top_k: int,
     filters: dict | None = None,
+    domain: str = "general",
 ) -> list[ContextDocument]:
     # Over-fetch so MMR has candidates beyond top_k to diversify from.
     fetch_k = top_k * 2
@@ -2336,8 +2405,15 @@ async def _run_direct_search(
                 )
                 documents.extend(browser_docs)
             continue
+        # Hint web providers only: appending a topic word to a corpus query
+        # upweights documents containing that word rather than focusing the
+        # search. Not _is_web_provider — that set is {"serpapi"} and means
+        # "needs full-page fetch", so it excludes google and serper.
+        provider_query = (
+            query if provider == "retrieval" else prepare_domain_query(query, domain)
+        )
         pages = await search_tool(
-            query,
+            provider_query,
             provider=provider,
             search_url=search_url,
             page_size=fetch_k,
@@ -2352,7 +2428,7 @@ async def _run_direct_search(
             _documents_from_search_pages(
                 pages,
                 source_provider=provider,
-                query=query,
+                query=provider_query,
                 start_index=len(documents) + 1,
             )
         )
@@ -2360,7 +2436,7 @@ async def _run_direct_search(
     # "auto" (internal + serpapi) deliberately excludes the slow browser.
     if browser_search_url and source_provider not in {"browser", "all", "auto"}:
         browser_docs = await _run_browser_search(
-            query,
+            prepare_domain_query(query, domain),
             browser_search_url=browser_search_url,
             top_k=fetch_k,
             existing_count=len(documents),
@@ -2495,6 +2571,7 @@ async def _run_hybrid_search(
     top_k: int,
     filters: SearchFilters | None,
     source_provider: str,
+    domain: str = "general",
 ) -> _HybridSearchResult:
     if source_provider == "retrieval":
         # Path A — corpus retrieval with its own query expansion pipeline.
@@ -2534,7 +2611,7 @@ async def _run_hybrid_search(
         browser_docs: list[ContextDocument] = []
         if browser_search_url:
             browser_docs = await _run_browser_search(
-                query,
+                prepare_domain_query(query, domain),
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
@@ -2558,16 +2635,24 @@ async def _run_hybrid_search(
                 return []
             # IDs are globally reassigned by _finalize_hybrid -> _reindex_documents, so starting at 0 here is safe.
             return await _run_browser_search(
-                query,
+                prepare_domain_query(query, domain),
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
             )
+        # One hint per dispatched query. Applied here rather than before
+        # _expanded_queries: hinting the base query would feed the topic word
+        # to the LLM expander and duplicate it into every variant. The corpus
+        # is never hinted — a topic word there is just another scored term.
+        dispatched = [
+            eq if provider == "retrieval" else prepare_domain_query(eq, domain)
+            for eq in executed_queries
+        ]
         page_lists: list[list[SearchPage]] = list(
             await asyncio.gather(
                 *[
                     search_tool(
-                        expanded_query,
+                        dispatched_query,
                         provider=provider,
                         search_url=search_url,
                         page_size=top_k,
@@ -2579,7 +2664,7 @@ async def _run_hybrid_search(
                             else {}
                         ),
                     )
-                    for expanded_query in executed_queries
+                    for dispatched_query in dispatched
                 ]
             )
         )
@@ -2589,12 +2674,12 @@ async def _run_hybrid_search(
             it = iter(enriched)
             page_lists = [list(islice(it, len(pages))) for pages in page_lists]
         docs: list[ContextDocument] = []
-        for expanded_query, pages in zip(executed_queries, page_lists):
+        for dispatched_query, pages in zip(dispatched, page_lists):
             docs.extend(
                 _documents_from_search_pages(
                     pages,
                     source_provider=provider,
-                    query=expanded_query,
+                    query=dispatched_query,
                     start_index=len(docs) + 1,
                     entry_point="hybrid_search",
                 )
