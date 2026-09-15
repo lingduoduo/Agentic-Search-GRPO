@@ -1,6 +1,6 @@
 # Search domains and categories
 
-Status: Proposed design for review; implementation has not started.
+Status: Implemented on `feat/search-domains`; awaiting PR review.
 
 ## Goal
 
@@ -10,7 +10,8 @@ tools and MCP public-web search.
 
 This is a new capability: repository inspection found no `AVAILABLE_DOMAINS`.
 The user requested both a spec and plan; both documents are prepared together.
-The decisions below are proposals, not previously confirmed user preferences.
+The user subsequently authorized code implementation and PR creation against
+this design.
 
 ## Existing behavior and integration points
 

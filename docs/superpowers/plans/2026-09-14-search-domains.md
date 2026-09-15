@@ -1,6 +1,6 @@
 # Search Domains Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Subagent execution is an alternative only if selected by the user.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Subagent execution is an alternative only if selected by the user.
 
 **Goal:** Make the requested 17 search domains discoverable and usable as optional query hints through search tools and MCP web search.
 
@@ -10,7 +10,7 @@
 
 **Spec:** [Search domains design](../specs/2026-09-14-search-domains-design.md)
 
-**Status:** Proposed implementation plan; no production changes made. The user requested the spec and plan together. Review the proposed query-hint semantics before executing.
+**Status:** Implemented on `feat/search-domains` after user authorization to add code and create a PR. The checklist records completed execution steps.
 
 ## Global Constraints
 
@@ -49,7 +49,7 @@ Commit commands below are local checkpoints, not instructions to push or merge.
 - Consumes: the exact taxonomy table in the spec.
 - Produces: `SearchDomain(description: str, query_hint: str)`, `DOMAIN_REGISTRY: dict[str, SearchDomain]`, `AVAILABLE_DOMAINS: list[str]`, `normalize_search_domain(value: str = "general") -> str`, `prepare_domain_query(query: str, domain: str = "general") -> str`, `search_domain_parameter() -> dict[str, object]`.
 
-- [ ] **Step 1: Add failing contract tests.**
+- [x] **Step 1: Add failing contract tests.**
 
 ```python
 import pytest
@@ -95,8 +95,8 @@ def test_schema_is_independent():
     assert "intellectual property" in second["description"].lower()
 ```
 
-- [ ] **Step 2: Run `python -m pytest tests/unit/test_search_domains.py -q`.** Expect import failure for the new module; confirm it is the intended missing implementation.
-- [ ] **Step 3: Implement the module.** Populate every registry entry from the spec's table, in order, with the complete meaning text as `description` and the exact hint column as `query_hint`. Use this implementation around that literal registry:
+- [x] **Step 2: Run `python -m pytest tests/unit/test_search_domains.py -q`.** Expect import failure for the new module; confirm it is the intended missing implementation.
+- [x] **Step 3: Implement the module.** Populate every registry entry from the spec's table, in order, with the complete meaning text as `description` and the exact hint column as `query_hint`. Use this implementation around that literal registry:
 
 ```python
 from dataclasses import dataclass
@@ -154,8 +154,8 @@ def search_domain_parameter() -> dict[str, object]:
     }
 ```
 
-- [ ] **Step 4: Run `python -m pytest tests/unit/test_search_domains.py -q` and `ruff check src/internal/tools/search_domains.py tests/unit/test_search_domains.py`.** Expect all tests and lint checks to pass.
-- [ ] **Step 5: Commit the two files** with `git add src/internal/tools/search_domains.py tests/unit/test_search_domains.py` and `git commit -m "feat(search): define search domain taxonomy"`.
+- [x] **Step 4: Run `python -m pytest tests/unit/test_search_domains.py -q` and `ruff check src/internal/tools/search_domains.py tests/unit/test_search_domains.py`.** Expect all tests and lint checks to pass.
+- [x] **Step 5: Commit the two files** with `git add src/internal/tools/search_domains.py tests/unit/test_search_domains.py` and `git commit -m "feat(search): define search domain taxonomy"`.
 
 ### Task 2: Function-calling tool integration
 
@@ -167,7 +167,7 @@ def search_domain_parameter() -> dict[str, object]:
 - Produces: optional `domain` on the two tool schemas and executable calls; non-general multi-query metadata includes `domain` and `executed_queries`.
 - Keeps: `search_tool`, `_search_fn`, and cascade signatures unchanged.
 
-- [ ] **Step 1: Add failing tests for both public tool entry points.**
+- [x] **Step 1: Add failing tests for both public tool entry points.**
 
 ```python
 import asyncio
@@ -213,8 +213,8 @@ def test_single_query_domain(monkeypatch):
     assert seen == ["patent intellectual property"]
 ```
 
-- [ ] **Step 2: Run `python -m pytest tests/unit/test_search_domain_tools.py -q`.** Expect failures because schemas lack domain and calls ignore/reject the argument.
-- [ ] **Step 3: Add schema properties and prepare queries at entry points.** Import the shared helpers. Add `"domain": search_domain_parameter()` to both property dictionaries without changing required fields. In multi-query execution, use:
+- [x] **Step 2: Run `python -m pytest tests/unit/test_search_domain_tools.py -q`.** Expect failures because schemas lack domain and calls ignore/reject the argument.
+- [x] **Step 3: Add schema properties and prepare queries at entry points.** Import the shared helpers. Add `"domain": search_domain_parameter()` to both property dictionaries without changing required fields. In multi-query execution, use:
 
 ```python
 domain = normalize_search_domain(arguments.get("domain", "general"))
@@ -242,7 +242,7 @@ async def search(query: str, domain: str = "general") -> str:
     )
 ```
 
-- [ ] **Step 4: Add cache and fallback tests before final verification.** These tests exercise prepared queries through existing infrastructure and must fail if the hint is omitted or applied twice.
+- [x] **Step 4: Add cache and fallback tests before final verification.** These tests exercise prepared queries through existing infrastructure and must fail if the hint is omitted or applied twice.
 
 ```python
 def test_domain_queries_use_existing_cache(monkeypatch):
@@ -282,8 +282,8 @@ def test_domain_applied_once_through_cascade():
     ]
 ```
 
-- [ ] **Step 5: Run `python -m pytest tests/unit/test_search_domain_tools.py tests/unit/test_search_tools.py tests/unit/test_search_tools_cache.py tests/unit/test_web_cascade_search.py tests/unit/test_tool_categories.py tests/unit/test_tool_search_acl.py -q`.** Expect existing default behavior, ACL, deduplication, and new hint tests to pass. Resolve new failures without weakening existing assertions.
-- [ ] **Step 6: Commit** with `git add src/internal/tools/search.py tests/unit/test_search_domain_tools.py` and `git commit -m "feat(search): support optional domain hints in search tools"`.
+- [x] **Step 5: Run `python -m pytest tests/unit/test_search_domain_tools.py tests/unit/test_search_tools.py tests/unit/test_search_tools_cache.py tests/unit/test_web_cascade_search.py tests/unit/test_tool_categories.py tests/unit/test_tool_search_acl.py -q`.** Expect existing default behavior, ACL, deduplication, and new hint tests to pass. Resolve new failures without weakening existing assertions.
+- [x] **Step 6: Commit** with `git add src/internal/tools/search.py tests/unit/test_search_domain_tools.py` and `git commit -m "feat(search): support optional domain hints in search tools"`.
 
 ### Task 3: MCP web-search integration
 
@@ -294,7 +294,7 @@ def test_domain_applied_once_through_cascade():
 - Consumes: Task 1 helpers; existing MCP provider helpers and registration decorator.
 - Produces: `search_web(query: str, limit: int = 5, domain: str = "general") -> dict[str, Any]`; optional `domain`/`executed_query` response fields for non-general calls.
 
-- [ ] **Step 1: Extend the existing MCP unit module with failing tests.** Follow its current registration/import fixture setup; do not load integration-server fixtures.
+- [x] **Step 1: Extend the existing MCP unit module with failing tests.** Follow its current registration/import fixture setup; do not load integration-server fixtures.
 
 ```python
 @pytest.mark.asyncio
@@ -332,8 +332,8 @@ async def test_search_web_rejects_domain_before_dispatch(monkeypatch):
         await module.search_web("battery", domain="unknown")
 ```
 
-- [ ] **Step 2: Run `python -m pytest tests/unit/test_mcp_server.py -k 'search_web' -q`.** Expect the new tests to fail on the unsupported domain argument.
-- [ ] **Step 3: Add the optional argument, shared normalization, and response metadata.** Immediately before existing logging/provider dispatch:
+- [x] **Step 2: Run `python -m pytest tests/unit/test_mcp_server.py -k 'search_web' -q`.** Expect the new tests to fail on the unsupported domain argument.
+- [x] **Step 3: Add the optional argument, shared normalization, and response metadata.** Immediately before existing logging/provider dispatch:
 
 ```python
 domain = normalize_search_domain(domain)
@@ -365,7 +365,7 @@ Insert `@_describe_search_domain` immediately below the existing
 identity/signature. The MCP parameter is a string with runtime validation; only
 the manually constructed FunctionTool schemas expose an enum in this increment.
 
-- [ ] **Step 4: Verify generated documentation and default responses.** Add:
+- [x] **Step 4: Verify generated documentation and default responses.** Add:
 
 ```python
 @pytest.mark.asyncio
@@ -382,8 +382,8 @@ async def test_search_web_general_contract(monkeypatch):
     assert all(name in module.search_web.__doc__ for name in AVAILABLE_DOMAINS)
 ```
 
-- [ ] **Step 5: Run `python -m pytest tests/unit/test_mcp_server.py -q`.** Expect all new and existing MCP cases to pass, including indexed-document search. If the local environment lacks optional MCP dependencies, record the missing dependency and run this suite in the repository's MCP-enabled test environment before declaring this task verified.
-- [ ] **Step 6: Commit** with `git add src/internal/mcp_server/tools/search.py tests/unit/test_mcp_server.py` and `git commit -m "feat(mcp): add search domain hints to public web search"`.
+- [x] **Step 5: Run `python -m pytest tests/unit/test_mcp_server.py -q`.** Expect all new and existing MCP cases to pass, including indexed-document search. If the local environment lacks optional MCP dependencies, record the missing dependency and run this suite in the repository's MCP-enabled test environment before declaring this task verified.
+- [x] **Step 6: Commit** with `git add src/internal/mcp_server/tools/search.py tests/unit/test_mcp_server.py` and `git commit -m "feat(mcp): add search domain hints to public web search"`.
 
 ### Task 4: Documentation and final regression checks
 
@@ -391,7 +391,7 @@ async def test_search_web_general_contract(monkeypatch):
 
 **Interfaces:** Consumes the completed tool signatures and metadata contracts; produces user documentation and a recorded verification result.
 
-- [ ] **Step 1: Add a “Search topic domains” section to `docs/search-engine.md`.** Include all 17 identifiers and their meanings from the spec table, the single-domain-per-call rule, normalization behavior, and these executable tool-argument examples:
+- [x] **Step 1: Add a “Search topic domains” section to `docs/search-engine.md`.** Include all 17 identifiers and their meanings from the spec table, the single-domain-per-call rule, normalization behavior, and these executable tool-argument examples:
 
 ```json
 {"query": "battery recycling", "domain": "academic"}
@@ -412,7 +412,7 @@ Include this behavior explanation:
 
 Document all overlap boundaries from the spec and that hints may reduce recall.
 
-- [ ] **Step 2: Update `docs/mcp.md` with the public-web call and response example.**
+- [x] **Step 2: Update `docs/mcp.md` with the public-web call and response example.**
 
 ```json
 {"query": "battery recycling", "limit": 5, "domain": "academic"}
@@ -431,7 +431,7 @@ Explain that omitted/general responses retain their existing shape, invalid
 domains produce tool errors, and indexed-document search has no domain argument.
 Link to the search-engine taxonomy instead of maintaining a second table.
 
-- [ ] **Step 3: Run the complete affected regression set once.**
+- [x] **Step 3: Run the complete affected regression set once.**
 
 ```bash
 python -m pytest tests/unit/test_search_domains.py tests/unit/test_search_domain_tools.py tests/unit/test_search_tools.py tests/unit/test_search_tools_cache.py tests/unit/test_web_cascade_search.py tests/unit/test_tool_categories.py tests/unit/test_tool_search_acl.py tests/unit/test_mcp_server.py -q
@@ -443,12 +443,12 @@ Expect all checks to pass. If a check fails, fix the introduced issue and rerun
 the affected check; report unrelated baseline failures explicitly. No live search
 credentials or external network calls belong in these unit tests.
 
-- [ ] **Step 4: Review the final diff against acceptance criteria 1–10.** Confirm
+- [x] **Step 4: Review the final diff against acceptance criteria 1–10.** Confirm
 no hint reaches the provider twice, no `domain` keyword leaks into injected
 callables, no required schema field changes, and no permissions/provider logic
 changes. Record executed test results and the limit that mocked tests do not
 measure real-world relevance. Do not claim native vertical-search support.
-- [ ] **Step 5: Commit documentation** with `git add docs/search-engine.md docs/mcp.md` and `git commit -m "docs(search): explain topic domain hints and supported entry points"`.
+- [x] **Step 5: Commit documentation** with `git add docs/search-engine.md docs/mcp.md` and `git commit -m "docs(search): explain topic domain hints and supported entry points"`.
 
 ## Spec coverage and handoff
 
@@ -462,7 +462,23 @@ measure real-world relevance. Do not claim native vertical-search support.
 | Default compatibility, authorization and category regressions | 2, 3, 4 |
 | Supported surfaces and quality limitations | 4 |
 
-Recommended execution is inline with `superpowers:executing-plans`. A user-selected
-subagent workflow may also execute the same task boundaries. Review the proposed
-spec and plan together before production implementation; no work in this document
-is reported as already implemented or tested.
+Executed inline with `superpowers:executing-plans`, using an isolated worktree
+at `/tmp/agentic-search-domains`. A read-only reviewer checked the production
+change separately through `superpowers:requesting-code-review`.
+
+## Execution results
+
+- Existing baseline: 92 tests passed.
+- Registry tests failed first on the absent module, then 12 passed.
+- Tool tests failed first on absent domain handling, then the affected tool suites
+  passed (65 tests).
+- MCP domain tests failed first on the absent argument, then all 42 MCP tests passed.
+- Combined affected regression suite: 119 passed.
+- Ruff checks and `git diff --check` passed.
+- Provider calls were mocked; live relevance improvements were not evaluated.
+- Documentation includes the full taxonomy and limits for both supported surfaces.
+
+Implementation follows the planned signatures and preserves the general/default
+contracts. Full HTTP/UI integration and strict topic filtering remain outside
+this increment. The completed spec, plan, code, tests, and user documentation
+are included together in the PR.

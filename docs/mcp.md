@@ -64,7 +64,7 @@ For a remote deployment, replace the URL with `https://[YOUR_DOMAIN]:8090/`. Oth
 | Tool | What it does |
 |------|-------------|
 | `search_indexed_documents` | Search the private knowledge base with optional document-set narrowing |
-| `search_web` | Web search via Google Custom Search or SerpAPI |
+| `search_web` | Web search via Google Custom Search, SerpAPI, or Serper, with optional topic hints |
 | `open_urls` | Fetch full page text from a list of URLs |
 | `ask_agentic_search` | Synthesizes an answer from authenticated evidence; validates citation labels and answer/evidence overlap |
 | `retrieve_documents` | Returns authenticated document content and relevance scores without answer synthesis |
@@ -84,6 +84,37 @@ MCP tool selection is independent of the web UI's `/api/agent` auto-router. An M
 Grounding verification checks citation labels and lexical overlap with retrieved evidence. It reduces unsupported output but is not a hard guarantee that an answer contains no hallucinations.
 
 Dynamic tools registered via `FunctionTool` / `ApiToolRegistry` can be mirrored to MCP by calling `sync_tool_to_mcp(name)` after registration (`src/internal/mcp_server/tools/dynamic.py`).
+
+## Web-search domain hints
+
+`search_web` accepts an optional `domain` from the
+[search topic taxonomy](search-engine.md#search-topic-domains). For example:
+
+```json
+{"query": "battery recycling", "limit": 5, "domain": "academic"}
+```
+
+The provider receives `battery recycling academic research`. A non-general
+response includes the original and executed queries; an empty result looks like:
+
+```json
+{
+  "results": [],
+  "query": "battery recycling",
+  "domain": "academic",
+  "executed_query": "battery recycling academic research"
+}
+```
+
+The same metadata accompanies provider-exception responses. Omitted or `general`
+domains preserve the existing response shape (`results` and `query`, plus `error`
+when the provider raises). Invalid domain values produce a tool error before any
+provider call. The tool description lists the accepted domains; MCP exposes a
+string parameter and validates it at execution time.
+
+Domain hints do not select providers or guarantee category membership.
+`search_indexed_documents` does not accept a domain argument; its document-set
+and authorization behavior is unchanged.
 
 ## Semantic tool discovery (server-side)
 
