@@ -6,6 +6,8 @@ removed CAPABILITY_ROUTES defined, so this change is provably a refactor.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from src.internal.tools.public_data import public_data_tools
@@ -139,3 +141,38 @@ def test_discovery_still_rejects_bad_domain_counts():
     service = DomainSearch(tools=[])
     with pytest.raises(ValueError, match="one to five"):
         service.get_sub_domains([])
+
+
+def test_search_no_longer_accepts_the_aliases():
+    parameters = inspect.signature(DomainSearch.search).parameters
+    assert "sub_domain" not in parameters
+    assert "sub_domain_params" not in parameters
+    # The surviving names stay, so callers holding a tag are unaffected.
+    for name in ("query", "domain", "tag", "params", "max_results"):
+        assert name in parameters
+
+
+@pytest.mark.asyncio
+async def test_passing_a_removed_alias_is_rejected_not_ignored():
+    # Silently dropping it would send an unintended query to a provider.
+    service = DomainSearch(tools=[])
+    with pytest.raises(TypeError):
+        await service.search("q", sub_domain="finance.quote")
+
+
+def test_the_schema_no_longer_advertises_the_aliases():
+    from src.internal.tools.search import _search_properties
+
+    properties = _search_properties()
+    assert "sub_domain" not in properties
+    assert "sub_domain_params" not in properties
+    assert set(properties) == {"query", "domain", "tag", "params", "max_results"}
+
+
+def test_mcp_wrappers_drop_the_aliases():
+    from src.internal.mcp_server.tools import search as mcp_search
+
+    for fn in (mcp_search.search_domain, mcp_search.batch_search):
+        parameters = inspect.signature(fn).parameters
+        assert "sub_domain" not in parameters, fn.__name__
+        assert "sub_domain_params" not in parameters, fn.__name__

@@ -1033,9 +1033,7 @@ class DomainSearch:
         *,
         domain: str | None = None,
         tag: str | None = None,
-        sub_domain: str | None = None,
         params: dict | str | None = None,
-        sub_domain_params: dict | str | None = None,
         max_results: int = 5,
     ) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
@@ -1043,9 +1041,6 @@ class DomainSearch:
         if isinstance(max_results, bool) or not isinstance(max_results, int):
             raise ValueError("max_results must be an integer")
         max_results = max(1, min(max_results, 10))
-        if tag is not None and sub_domain is not None and tag != sub_domain:
-            raise ValueError("tag and sub_domain must match")
-        tag = tag if tag is not None else sub_domain
         if tag is not None and (not isinstance(tag, str) or "." not in tag):
             raise ValueError("tag must be a capability returned by get_sub_domains")
         canonical = normalize_search_domain(
@@ -1056,15 +1051,7 @@ class DomainSearch:
         tag = tag if tag is not None else f"{canonical}.web"
         if not tag.startswith(canonical + "."):
             raise ValueError("domain must match the tag prefix")
-        options = parse_search_params(
-            params if params is not None else sub_domain_params
-        )
-        if (
-            params is not None
-            and sub_domain_params is not None
-            and options != parse_search_params(sub_domain_params)
-        ):
-            raise ValueError("params and sub_domain_params must match")
+        options = parse_search_params(params)
         result = {"query": query, "domain": canonical, "tag": tag}
         if tag == f"{canonical}.web":
             if options:
@@ -1148,15 +1135,14 @@ class DomainSearch:
                 if not isinstance(item, dict):
                     raise ValueError("each query must be an object")
                 defaults = dict(shared_options)
-                if item.get("tag") or item.get("sub_domain"):
-                    for key in ("tag", "domain", "sub_domain"):
-                        defaults.pop(key, None)
+                if item.get("tag"):
+                    # An explicit tag overrides both shared selectors.
+                    defaults.pop("tag", None)
+                    defaults.pop("domain", None)
                 elif "domain" in item:
-                    for key in ("tag", "sub_domain"):
-                        defaults.pop(key, None)
-                if "params" in item or "sub_domain_params" in item:
+                    defaults.pop("tag", None)
+                if "params" in item:
                     defaults.pop("params", None)
-                    defaults.pop("sub_domain_params", None)
                 return await self.search(**{**defaults, **item})
             except Exception as error:
                 return {
@@ -1183,15 +1169,10 @@ def _search_properties() -> dict:
             "type": "string",
             "description": "An implemented capability returned by get_sub_domains, e.g. finance.quote or academic.arxiv.",
         },
-        "sub_domain": {
-            "type": "string",
-            "description": "Alias for tag; must agree if both are present.",
-        },
         "params": {
             "type": "object",
             "description": "Parameters from the capability's actual schema. Use query for its query_parameter.",
         },
-        "sub_domain_params": {"type": "object", "description": "Alias for params."},
         "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
     }
 
