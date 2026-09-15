@@ -120,3 +120,112 @@ for MCP response metadata.
 This release supports function-calling tools and MCP public-web search. The HTTP
 search endpoints, web UI, MCP indexed-document search, and vector/web
 search-agent component do not expose a domain selector.
+
+
+## Native domain search features
+
+`DomainSearch` in `src/internal/tools/domain_search.py` combines the existing
+web-search flow, public-data tools, and page fetcher. It adds no service
+integration, credentials, or CLI. The taxonomy remains in `search_domains.py`.
+
+The tool registry and MCP expose four operations:
+
+| Operation | Behavior |
+| --- | --- |
+| `get_sub_domains(domains)` | Describe available routes and their real tool schemas for 1–5 domains; no network calls |
+| `search_domain(query, domain, tag, params)` | Search the web or invoke an implemented capability |
+| `extract_page(url, max_length)` | Reuse the existing HTTP(S) fetcher and HTML-to-text extraction |
+| `batch_search(queries, ...)` | Run 1–5 searches concurrently, preserving input order and per-query errors |
+
+All 17 domains offer `<domain>.web`, which appends the existing topic hint and
+uses the configured web-search flow. These are broad searches, not guaranteed
+category filters. Specialized routes use these existing tools:
+
+| Tag | Existing tool | Supply `query` as |
+| --- | --- | --- |
+| `general.wikipedia` | `search_wikipedia` | Search text |
+| `academic.arxiv` | `search_arxiv` | Paper search text |
+| `resource.wayback` | `search_wayback` | Archived page URL |
+| `finance.quote` | `get_stock_quote` | Ticker symbol |
+| `finance.crypto` | `get_crypto_price` | Cryptocurrency symbol |
+| `finance.currency` | `convert_currency` | Source currency; put amount and target currency in params |
+| `environment.weather` | `get_weather` | Place name |
+| `travel.location` | `search_location` | Place/address query |
+| `travel.nearby` | `search_nearby_places` | Place type; put latitude and longitude in params |
+
+Discovery returns each route's `tool_name`, `query_parameter`, `query_format`,
+complete `parameters` schema, and additional `params`. It lists only available
+read-only public-data implementations, plus web routes. It is a local capability
+catalog, not a check of upstream service availability. Private corpus search and
+arbitrary registered tools are outside this routing table.
+
+### Examples
+
+Discover first:
+
+```json
+{"domains": ["finance", "academic"]}
+```
+
+Search with the resulting tag:
+
+```json
+{"query": "AAPL", "tag": "finance.quote"}
+```
+
+```json
+{"query": "retrieval augmented generation", "tag": "academic.arxiv", "params": {"limit": 3}}
+```
+
+For an untagged call, `domain` selects its web route. With a tag, the domain is
+inferred from the tag or validated against an explicitly supplied domain.
+Specialized routes receive the original query without appended topic words.
+`sub_domain` and `sub_domain_params` remain aliases for `tag` and `params`.
+Unknown tags, conflicting aliases, mismatched prefixes, and unsupported or
+missing capability parameters fail before dispatch. Provider-specific options
+must be present in the discovered schema; unsupported region/language options
+are not silently accepted. Set a supported language through capability params.
+
+`max_results` is capped at 10; a capability's `limit` is bounded by that cap.
+Extraction defaults to 5,000 characters with a configurable maximum of 50,000,
+and reports fetch failures explicitly. Its text format follows the existing
+fetcher; it does not introduce additional file-format support.
+
+Batch requests accept the same search fields per item and shared defaults:
+
+```json
+{
+  "domain": "academic",
+  "queries": [
+    {"query": "dense retrieval"},
+    {"query": "AAPL", "tag": "finance.quote"}
+  ]
+}
+```
+
+A per-item tag replaces the shared route. A per-item domain without a tag selects
+that domain's web route. Per-item parameter objects replace shared parameter
+objects. Inputs are not mutated, errors stay with their query, and cancellation
+propagates to all outstanding workers.
+
+### Python and result contracts
+
+```python
+from src.internal.tools import DomainSearch
+
+async def lookup():
+    search = DomainSearch()
+    directory = search.get_sub_domains(["finance"])
+    result = await search.search("AAPL", tag="finance.quote")
+    return directory, result
+```
+
+The service returns query/domain/tag metadata and `results`; web searches also
+include `executed_query`. Native FunctionTools use the repository's JSON result
+conventions: search returns a document array or a facts object, extraction a
+document array, discovery a directory object, and batch a `queries` object.
+Only document arrays from search and extraction produce citation cards.
+
+The seeded registry reuses the same public-data tool instances and web cascade
+as the existing tools. MCP web routes use `MCP_WEB_SEARCH_PROVIDER`; existing
+`search_web`, `open_urls`, corpus-search ACLs, and fallback behavior remain intact.

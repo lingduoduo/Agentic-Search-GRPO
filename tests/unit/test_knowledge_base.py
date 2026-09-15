@@ -18,7 +18,13 @@ PUBLIC_DATA_NAMES = {
     "search_location",
     "search_nearby_places",
 }
-BUILTIN_NAMES = {"web_search", "search"} | PUBLIC_DATA_NAMES
+DOMAIN_FEATURE_NAMES = {
+    "search_domain",
+    "get_sub_domains",
+    "extract_page",
+    "batch_search",
+}
+BUILTIN_NAMES = {"web_search", "search"} | PUBLIC_DATA_NAMES | DOMAIN_FEATURE_NAMES
 
 
 def test_knowledge_base_default_has_the_builtin_tools():
