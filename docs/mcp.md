@@ -64,8 +64,12 @@ For a remote deployment, replace the URL with `https://[YOUR_DOMAIN]:8090/`. Oth
 | Tool | What it does |
 |------|-------------|
 | `search_indexed_documents` | Search the private knowledge base with optional document-set narrowing |
-| `search_web` | Web search via Google Custom Search, SerpAPI, Serper, or AnySearch, with optional topic hints |
+| `search_web` | Web search via Google Custom Search, SerpAPI, or Serper, with optional topic hints |
 | `open_urls` | Fetch full page text from a list of URLs |
+| `get_sub_domains` | Discover local domain routes and their real parameter schemas |
+| `search_domain` | Route a query through existing web search or a supported public-data tool |
+| `extract_page` | Extract readable page text with a configurable character limit |
+| `batch_search` | Run 1–5 domain searches with ordered results and per-query errors |
 | `ask_agentic_search` | Synthesizes an answer from authenticated evidence; validates citation labels and answer/evidence overlap |
 | `retrieve_documents` | Returns authenticated document content and relevance scores without answer synthesis |
 | `expand_query` | LLM-backed keyword expansion for improved recall |
@@ -115,17 +119,6 @@ string parameter and validates it at execution time.
 Domain hints do not select providers or guarantee category membership.
 `search_indexed_documents` does not accept a domain argument; its document-set
 and authorization behavior is unchanged.
-
-### AnySearch backend
-
-Set `MCP_WEB_SEARCH_PROVIDER=anysearch` to use the shared AnySearch provider
-adapter for `search_web`. Configure `ANYSEARCH_API_KEY` and optionally
-`ANYSEARCH_API_BASE_URL` in the server environment. The existing MCP query,
-domain-hint, result, and error-page handling contracts remain unchanged.
-
-The four native capability operations are available through the Python client
-and `ToolRegistry`; they are not new MCP-native endpoints. See
-[AnySearch functions and registry setup](search-engine.md#anysearch-provider-and-native-functions).
 
 ## Semantic tool discovery (server-side)
 
@@ -232,3 +225,18 @@ Expected response:
 | `API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS` | — | Override the full web backend URL; takes precedence over protocol and host |
 | `AGENTIC_SEARCH_MCP_SERVERS` | — | MCP servers the **web process** pulls tools from, as `name=url` pairs. Unset disables it |
 | `AGENTIC_SEARCH_MCP_TOKEN` | — | Bearer token sent to those servers |
+
+
+## Native domain operations
+
+`get_sub_domains`, `search_domain`, `extract_page`, and `batch_search` share the
+repository's `DomainSearch` implementation with the tool registry. No additional
+provider, API key, or CLI is needed. See [native domain features](search-engine.md#native-domain-search-features)
+for tags, aliases, schemas, examples, and limits.
+
+`search_domain` returns query/domain/tag metadata and results, while
+`batch_search` returns a `queries` array of these results or errors. For web routes,
+MCP uses its existing `MCP_WEB_SEARCH_PROVIDER` setting (Google, SerpAPI, or Serper).
+Specialized tags use the repository's public-data tools. Capability discovery is
+local and makes no network requests. Invalid single calls surface as tool errors;
+batch failures are reported per query.

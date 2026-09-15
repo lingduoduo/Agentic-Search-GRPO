@@ -9,9 +9,6 @@ from .base import FunctionTool as FunctionTool
 from .base import Tool as Tool
 from .base import ToolSchema as ToolSchema
 from .base import ToolEffect as ToolEffect
-from .anysearch import AnySearchClient as AnySearchClient
-from .anysearch import AnySearchError as AnySearchError
-from .anysearch_tools import build_anysearch_tools as build_anysearch_tools
 from .parsers import FunctionCall as FunctionCall
 from .parsers import HermesToolParser as HermesToolParser
 from .parsers import JSONToolParser as JSONToolParser
@@ -42,3 +39,6 @@ from .openapi_schema import ParameterTypeMap as ParameterTypeMap
 from .routing_tools import build_search_routing_tool as build_search_routing_tool
 from .routing_tools import build_rag_routing_tool as build_rag_routing_tool
 from .interface import ChatTool as ChatTool
+
+from .domain_search import DomainSearch as DomainSearch
+from .domain_search_tools import build_domain_search_tools as build_domain_search_tools

@@ -122,93 +122,110 @@ search endpoints, web UI, MCP indexed-document search, and vector/web
 search-agent component do not expose a domain selector.
 
 
-## AnySearch provider and native functions
+## Native domain search features
 
-The AnySearch sample is integrated as library functions and repository tools.
-There is no AnySearch CLI. The shared taxonomy remains in `search_domains.py`;
-HTTP requests and validation live in `anysearch.py`, and `anysearch_tools.py`
-adapts those operations to `FunctionTool`.
+`DomainSearch` in `src/internal/tools/domain_search.py` combines the existing
+web-search flow, public-data tools, and page fetcher. It adds no service
+integration, credentials, or CLI. The taxonomy remains in `search_domains.py`.
 
-Set `ANYSEARCH_API_KEY` and optionally `ANYSEARCH_API_BASE_URL` (default:
-`https://api.anysearch.com`). Explicit client constructor arguments override
-these environment variables. An explicit empty key uses anonymous requests.
-Importing these modules does not load dotenv files or alter process streams.
+The tool registry and MCP expose four operations:
 
-### Existing general search tools
+| Operation | Behavior |
+| --- | --- |
+| `get_sub_domains(domains)` | Describe available routes and their real tool schemas for 1–5 domains; no network calls |
+| `search_domain(query, domain, tag, params)` | Search the web or invoke an implemented capability |
+| `extract_page(url, max_length)` | Reuse the existing HTTP(S) fetcher and HTML-to-text extraction |
+| `batch_search(queries, ...)` | Run 1–5 searches concurrently, preserving input order and per-query errors |
 
-Select `provider="anysearch"` when building a search tool or calling
-`search_tool`. Existing `domain` hints still apply to general tool queries.
-The provider converts responses to `SearchPage`; normal result formatting,
-URL deduplication, and existing provider behavior remain in place. AnySearch
-accepts at most 10 results per request and has no page-number parameter in the
-sample contract, so requesting a later page produces an explicit error.
+All 17 domains offer `<domain>.web`, which appends the existing topic hint and
+uses the configured web-search flow. These are broad searches, not guaranteed
+category filters. Specialized routes use these existing tools:
 
-AnySearch responses bypass the shared public-web cache because its configured
-endpoint and credentials can change the accessible results. No automatic
-AnySearch fallback is added to existing search cascades.
-
-### Native capability functions
-
-`AnySearchClient` exposes the sample's four operations:
-
-| Method | REST request | Behavior |
+| Tag | Existing tool | Supply `query` as |
 | --- | --- | --- |
-| `search(query, **options)` | `POST /v1/search` | General or structured capability search |
-| `get_sub_domains(domains)` | `GET /v1/sub-domains` | Discover tags and parameter formats for 1–5 domains |
-| `extract(url)` | `POST /v1/extract` | Extract an HTTP(S) page |
-| `batch_search(queries, **shared_options)` | Parallel search requests | 1–5 queries; ordered responses or per-item exceptions |
+| `general.wikipedia` | `search_wikipedia` | Search text |
+| `academic.arxiv` | `search_arxiv` | Paper search text |
+| `resource.wayback` | `search_wayback` | Archived page URL |
+| `finance.quote` | `get_stock_quote` | Ticker symbol |
+| `finance.crypto` | `get_crypto_price` | Cryptocurrency symbol |
+| `finance.currency` | `convert_currency` | Source currency; put amount and target currency in params |
+| `environment.weather` | `get_weather` | Place name |
+| `travel.location` | `search_location` | Place/address query |
+| `travel.nearby` | `search_nearby_places` | Place type; put latitude and longitude in params |
 
-For native searches, `tag` routes the request. Discover available tags first;
-then send the exact query format and parameters described by the service:
+Discovery returns each route's `tool_name`, `query_parameter`, `query_format`,
+complete `parameters` schema, and additional `params`. It lists only available
+read-only public-data implementations, plus web routes. It is a local capability
+catalog, not a check of upstream service availability. Private corpus search and
+arbitrary registered tools are outside this routing table.
+
+### Examples
+
+Discover first:
+
+```json
+{"domains": ["finance", "academic"]}
+```
+
+Search with the resulting tag:
+
+```json
+{"query": "AAPL", "tag": "finance.quote"}
+```
+
+```json
+{"query": "retrieval augmented generation", "tag": "academic.arxiv", "params": {"limit": 3}}
+```
+
+For an untagged call, `domain` selects its web route. With a tag, the domain is
+inferred from the tag or validated against an explicitly supplied domain.
+Specialized routes receive the original query without appended topic words.
+`sub_domain` and `sub_domain_params` remain aliases for `tag` and `params`.
+Unknown tags, conflicting aliases, mismatched prefixes, and unsupported or
+missing capability parameters fail before dispatch. Provider-specific options
+must be present in the discovered schema; unsupported region/language options
+are not silently accepted. Set a supported language through capability params.
+
+`max_results` is capped at 10; a capability's `limit` is bounded by that cap.
+Extraction defaults to 5,000 characters with a configurable maximum of 50,000,
+and reports fetch failures explicitly. Its text format follows the existing
+fetcher; it does not introduce additional file-format support.
+
+Batch requests accept the same search fields per item and shared defaults:
+
+```json
+{
+  "domain": "academic",
+  "queries": [
+    {"query": "dense retrieval"},
+    {"query": "AAPL", "tag": "finance.quote"}
+  ]
+}
+```
+
+A per-item tag replaces the shared route. A per-item domain without a tag selects
+that domain's web route. Per-item parameter objects replace shared parameter
+objects. Inputs are not mutated, errors stay with their query, and cancellation
+propagates to all outstanding workers.
+
+### Python and result contracts
 
 ```python
-from src.internal.tools.anysearch import AnySearchClient
+from src.internal.tools import DomainSearch
 
 async def lookup():
-    client = AnySearchClient()
-    capabilities = await client.get_sub_domains(["finance"])
-    # Use a tag and parameter format returned by capabilities. For example,
-    # if finance.quote is advertised with a symbol parameter:
-    result = await client.search(
-        "AAPL", tag="finance.quote", params={"symbol": "AAPL"}
-    )
-    return capabilities, result
+    search = DomainSearch()
+    directory = search.get_sub_domains(["finance"])
+    result = await search.search("AAPL", tag="finance.quote")
+    return directory, result
 ```
 
-A native `domain` validates the tag prefix and requires a tag; it never appends
-query text. `sub_domain` aliases `tag`; `sub_domain_params` aliases `params`.
-Conflicting tags or mismatched domain prefixes are rejected before HTTP requests.
-The library accepts parameter dictionaries, JSON objects, `key=value` pairs,
-and the sample's `{key:value}` compatibility format. Use JSON for nested values
-or values containing commas. `zone`, `language`, and `max_results` are preserved.
-Both single and batch searches use the same validation. Batch shared options
-are defaults: per-item fields take precedence, and a per-item capability replaces
-the inherited route. Input dictionaries are not mutated. Failures stay attached
-to their input positions, and cancellation propagates to outstanding requests.
+The service returns query/domain/tag metadata and `results`; web searches also
+include `executed_query`. Native FunctionTools use the repository's JSON result
+conventions: search returns a document array or a facts object, extraction a
+document array, discovery a directory object, and batch a `queries` object.
+Only document arrays from search and extraction produce citation cards.
 
-### Tool registry integration
-
-Set `AGENTIC_SEARCH_ANYSEARCH_ENABLED=true` to seed these four read-only tools:
-
-- `anysearch_search`: returns a JSON document array usable for citations.
-- `anysearch_get_sub_domains`: returns the capability directory.
-- `anysearch_extract`: returns the extracted page as a JSON document array.
-- `anysearch_batch_search`: returns a `queries` object containing ordered results
-  and errors; this nested response is not used as a citation document array.
-
-Alternatively, construct and register them explicitly:
-
-```python
-from src.internal.tools import build_anysearch_tools
-from src.internal.tools.registry import ToolRegistry
-
-registry = ToolRegistry()
-for tool in build_anysearch_tools():
-    registry.register(tool)
-```
-
-Provider errors preserve HTTP status and request IDs; transport errors do not
-include credentials. Client methods return the original REST envelopes for
-callers that need provider metadata. Tool adapters use the repository's document
-and error formats. No live API compatibility or relevance claim is implied by
-the mocked regression tests; the supplied sample defines the REST contract.
+The seeded registry reuses the same public-data tool instances and web cascade
+as the existing tools. MCP web routes use `MCP_WEB_SEARCH_PROVIDER`; existing
+`search_web`, `open_urls`, corpus-search ACLs, and fallback behavior remain intact.
