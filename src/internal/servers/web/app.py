@@ -117,6 +117,10 @@ from src.internal.servers.users.api import resolve_active_user
 from src.internal.tools import SearchPage
 from src.internal.tools import fetch_pages_concurrently
 from src.internal.tools import search_tool
+from src.internal.tools.search import (
+    DOMAIN_REGISTRY,
+    normalize_search_domain,
+)
 
 from .static import APP_CSS
 from .static import APP_HTML
@@ -265,6 +269,14 @@ class AgentExperienceRequest(BaseModel):
         description=(
             "Optional route chosen by the user after a clarification: 'chat', "
             "'search', or 'tool'. Skips the router and dispatches directly."
+        ),
+    )
+    domain: str = Field(
+        default="general",
+        description=(
+            "Optional topic query hint applied to web search providers only. "
+            "One of the 17 identifiers in DOMAIN_REGISTRY, or 'general' "
+            "(default) to leave the query unchanged. Not a result filter."
         ),
     )
 
@@ -1544,6 +1556,16 @@ def create_web_app(
             messages=[],
         )
 
+    @app.get("/api/search-domains")
+    def list_search_domains() -> dict[str, list[dict[str, str]]]:
+        """Expose the taxonomy so the UI has one source for names and order."""
+        return {
+            "domains": [
+                {"name": name, "description": entry.description}
+                for name, entry in DOMAIN_REGISTRY.items()
+            ]
+        }
+
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str, http_request: Request) -> ChatSessionView:
         session = db.get_chat_session(session_id)
@@ -1583,6 +1605,12 @@ def create_web_app(
         query = request.query.strip()
         if not query:
             raise HTTPException(status_code=422, detail="query is required")
+        try:
+            # Before any provider call, per the taxonomy spec.
+            domain = normalize_search_domain(request.domain)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _reject_domain_for_mode(domain, request.mode)
         hook_metadata: dict[str, object] = {}
 
         auth_user = _optional_user_from_request(http_request, db)
@@ -2202,6 +2230,31 @@ _VALID_AGENT_MODES = {
     "search_agent",
     "tool_agent",
 }
+
+# Modes where one caller-supplied query reaches a provider. Agent loops build
+# their own per-round queries inside src/agents, so a single entry-point hint
+# cannot apply exactly once across rounds; chat_once does no retrieval.
+_DOMAIN_HONORING_MODES = {"search_tool", "hybrid_search"}
+
+
+def _reject_domain_for_mode(domain: str, mode: str | None) -> None:
+    """Refuse a real domain on a mode that would ignore it.
+
+    Dropping the field quietly is what the taxonomy spec's rollout boundary
+    exists to prevent, so this raises rather than shrugging. ``general`` is
+    always fine: it leaves the query unchanged, so no mode can ignore it.
+    """
+    if domain == "general" or mode is None:
+        return
+    resolved = _MODE_ALIASES.get(mode, mode)
+    if resolved not in _DOMAIN_HONORING_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"mode {resolved!r} does not support a search domain; use "
+                "'search_tool', 'hybrid_search', or omit mode for auto"
+            ),
+        )
 
 
 def _trim_history(history: list, max_messages: int = MAX_HISTORY_MESSAGES) -> list:
