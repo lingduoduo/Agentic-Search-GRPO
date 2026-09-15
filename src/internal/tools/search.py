@@ -18,6 +18,9 @@ from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohtt
 from ..cache.serving import serving_cache
 from .base import FunctionTool, Tool, ToolEffect, ToolSchema
 from .html_text import _html_to_text
+from .search_domains import normalize_search_domain
+from .search_domains import prepare_domain_query
+from .search_domains import search_domain_parameter
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +540,7 @@ class MultiQueryWebSearchTool(Tool):
 
     Designed for use with ToolAgentLoop. The LLM passes {"queries": ["q1", "q2"]}
     and all queries execute concurrently, with results deduplicated by URL.
+    An optional domain applies the same topic hint to every query in the call.
     """
 
     def __init__(
@@ -565,7 +569,8 @@ class MultiQueryWebSearchTool(Tool):
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "One or more search queries to run in parallel.",
-                    }
+                    },
+                    "domain": search_domain_parameter(),
                 },
                 "required": ["queries"],
             },
@@ -587,12 +592,14 @@ class MultiQueryWebSearchTool(Tool):
         self, instance_id: str, arguments: dict[str, Any]
     ) -> tuple[str, Any, Any]:
         del instance_id
+        domain = normalize_search_domain(arguments.get("domain", "general"))
         raw_queries = arguments.get("queries", [])
         queries = _normalize_queries_input(raw_queries)
 
         if not queries:
             return "No results found.", [], {}
 
+        executed_queries = [prepare_domain_query(q, domain) for q in queries]
         results_per_query: list[list[SearchPage]] = await asyncio.gather(
             *[
                 self._search_fn(
@@ -602,7 +609,7 @@ class MultiQueryWebSearchTool(Tool):
                     page_size=self._page_size,
                     timeout_seconds=self._timeout_seconds,
                 )
-                for q in queries
+                for q in executed_queries
             ]
         )
 
@@ -616,7 +623,10 @@ class MultiQueryWebSearchTool(Tool):
                     seen_urls.add(page.url)
                 merged.append(page)
 
-        return format_search_pages(merged), merged, {"queries": queries}
+        metadata: dict[str, Any] = {"queries": queries}
+        if domain != "general":
+            metadata.update(domain=domain, executed_queries=executed_queries)
+        return format_search_pages(merged), merged, metadata
 
 
 def build_search_tool(
@@ -627,9 +637,9 @@ def build_search_tool(
 ) -> FunctionTool:
     """Build a FunctionTool for ToolAgentLoop search usage."""
 
-    async def search(query: str) -> str:
+    async def search(query: str, domain: str = "general") -> str:
         return await search_for_tool_string(
-            query,
+            prepare_domain_query(query, domain),
             provider=provider,
             search_url=search_url,
             page_size=page_size,
@@ -641,7 +651,10 @@ def build_search_tool(
         description="Search for information on a topic.",
         parameters={
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Search query"}},
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "domain": search_domain_parameter(),
+            },
             "required": ["query"],
         },
         effect=ToolEffect.READ_ONLY,

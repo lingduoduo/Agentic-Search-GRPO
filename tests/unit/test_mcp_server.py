@@ -851,3 +851,66 @@ async def test_document_sets_returns_empty():
 
     result = json.loads(await document_sets_resource())
     assert result == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,helper",
+    [
+        ("google", "google_custom_search"),
+        ("serpapi", "serpapi_search"),
+        ("serper", "serper_dev_search"),
+    ],
+)
+@pytest.mark.parametrize("broken", [False, True])
+async def test_search_web_domain(monkeypatch, provider, helper, broken):
+    from src.internal.mcp_server.tools import search as module
+
+    seen = []
+
+    async def fake(query, **kwargs):
+        seen.append(query)
+        if broken:
+            raise RuntimeError("provider unavailable")
+        return []
+
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", provider)
+    monkeypatch.setattr(module, helper, fake)
+    result = await module.search_web("battery", domain="Academic")
+    assert seen == ["battery academic research"]
+    assert result["query"] == "battery"
+    assert result["domain"] == "academic"
+    assert result["executed_query"] == seen[0]
+    assert ("error" in result) == broken
+
+
+@pytest.mark.asyncio
+async def test_search_web_rejects_domain_before_dispatch(monkeypatch):
+    from src.internal.mcp_server.tools import search as module
+
+    async def fake(*args, **kwargs):
+        pytest.fail("invalid domain reached provider")
+
+    for name in ("google_custom_search", "serpapi_search", "serper_dev_search"):
+        monkeypatch.setattr(module, name, fake)
+    with pytest.raises(ValueError):
+        await module.search_web("battery", domain="unknown")
+
+
+@pytest.mark.asyncio
+async def test_search_web_general_contract(monkeypatch):
+    from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.search_domains import AVAILABLE_DOMAINS
+
+    async def fake(query, **kwargs):
+        assert query == "battery"
+        return []
+
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "google")
+    monkeypatch.setattr(module, "google_custom_search", fake)
+    for kwargs in ({}, {"domain": "general"}):
+        assert await module.search_web("battery", **kwargs) == {
+            "results": [],
+            "query": "battery",
+        }
+    assert all(name in module.search_web.__doc__ for name in AVAILABLE_DOMAINS)
