@@ -31,7 +31,9 @@ this budget, not statistical preference, sets the sample size.
 
 ## Measuring relevance without a judge
 
-Each of the 17 domains gets three queries, and each query carries the URL hosts
+`DOMAIN_REGISTRY` holds 17 identifiers, but one of them is `general`, whose
+query hint is the empty string. That leaves 16 topic domains to evaluate. Each
+gets three queries, and each query carries the URL hosts
 an on-topic result should come from — `academic` from `arxiv.org`, `*.edu`,
 `doi.org`, `pubmed.ncbi.nlm.nih.gov`; `code` from `github.com`,
 `stackoverflow.com`, `docs.python.org`. Relevance is then the share of top-k
@@ -96,13 +98,21 @@ arm's.
 
 ## Statistics
 
-The unit of analysis is the query. There are 51 of them, paired: the same query
+The unit of analysis is the query. There are 48 of them, paired: the same query
 is run with and without its domain hint. The three results within a query are
 not three independent observations, and treating them as rows would inflate the
 sample roughly threefold and understate every interval.
 
-One pooled two-sided paired sign-flip permutation test runs over the 51 deltas,
+One pooled two-sided paired sign-flip permutation test runs over the 48 deltas,
 reported with Cliff's delta as effect size. Pooling is what the sample supports.
+
+`general` is carried as a negative control, not as data. Its hint is empty, so
+both of its arms issue the identical query and its deltas are structurally
+zero. Those zeros are excluded from the paired test: three forced zeros among
+51 values would shrink the mean difference toward the null and understate any
+real effect. The control's purpose is to prove the harness pairs arms
+correctly — a non-zero delta or a jaccard below 1.0 on `general` means the
+measurement code is wrong, and the run is rejected rather than reported.
 
 Per-domain results are reported as descriptive statistics and are not tested.
 Three queries cannot support an inferential claim about one domain, and running
@@ -118,8 +128,10 @@ distinguishes those.
 ## Cost and reproducibility
 
 Every provider response is cached to `data/eval/cache/` under a key derived
-from provider, query, and k. The first full run spends 102 of the 158 available
-searches; re-runs read the cache and spend nothing. The CLI reports how many
+from provider, query, and k. The first full run spends 99 of the 158 available
+searches: 96 for the 16 topic domains across two arms, plus 3 for `general`,
+whose second arm is a cache hit on the identical query. Re-runs read the cache
+and spend nothing. The CLI reports how many
 live calls it intends to make before making them.
 
 Unit tests drive the core with a stub provider and never open a socket, so the
@@ -147,8 +159,10 @@ Test-driven, all offline:
    paired deltas.
 4. The cache returns a stored response without calling the provider a second
    time.
-5. The label file covers all 17 registry identifiers, so the taxonomy and the
-   evaluation cannot drift apart.
+5. The label file covers every non-`general` registry identifier, so the
+   taxonomy and the evaluation cannot drift apart.
+8. The `general` control yields a zero delta and a jaccard of 1.0, and its
+   queries are absent from the paired deltas.
 6. The report's numeric fields are finite, since the Dev Console reads
    `data/eval/*.json` and a non-finite float reaches the frontend as `null`.
 7. Jaccard is 1.0 for identical arms and 0.0 for disjoint ones.
@@ -159,7 +173,7 @@ The evaluation measures whether domain hints move results toward
 topic-appropriate sources. It does not measure answer quality, factual
 accuracy, or user satisfaction, and it cannot rank one domain's hint against
 another's. With three queries per domain, the only defensible claim is about
-the pooled effect across all 17.
+the pooled effect across the 16 topic domains.
 
 Out of scope: changing any hint text in `DOMAIN_REGISTRY` in response to the
 results, an LLM judge, additional providers, and corpus-backed retrieval, which
