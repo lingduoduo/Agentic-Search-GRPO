@@ -73,7 +73,25 @@ def tool_knowledge_base(
 # ``search`` is seeded at process start, where no request identity exists, so
 # this instance can carry no ACL; the tool agent builds its own request-bound
 # one. This instance stays listed and invocable through /admin/tools.
-NOT_AGENT_CALLABLE: frozenset[str] = frozenset({"rag_routing_tool", "search"})
+#
+# ``search_domain`` and ``batch_search`` are a facade: every tag in
+# CAPABILITY_ROUTES routes to a public-data tool seeded above, so offering both
+# gives the model two paths to the same nine tools and a third way to run a web
+# search it already has in ``web_search``. ``get_sub_domains`` only exists to
+# discover those tags. Withholding the three is the same remedy as the
+# ``search``/``search_routing_tool`` pair above, where a system prompt alone was
+# tested and did not fix selection while the duplicates were present. They stay
+# registered, so /admin/tools and MCP's own wrappers are unaffected;
+# ``extract_page`` stays callable because nothing else seeded here fetches a URL.
+NOT_AGENT_CALLABLE: frozenset[str] = frozenset(
+    {
+        "rag_routing_tool",
+        "search",
+        "search_domain",
+        "get_sub_domains",
+        "batch_search",
+    }
+)
 
 
 def seed_tools(registry: ToolRegistry, *, tools: list[Tool] | None = None) -> int:
