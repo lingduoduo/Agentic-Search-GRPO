@@ -10,6 +10,7 @@ from typing import Any
 from typing import TypeVar
 
 from src.internal.tools.search import fetch_url
+from src.internal.tools.search import anysearch_search
 from src.internal.tools.search import google_custom_search
 from src.internal.tools.search import serper_dev_search
 from src.internal.tools.search import serpapi_search
@@ -103,7 +104,7 @@ async def search_web(
     Use ``open_urls`` to fetch full content from returned URLs.
 
     The search provider is selected via the ``MCP_WEB_SEARCH_PROVIDER`` env var
-    (``google``, ``serpapi``, or ``serper``; defaults to ``google``).
+    (``google``, ``serpapi``, ``serper``, or ``anysearch``; defaults to ``google``).
 
     Example usage:
     ```
@@ -121,7 +122,9 @@ async def search_web(
 
     provider = os.getenv("MCP_WEB_SEARCH_PROVIDER", "google")
     try:
-        if provider == "serpapi":
+        if provider == "anysearch":
+            pages = await anysearch_search(executed_query, page_size=limit)
+        elif provider == "serpapi":
             pages = await serpapi_search(executed_query, page_size=limit)
         elif provider == "serper":
             pages = await serper_dev_search(executed_query, page_size=limit)

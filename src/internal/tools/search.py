@@ -18,13 +18,14 @@ from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohtt
 from ..cache.serving import serving_cache
 from .base import FunctionTool, Tool, ToolEffect, ToolSchema
 from .html_text import _html_to_text
+from .anysearch import AnySearchClient, AnySearchError
 from .search_domains import normalize_search_domain
 from .search_domains import prepare_domain_query
 from .search_domains import search_domain_parameter
 
 logger = logging.getLogger(__name__)
 
-SearchProvider = Literal["retrieval", "google", "serpapi", "serper"]
+SearchProvider = Literal["retrieval", "google", "serpapi", "serper", "anysearch"]
 
 GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
 SERPAPI_SEARCH_ENDPOINT = "https://serpapi.com/search.json"
@@ -219,6 +220,50 @@ async def serper_dev_search(
     ]
 
 
+def anysearch_pages(envelope: dict[str, Any]) -> list[SearchPage]:
+    """Normalize AnySearch results once for the provider adapter and native tools."""
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        raise AnySearchError("API response data must be an object")
+    results = data.get("results", [])
+    if not isinstance(results, list) or any(
+        not isinstance(item, dict) for item in results
+    ):
+        raise AnySearchError("Search results must be a list of objects")
+    return [
+        SearchPage(
+            title=str(item.get("title") or ""),
+            summary=str(item.get("content") or item.get("snippet") or ""),
+            url=str(item.get("url") or ""),
+            metadata=dict(item["metadata"])
+            if isinstance(item.get("metadata"), dict)
+            else {},
+        )
+        for item in results
+    ]
+
+
+async def anysearch_search(
+    query: str,
+    *,
+    page_size: int = 5,
+    page: int = 1,
+    timeout_seconds: int = 30,
+) -> list[SearchPage]:
+    """Adapt the sample's AnySearch REST envelope to canonical search pages."""
+    if page != 1:
+        return [SearchPage(error="AnySearch does not support page-based pagination.")]
+    try:
+        envelope = await AnySearchClient(timeout_seconds=timeout_seconds).search(
+            query, max_results=page_size
+        )
+        return anysearch_pages(envelope)[: max(1, min(page_size, 10))]
+    except (AnySearchError, ValueError) as error:
+        request_id = getattr(error, "request_id", "")
+        detail = f" (request_id: {request_id})" if request_id else ""
+        return [SearchPage(error=f"AnySearch: {error}{detail}")]
+
+
 async def retrieval_search(
     query: str,
     *,
@@ -281,9 +326,15 @@ async def search_tool(
             fetch_url=fetch_url,
             filters=filters,
         )
+    if provider == "anysearch":
+        # AnySearch has configurable endpoints and credential-dependent access.
+        # Avoid sharing its responses through the public web provider cache.
+        return await anysearch_search(
+            query, page=page, page_size=page_size, timeout_seconds=timeout_seconds
+        )
     if provider not in ("google", "serpapi", "serper"):
         raise ValueError(
-            "provider must be 'retrieval', 'google', 'serpapi', or 'serper'"
+            "provider must be 'retrieval', 'google', 'serpapi', 'serper', or 'anysearch'"
         )
     # Web providers are slow and rate-limited; repeats within the TTL are served
     # from the process-local serving cache. They carry no ACL, so the key is

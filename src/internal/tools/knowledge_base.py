@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 
 from .base import Tool
+from .anysearch_tools import build_anysearch_tools
 from .public_data import public_data_tools
 from .registry import ToolRegistry
 from .routing_tools import build_rag_routing_tool, build_search_routing_tool
@@ -49,6 +50,13 @@ def tool_knowledge_base(
         # nothing to choose between.
         *public_data_tools(),
     ]
+    if os.getenv("AGENTIC_SEARCH_ANYSEARCH_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        tools.extend(build_anysearch_tools())
     if llm is not None:
         tools.append(
             build_rag_routing_tool(llm=llm, search_url=search_url, top_k=top_k)

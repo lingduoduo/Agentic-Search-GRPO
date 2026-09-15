@@ -64,7 +64,7 @@ For a remote deployment, replace the URL with `https://[YOUR_DOMAIN]:8090/`. Oth
 | Tool | What it does |
 |------|-------------|
 | `search_indexed_documents` | Search the private knowledge base with optional document-set narrowing |
-| `search_web` | Web search via Google Custom Search, SerpAPI, or Serper, with optional topic hints |
+| `search_web` | Web search via Google Custom Search, SerpAPI, Serper, or AnySearch, with optional topic hints |
 | `open_urls` | Fetch full page text from a list of URLs |
 | `ask_agentic_search` | Synthesizes an answer from authenticated evidence; validates citation labels and answer/evidence overlap |
 | `retrieve_documents` | Returns authenticated document content and relevance scores without answer synthesis |
@@ -115,6 +115,17 @@ string parameter and validates it at execution time.
 Domain hints do not select providers or guarantee category membership.
 `search_indexed_documents` does not accept a domain argument; its document-set
 and authorization behavior is unchanged.
+
+### AnySearch backend
+
+Set `MCP_WEB_SEARCH_PROVIDER=anysearch` to use the shared AnySearch provider
+adapter for `search_web`. Configure `ANYSEARCH_API_KEY` and optionally
+`ANYSEARCH_API_BASE_URL` in the server environment. The existing MCP query,
+domain-hint, result, and error-page handling contracts remain unchanged.
+
+The four native capability operations are available through the Python client
+and `ToolRegistry`; they are not new MCP-native endpoints. See
+[AnySearch functions and registry setup](search-engine.md#anysearch-provider-and-native-functions).
 
 ## Semantic tool discovery (server-side)
 
