@@ -280,6 +280,35 @@ def test_search_for_detail_fetches_pages_concurrently(monkeypatch):
     assert detail == "Title: T\nURL: https://t\nContent: content"
 
 
+def test_search_for_detail_keeps_content_aligned_across_errored_pages(monkeypatch):
+    """Content is fetched only for healthy pages but must stay paired with them."""
+
+    async def _fake_search_tool(*args, **kwargs):
+        del args, kwargs
+        return [
+            SearchPage(title="A", summary="SA", url="https://a"),
+            SearchPage(error="boom"),
+            SearchPage(title="B", summary="SB", url="https://b"),
+        ]
+
+    async def _fake_fetch_url(url, **kwargs):
+        del kwargs
+        return f"content-for-{url.rsplit('/', 1)[-1]}"
+
+    monkeypatch.setattr("src.internal.tools.search.search_tool", _fake_search_tool)
+    monkeypatch.setattr("src.internal.tools.search.fetch_url", _fake_fetch_url)
+
+    detail = asyncio.run(search_for_detail("query"))
+
+    assert detail == (
+        "Title: A\nURL: https://a\nContent: content-for-a"
+        "\n\n"
+        "Error: boom"
+        "\n\n"
+        "Title: B\nURL: https://b\nContent: content-for-b"
+    )
+
+
 def test_html_to_text_prefers_article_element():
     """_html_to_text should extract <article> content before falling back to <p> tags."""
     from src.internal.tools.html_text import _html_to_text

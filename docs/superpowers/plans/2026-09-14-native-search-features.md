@@ -68,3 +68,26 @@ agent-callability, and web loop runners. One existing SciPy/NumPy compatibility
 warning appeared; no test failed. External transports were mocked. Local review
 checks the routing allowlist, shared callbacks, copied schemas, and removal of the
 superseded integration; no independent review is claimed.
+
+## Follow-up: consolidate search modules
+
+- [x] Move the taxonomy, domain service, and FunctionTool builders into `src/internal/tools/search.py`.
+- [x] Remove the three former domain modules and update repository imports.
+- [x] Update the current design and search documentation.
+- [x] Run the affected search, MCP, registry, and agent regression tests.
+
+### Function-level consolidation
+
+Behavior-preserving only: no public function, tool name, or JSON schema changed.
+
+- [x] Replace the seven copies of the retrieval-URL default literal with a single
+      `DEFAULT_RETRIEVAL_URL`; point `knowledge_base.DEFAULT_SEARCH_URL` at it.
+- [x] Fold the duplicated error/join/empty-result loop in `format_search_pages`
+      and `search_for_detail` into one `_render_sections` helper.
+- [x] Parse the URL once in `DomainSearch.extract` instead of three times.
+- [x] Cover the error/content pairing in `search_for_detail`, which had only a
+      single-clean-page test; mutation-check that the new test fails when the
+      renderer reorders sections.
+- [x] Leave the taxonomy schema builders, the `search_for_*` trio, and the
+      `DomainSearch`/`search_tool` result shapes alone: their apparent overlap is
+      distinct public contracts, not duplication.

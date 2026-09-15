@@ -55,7 +55,7 @@ and does not change the request or response schemas.
 
 The function-calling `search` and `web_search` tools accept an optional `domain`.
 MCP's `search_web` accepts it too. The shared taxonomy lives in
-`src/internal/tools/search_domains.py`, which exports `AVAILABLE_DOMAINS`.
+`src/internal/tools/search.py`, which exports `AVAILABLE_DOMAINS`.
 
 Single-query tool arguments:
 
@@ -124,9 +124,9 @@ search-agent component do not expose a domain selector.
 
 ## Native domain search features
 
-`DomainSearch` in `src/internal/tools/domain_search.py` combines the existing
+`DomainSearch` in `src/internal/tools/search.py` combines the existing
 web-search flow, public-data tools, and page fetcher. It adds no service
-integration, credentials, or CLI. The taxonomy remains in `search_domains.py`.
+integration, credentials, or CLI. The taxonomy remains in `search.py`.
 
 The tool registry and MCP expose four operations:
 

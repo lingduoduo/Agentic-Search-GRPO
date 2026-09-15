@@ -9,15 +9,15 @@ from collections.abc import Callable
 from typing import Any
 from typing import TypeVar
 
-from src.internal.tools.domain_search import DomainSearch
+from src.internal.tools.search import DomainSearch
 from src.internal.tools.search import search_tool
 from src.internal.tools.search import fetch_url
 from src.internal.tools.search import google_custom_search
 from src.internal.tools.search import serper_dev_search
 from src.internal.tools.search import serpapi_search
-from src.internal.tools.search_domains import normalize_search_domain
-from src.internal.tools.search_domains import prepare_domain_query
-from src.internal.tools.search_domains import search_domain_parameter
+from src.internal.tools.search import normalize_search_domain
+from src.internal.tools.search import prepare_domain_query
+from src.internal.tools.search import search_domain_parameter
 
 from ..api import mcp_server
 from ..retrieval_client import AuthenticatedRetrievalError
