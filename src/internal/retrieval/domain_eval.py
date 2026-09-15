@@ -11,6 +11,9 @@ arxiv.org is not automatically a better answer than a good blog post.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlparse
 
 TOP_K = 10
@@ -54,3 +57,40 @@ def jaccard(a: list[str], b: list[str]) -> float:
     if not sa and not sb:
         return 1.0
     return len(sa & sb) / len(sa | sb)
+
+
+DEFAULT_LABELS_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "eval"
+    / "domain_relevance_queries.json"
+)
+
+
+@dataclass(frozen=True)
+class LabelledQuery:
+    domain: str
+    query: str
+    authority_hosts: set[str] = field(default_factory=set)
+
+
+def load_labels(path: str | Path = DEFAULT_LABELS_PATH) -> list[LabelledQuery]:
+    """Read the label set, failing loudly before any provider call."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"label file not found: {path}")
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"label file is not valid JSON: {path}") from exc
+    out: list[LabelledQuery] = []
+    for domain, entries in raw.get("domains", {}).items():
+        for entry in entries:
+            out.append(
+                LabelledQuery(
+                    domain=domain,
+                    query=entry["query"],
+                    authority_hosts=set(entry["authority_hosts"]),
+                )
+            )
+    return out
