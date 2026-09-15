@@ -9,7 +9,7 @@ import logging
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl
 from urllib.parse import urlencode
 from urllib.parse import urlsplit
@@ -25,57 +25,141 @@ from .validation import validate_arguments
 
 
 @dataclass(frozen=True)
+class Capability:
+    """One way to answer a query inside a domain.
+
+    ``tool_name`` of None means the built-in web cascade rather than a seeded
+    public-data tool. ``returns`` is "documents" or "records": it tells a
+    caller whether to expect titled text or structured fields, which is the
+    one axis that actually varies across these capabilities.
+    """
+
+    name: str
+    query_parameter: str
+    returns: str
+    tool_name: str | None = None
+
+
+@dataclass(frozen=True)
 class SearchDomain:
     description: str
     query_hint: str
+    capabilities: tuple["Capability", ...] = ()
+
+
+# Every domain can be searched on the public web; the hint is what differs.
+# Declaring it makes the entry ``get_sub_domains`` used to fabricate ordinary.
+WEB_CAPABILITY = Capability(name="web", query_parameter="query", returns="documents")
 
 
 DOMAIN_REGISTRY: dict[str, SearchDomain] = {
-    "general": SearchDomain("Broad or mixed-topic search; default", ""),
+    "general": SearchDomain(
+        "Broad or mixed-topic search; default",
+        "",
+        (
+            WEB_CAPABILITY,
+            Capability("wikipedia", "query", "documents", "search_wikipedia"),
+        ),
+    ),
     "resource": SearchDomain(
-        "Datasets, reference materials, directories, and reusable tools", "resources"
+        "Datasets, reference materials, directories, and reusable tools",
+        "resources",
+        (WEB_CAPABILITY, Capability("wayback", "url", "documents", "search_wayback")),
     ),
     "social_media": SearchDomain(
-        "Public social posts, communities, and discussions", "social media"
+        "Public social posts, communities, and discussions",
+        "social media",
+        (WEB_CAPABILITY,),
     ),
     "finance": SearchDomain(
-        "Markets, investments, banking, and financial analysis", "finance"
+        "Markets, investments, banking, and financial analysis",
+        "finance",
+        (
+            WEB_CAPABILITY,
+            Capability("quote", "symbol", "records", "get_stock_quote"),
+            Capability("crypto", "symbol", "records", "get_crypto_price"),
+            Capability("currency", "from_currency", "records", "convert_currency"),
+        ),
     ),
     "academic": SearchDomain(
-        "Scholarly literature, research methods, and publications", "academic research"
+        "Scholarly literature, research methods, and publications",
+        "academic research",
+        (WEB_CAPABILITY, Capability("arxiv", "query", "documents", "search_arxiv")),
     ),
-    "legal": SearchDomain("Law, regulation, case law, and legal procedure", "law"),
+    "legal": SearchDomain(
+        "Law, regulation, case law, and legal procedure",
+        "law",
+        (WEB_CAPABILITY,),
+    ),
     "health": SearchDomain(
-        "Medicine, public health, and clinical information", "health"
+        "Medicine, public health, and clinical information",
+        "health",
+        (WEB_CAPABILITY,),
     ),
     "business": SearchDomain(
-        "Companies, operations, strategy, and commerce", "business"
+        "Companies, operations, strategy, and commerce",
+        "business",
+        (WEB_CAPABILITY,),
     ),
     "security": SearchDomain(
-        "Cybersecurity, vulnerabilities, and defensive practices", "cybersecurity"
+        "Cybersecurity, vulnerabilities, and defensive practices",
+        "cybersecurity",
+        (WEB_CAPABILITY,),
     ),
     "ip": SearchDomain(
         "Intellectual property: patents, trademarks, copyright, and licensing",
         "intellectual property",
+        (WEB_CAPABILITY,),
     ),
     "code": SearchDomain(
-        "Source code, programming, APIs, and developer documentation", "programming"
+        "Source code, programming, APIs, and developer documentation",
+        "programming",
+        (WEB_CAPABILITY,),
     ),
-    "energy": SearchDomain("Generation, fuels, storage, and energy systems", "energy"),
+    "energy": SearchDomain(
+        "Generation, fuels, storage, and energy systems",
+        "energy",
+        (WEB_CAPABILITY,),
+    ),
     "environment": SearchDomain(
-        "Climate, ecosystems, conservation, and pollution", "environment"
+        "Climate, ecosystems, conservation, and pollution",
+        "environment",
+        (WEB_CAPABILITY, Capability("weather", "location", "records", "get_weather")),
     ),
     "agriculture": SearchDomain(
-        "Farming, crops, livestock, and agricultural systems", "agriculture"
+        "Farming, crops, livestock, and agricultural systems",
+        "agriculture",
+        (WEB_CAPABILITY,),
     ),
     "travel": SearchDomain(
-        "Destinations, transport, lodging, and trip planning", "travel"
+        "Destinations, transport, lodging, and trip planning",
+        "travel",
+        (
+            WEB_CAPABILITY,
+            Capability("location", "query", "records", "search_location"),
+            Capability("nearby", "query", "records", "search_nearby_places"),
+        ),
     ),
-    "film": SearchDomain("Cinema, films, filmmaking, and the film industry", "film"),
+    "film": SearchDomain(
+        "Cinema, films, filmmaking, and the film industry",
+        "film",
+        (WEB_CAPABILITY,),
+    ),
     "gaming": SearchDomain(
-        "Video games, game development, and gaming communities", "video games"
+        "Video games, game development, and gaming communities",
+        "video games",
+        (WEB_CAPABILITY,),
     ),
 }
+
+
+def iter_capabilities() -> Iterator[tuple[str, Capability]]:
+    """Yield every (tag, capability) pair. The tag is derived, never stored."""
+    for domain, entry in DOMAIN_REGISTRY.items():
+        for capability in entry.capabilities:
+            yield f"{domain}.{capability.name}", capability
+
+
 AVAILABLE_DOMAINS: list[str] = list(DOMAIN_REGISTRY)
 
 
@@ -812,17 +896,6 @@ def _compact_contents(contents: str, limit: int = 500) -> str:
 
 # Route only to known public-data tools, never arbitrary tools or corpus search.
 # Query parameters and option schemas are taken from the existing tool definitions.
-CAPABILITY_ROUTES = {
-    "general.wikipedia": ("search_wikipedia", "query"),
-    "academic.arxiv": ("search_arxiv", "query"),
-    "resource.wayback": ("search_wayback", "url"),
-    "finance.quote": ("get_stock_quote", "symbol"),
-    "finance.crypto": ("get_crypto_price", "symbol"),
-    "finance.currency": ("convert_currency", "from_currency"),
-    "environment.weather": ("get_weather", "location"),
-    "travel.location": ("search_location", "query"),
-    "travel.nearby": ("search_nearby_places", "query"),
-}
 
 
 def parse_search_params(value: dict | str | None) -> dict:
@@ -867,10 +940,11 @@ class DomainSearch:
         by_name = {
             tool.name: tool for tool in tools if tool.effect == ToolEffect.READ_ONLY
         }
+        # The tool-less `web` capability has never belonged in the route map.
         self.routes = {
-            tag: (by_name[name], query_parameter)
-            for tag, (name, query_parameter) in CAPABILITY_ROUTES.items()
-            if name in by_name
+            tag: (by_name[capability.tool_name], capability.query_parameter)
+            for tag, capability in iter_capabilities()
+            if capability.tool_name and capability.tool_name in by_name
         }
         self.web_search_fn = (
             web_search_fn
@@ -888,31 +962,39 @@ class DomainSearch:
         directories = []
         for value in domains:
             domain = normalize_search_domain(value)
-            entries = [
-                {
-                    "sub_domain": f"{domain}.web",
-                    "tool_name": "web_search",
-                    "description": f"Search the public web with the {domain} topic hint.",
-                    "query_parameter": "query",
-                    "query_format": "Natural-language search query",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "max_results": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 10,
+            entries = []
+            for capability in DOMAIN_REGISTRY[domain].capabilities:
+                tag = f"{domain}.{capability.name}"
+                if capability.tool_name is None:
+                    entries.append(
+                        {
+                            "sub_domain": tag,
+                            "tool_name": "web_search",
+                            "description": (
+                                f"Search the public web with the {domain} topic hint."
+                            ),
+                            "query_parameter": capability.query_parameter,
+                            "query_format": "Natural-language search query",
+                            "returns": capability.returns,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string"},
+                                    "max_results": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 10,
+                                    },
+                                },
+                                "required": ["query"],
                             },
-                        },
-                        "required": ["query"],
-                    },
-                    "params": {},
-                }
-            ]
-            for tag, (tool, query_parameter) in self.routes.items():
-                if not tag.startswith(domain + "."):
+                            "params": {},
+                        }
+                    )
                     continue
+                if tag not in self.routes:
+                    continue
+                tool, query_parameter = self.routes[tag]
                 schema = copy.deepcopy(tool.schema.parameters)
                 properties = schema.get("properties", {})
                 entries.append(
@@ -924,6 +1006,7 @@ class DomainSearch:
                         "query_format": properties.get(query_parameter, {}).get(
                             "description", query_parameter
                         ),
+                        "returns": capability.returns,
                         "parameters": schema,
                         "params": {
                             name: {
