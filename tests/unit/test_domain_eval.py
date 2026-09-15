@@ -6,14 +6,19 @@ provider so the suite stays fast and spends no SerpAPI quota.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.internal.retrieval.domain_eval import (
     DEFAULT_LABELS_PATH,
+    DiskCache,
+    LabelledQuery,
     authority_precision,
     host_matches,
     jaccard,
     load_labels,
+    run_query,
 )
 from src.internal.tools.search import AVAILABLE_DOMAINS
 
@@ -111,3 +116,110 @@ def test_malformed_label_file_names_the_path(tmp_path):
     with pytest.raises(ValueError) as exc:
         load_labels(bad)
     assert "bad.json" in str(exc.value)
+
+
+class _Page:
+    def __init__(self, url):
+        self.url = url
+        self.error = None
+
+
+class _StubSearch:
+    """Stands in for search_tool; records every query it is asked for."""
+
+    def __init__(self, by_query: dict[str, list[str]], fail_on: str | None = None):
+        self.by_query = by_query
+        self.fail_on = fail_on
+        self.calls: list[str] = []
+
+    async def __call__(self, query, **_kwargs):
+        self.calls.append(query)
+        if self.fail_on is not None and query == self.fail_on:
+            raise RuntimeError("provider exploded")
+        return [_Page(u) for u in self.by_query.get(query, [])]
+
+
+@pytest.mark.asyncio
+async def test_run_query_scores_both_arms(tmp_path):
+    label = LabelledQuery("academic", "attention mechanism", {"arxiv.org"})
+    stub = _StubSearch(
+        {
+            "attention mechanism": ["https://blog.com/a", "https://b.com/c"],
+            "attention mechanism academic research": [
+                "https://arxiv.org/abs/1",
+                "https://b.com/c",
+            ],
+        }
+    )
+    out = await run_query(label, search_fn=stub, cache=DiskCache(tmp_path))
+    assert out.general.urls == ["https://blog.com/a", "https://b.com/c"]
+    assert out.delta == pytest.approx(0.5)
+    assert out.jaccard == pytest.approx(1 / 3)
+    assert out.excluded is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_arm_excludes_the_query(tmp_path):
+    # A delta against a failed call measures the failure, not the domain.
+    label = LabelledQuery("academic", "q", {"arxiv.org"})
+    stub = _StubSearch({"q": ["https://arxiv.org/a"]}, fail_on="q academic research")
+    out = await run_query(label, search_fn=stub, cache=DiskCache(tmp_path))
+    assert out.excluded is True
+    assert out.domain_arm.error is not None
+
+
+@pytest.mark.asyncio
+async def test_an_empty_arm_excludes_the_query(tmp_path):
+    label = LabelledQuery("academic", "q", {"arxiv.org"})
+    stub = _StubSearch({"q": ["https://arxiv.org/a"], "q academic research": []})
+    out = await run_query(label, search_fn=stub, cache=DiskCache(tmp_path))
+    assert out.domain_arm.empty is True
+    assert out.excluded is True
+
+
+@pytest.mark.asyncio
+async def test_the_cache_prevents_a_second_provider_call(tmp_path):
+    label = LabelledQuery("academic", "q", {"arxiv.org"})
+    cache = DiskCache(tmp_path)
+    stub = _StubSearch(
+        {"q": ["https://arxiv.org/a"], "q academic research": ["https://arxiv.org/b"]}
+    )
+    await run_query(label, search_fn=stub, cache=cache)
+    assert len(stub.calls) == 2
+    await run_query(label, search_fn=stub, cache=cache)
+    assert len(stub.calls) == 2, "second run must be served from cache"
+
+
+@pytest.mark.asyncio
+async def test_general_control_pairs_identical_arms(tmp_path):
+    # An empty hint means both arms issue the same query, so the second is a
+    # cache hit and the delta is structurally zero.
+    label = LabelledQuery("general", "q", {"arxiv.org"})
+    cache = DiskCache(tmp_path)
+    stub = _StubSearch({"q": ["https://arxiv.org/a"]})
+    out = await run_query(label, search_fn=stub, cache=cache)
+    assert len(stub.calls) == 1
+    assert out.delta == 0.0
+    assert out.jaccard == 1.0
+
+
+def test_the_measurement_core_stays_torch_free():
+    """Importing post_training pulls torch in via package __init__ side effects.
+
+    A retrieval-side module that did that would drop out of the torch-free CI
+    job, which has broken silently here before. Run in a subprocess so the
+    check cannot be fooled by torch already living in this session's modules.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import src.internal.retrieval.domain_eval; "
+        "sys.exit(1 if 'torch' in sys.modules else 0)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+    )
+    assert result.returncode == 0, "domain_eval must not import torch"
