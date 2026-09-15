@@ -501,12 +501,14 @@ class _WebHybridRetrievalStage:
         browser_search_url,
         rerank_url,
         source_provider,
+        domain="general",
     ) -> None:
         self._llm = llm
         self._search_url = search_url
         self._browser_search_url = browser_search_url
         self._rerank_url = rerank_url
         self._source_provider = source_provider
+        self._domain = domain
 
     async def retrieve(self, query, history, filters, top_k) -> CandidateSet:
         result = await _run_hybrid_search(
@@ -518,6 +520,7 @@ class _WebHybridRetrievalStage:
             top_k=top_k,
             filters=filters,
             source_provider=self._source_provider,
+            domain=self._domain,
         )
         candidates = [
             SearchResult(
@@ -587,6 +590,7 @@ async def _auto_search_pipeline(
     history: list,
     source_provider: str,
     extra: dict,
+    domain: str = "general",
 ) -> tuple:
     """Run the shared stage composer as the grounded degraded fallback."""
     pipeline = SearchPipeline(
@@ -596,6 +600,7 @@ async def _auto_search_pipeline(
             browser_search_url=browser_search_url,
             rerank_url=rerank_url,
             source_provider=source_provider,
+            domain=domain,
         ),
         _WebEvidenceStage(),
         _WebSearchAnswerStage(source_provider),
@@ -940,6 +945,7 @@ async def _run_search_direct_or_escalate(
     filters,
     history: list,
     source_provider: str,
+    domain: str = "general",
     on_turn=None,
 ) -> tuple:
     """Direct retrieval first; return docs when the query matches, else escalate.
@@ -1005,6 +1011,7 @@ async def _run_search_direct_or_escalate(
             history=history,
             source_provider=source_provider,
             extra=escalate_extra,
+            domain=domain,
         )
 
     # Explicit non-default source: honor it via the existing escalation path
@@ -1105,6 +1112,7 @@ async def _run_search_direct_or_escalate(
                     rerank_url=rerank_url,
                     top_k=top_k,
                     filters=None,
+                    domain=domain,
                 )
             except Exception as exc:
                 logger.warning("%s fallback failed for %r: %s", provider, query, exc)
@@ -1186,6 +1194,7 @@ async def _run_auto_routed(
     history: list,
     resolved,
     source_provider: str = "retrieval",
+    domain: str = "general",
     on_turn=None,
     on_approval=None,
     on_claim=None,
@@ -1286,6 +1295,7 @@ async def _run_auto_routed(
             filters=filters,
             history=history,
             source_provider=source_provider,
+            domain=domain,
             on_turn=on_turn,
         )
         extra.update(run_extra)
@@ -1320,6 +1330,7 @@ async def _run_auto_routed(
             history=history,
             source_provider=source_provider,
             extra=extra,
+            domain=domain,
         )
 
 
@@ -1714,6 +1725,7 @@ def create_web_app(
                         source_provider=_normalize_source_provider(
                             request.source_provider
                         ),
+                        domain=domain,
                         on_turn=on_turn,
                         on_approval=on_approval,
                         on_claim=on_claim,
@@ -1753,6 +1765,7 @@ def create_web_app(
                         rerank_url=settings.rerank_url,
                         top_k=top_k,
                         filters=_filters_payload(filters),
+                        domain=domain,
                     )
                     # Serializing the filters for the wire and enforcing on the
                     # result are one change: the server may ignore what it was
@@ -1797,6 +1810,7 @@ def create_web_app(
                         top_k=top_k,
                         filters=filters,
                         source_provider=source_provider,
+                        domain=domain,
                     )
                     answer = _search_only_answer(
                         "Hybrid search",

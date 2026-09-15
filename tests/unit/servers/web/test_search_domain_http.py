@@ -244,3 +244,135 @@ def test_rejection_happens_over_http_before_any_dispatch(client):
     )
     assert r.status_code == 400
     assert "does not support" in r.json()["detail"]
+
+
+# --- threading from the request body to the leaves --------------------------
+
+# The leaf tests above prove the hint is applied correctly; these prove the
+# selected domain actually arrives there from an HTTP request body.
+
+
+def _capture_kwarg(monkeypatch, target: str, captured: dict) -> None:
+    async def fake(query, **kwargs):
+        captured["query"] = query
+        captured["domain"] = kwargs.get("domain")
+        return []
+
+    monkeypatch.setattr(f"src.internal.servers.web.app.{target}", fake)
+
+
+def test_explicit_search_tool_mode_forwards_the_domain(client, monkeypatch):
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    client.post(
+        "/api/agent",
+        json={"query": "etf fees", "mode": "search_tool", "domain": "finance"},
+    )
+    assert captured["domain"] == "finance"
+    # The route never rewrites the query: only providers see the hint.
+    assert captured["query"] == "etf fees"
+
+
+def test_explicit_hybrid_mode_forwards_the_domain(client, monkeypatch):
+    captured: dict = {}
+
+    async def fake_hybrid(query, **kwargs):
+        captured["query"] = query
+        captured["domain"] = kwargs.get("domain")
+        from src.internal.servers.web.app import _HybridSearchResult
+
+        return _HybridSearchResult(
+            executed_queries=[query], documents=[], status="empty", ranking={}
+        )
+
+    monkeypatch.setattr("src.internal.servers.web.app._run_hybrid_search", fake_hybrid)
+    client.post(
+        "/api/agent",
+        json={"query": "etf fees", "mode": "hybrid_search", "domain": "finance"},
+    )
+    assert captured["domain"] == "finance"
+    assert captured["query"] == "etf fees"
+
+
+@pytest.mark.asyncio
+async def test_auto_pipeline_forwards_the_domain_to_the_hybrid_leaf(monkeypatch):
+    from src.internal.servers.web.app import _auto_search_pipeline, _HybridSearchResult
+
+    captured: dict = {}
+
+    async def fake_hybrid(query, **kwargs):
+        captured["domain"] = kwargs.get("domain")
+        return _HybridSearchResult(
+            executed_queries=[query], documents=[], status="empty", ranking={}
+        )
+
+    monkeypatch.setattr("src.internal.servers.web.app._run_hybrid_search", fake_hybrid)
+    await _auto_search_pipeline(
+        "etf fees",
+        llm=None,
+        search_url="http://x/retrieve",
+        browser_search_url=None,
+        rerank_url=None,
+        top_k=2,
+        filters=None,
+        history=[],
+        source_provider="auto",
+        extra={},
+        domain="finance",
+    )
+    assert captured["domain"] == "finance"
+
+
+def test_persisted_transcript_keeps_the_unhinted_question(client, monkeypatch):
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    r = client.post(
+        "/api/agent",
+        json={"query": "etf fees", "mode": "search_tool", "domain": "finance"},
+    )
+    messages = r.json()["messages"]
+    user_turns = [m["content"] for m in messages if m["role"] == "user"]
+    assert user_turns == ["etf fees"]
+
+
+@pytest.mark.asyncio
+async def test_direct_or_escalate_forwards_the_domain_to_external_fallback(monkeypatch):
+    """The direct-first auto path is the default, and it is its own function.
+
+    Threading `domain` into its body without adding the parameter raised a
+    NameError that the broad `except Exception` turned into "internal
+    unreachable" rather than a visible failure, so this asserts the parameter
+    exists and arrives at the external fallback.
+    """
+    from src.internal.servers.web.app import _run_search_direct_or_escalate
+
+    seen: list[tuple[str, str | None]] = []
+
+    async def fake_direct(_query, **kwargs):
+        seen.append((kwargs["source_provider"], kwargs.get("domain")))
+        return []
+
+    async def fake_agent(*_a, **_k):
+        return ("answer", [], [], "search", {})
+
+    monkeypatch.setattr("src.internal.servers.web.app._run_direct_search", fake_direct)
+    monkeypatch.setattr("src.internal.servers.web.app._run_search_agent", fake_agent)
+    await _run_search_direct_or_escalate(
+        "etf fees",
+        manager=object(),
+        tokenizer=object(),
+        llm=None,
+        search_url="http://x/retrieve",
+        browser_search_url=None,
+        rerank_url=None,
+        top_k=5,
+        filters=None,
+        history=[],
+        source_provider="auto",
+        domain="finance",
+    )
+    assert seen, "the direct-first path never dispatched"
+    by_provider = dict(seen)
+    # The corpus leg is called without a domain; web legs carry it.
+    assert by_provider.get("retrieval") in (None, "general")
+    assert any(d == "finance" for p, d in seen if p != "retrieval")
