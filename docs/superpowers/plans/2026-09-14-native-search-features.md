@@ -57,8 +57,8 @@ Produces the four shared tool names and their registry/MCP result contracts.
 - [x] Rewrite the spec, plan, search-engine docs, and MCP docs around the final native functionality.
 - [x] Run the complete affected regression selection: 197 tests passed.
 - [x] Run Ruff lint/format checks and Git whitespace checks.
-- [ ] Commit the revised implementation and push the existing PR branch.
-- [ ] Rewrite PR #584's title and body to describe only the final implementation.
+- [x] Commit the revised implementation and push the existing PR branch.
+- [x] Rewrite PR #584's title and body to describe only the final implementation.
 
 ## Verification notes
 
