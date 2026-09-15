@@ -117,9 +117,44 @@ For non-general multi-query calls, tool metadata includes the original sanitized
 keeps its existing formatted response. See [MCP](mcp.md#web-search-domain-hints)
 for MCP response metadata.
 
-This release supports function-calling tools and MCP public-web search. The HTTP
-search endpoints, web UI, MCP indexed-document search, and vector/web
-search-agent component do not expose a domain selector.
+### Domains over HTTP and in the web UI
+
+`POST /api/agent` accepts an optional `domain` alongside `query`. It defaults to
+`general`, which leaves the query unchanged and keeps behavior identical to
+requests that omit the field.
+
+```json
+{"query": "etf fees", "domain": "finance"}
+```
+
+`GET /api/search-domains` returns each identifier and its description in
+registry order. The Assist page uses it to populate the selector next to the
+question box, so the 17 identifiers are not copied into the frontend bundle.
+The selector is always visible, unlike the Source and retrieval-URL fields,
+which appear only under `?dev=1`.
+
+Three modes honor the field, because in each one a single caller-supplied query
+reaches a provider: the default auto mode, `search_tool`, and `hybrid_search`.
+`chat_once` performs no retrieval, and `chat_loop`, `search_agent`, and
+`tool_agent` build their own per-round queries internally, so a non-`general`
+domain combined with an explicit one of those modes returns 400 rather than
+being dropped without notice. An unrecognized domain also returns 400, before
+any provider is called.
+
+The hint reaches web providers only. It is applied inside each helper's
+per-provider dispatch, so the local corpus always receives the raw query:
+appending a topic word to a corpus query upweights documents that literally
+contain that word instead of focusing the search. For the same reason the
+answer prompt and the stored transcript keep the user's original question —
+only the provider call and its cache key carry the hint. Selecting two
+different domains for one query therefore produces two cache entries.
+
+MCP indexed-document search and the vector/web search-agent component still do
+not expose a domain selector. As above, no relevance improvement is claimed:
+what is verified is that a selected domain reaches the provider.
+
+The corpus-backed `/search/send-search-message` endpoint deliberately has no
+domain field. It queries the local index only, where topic hints do not apply.
 
 
 ## Native domain search features
