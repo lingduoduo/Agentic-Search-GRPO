@@ -40,5 +40,5 @@ from .routing_tools import build_search_routing_tool as build_search_routing_too
 from .routing_tools import build_rag_routing_tool as build_rag_routing_tool
 from .interface import ChatTool as ChatTool
 
-from .domain_search import DomainSearch as DomainSearch
-from .domain_search_tools import build_domain_search_tools as build_domain_search_tools
+from .search import DomainSearch as DomainSearch
+from .search import build_domain_search_tools as build_domain_search_tools

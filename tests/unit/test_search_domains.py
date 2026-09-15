@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.internal.tools.search_domains import (
+from src.internal.tools.search import (
     AVAILABLE_DOMAINS,
     DOMAIN_REGISTRY,
     normalize_search_domain,

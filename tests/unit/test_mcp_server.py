@@ -900,7 +900,7 @@ async def test_search_web_rejects_domain_before_dispatch(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_web_general_contract(monkeypatch):
     from src.internal.mcp_server.tools import search as module
-    from src.internal.tools.search_domains import AVAILABLE_DOMAINS
+    from src.internal.tools.search import AVAILABLE_DOMAINS
 
     async def fake(query, **kwargs):
         assert query == "battery"

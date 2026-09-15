@@ -6,9 +6,9 @@ import json
 import pytest
 
 from src.internal.tools.base import FunctionTool, ToolEffect
-from src.internal.tools.domain_search import DomainSearch
+from src.internal.tools.search import DomainSearch
 from src.internal.tools.search import SearchPage
-from src.internal.tools.search_domains import AVAILABLE_DOMAINS
+from src.internal.tools.search import AVAILABLE_DOMAINS
 
 
 @pytest.fixture

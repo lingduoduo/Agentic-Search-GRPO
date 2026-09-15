@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.internal.tools.domain_search import DomainSearch
+from src.internal.tools.search import DomainSearch
 from src.internal.tools.search import SearchPage
 
 

@@ -8,11 +8,14 @@ search service, credentials, provider adapter, or CLI is introduced.
 
 ## Architecture
 
-- `search_domains.py` remains the single taxonomy and query-hint definition.
-- `domain_search.py` composes existing public-data tools, the existing web
-  cascade, `fetch_url`, and argument validation. It owns routing and batching.
-- `domain_search_tools.py` adapts the shared methods to `FunctionTool`, using the
-  existing JSON/error wrapper from the public-data tools.
+- `src/internal/tools/search.py` owns the taxonomy, query hints, provider
+  dispatch, web cascade, page extraction, `DomainSearch`, and tool builders.
+  Domain routing composes existing public-data tools and argument validation.
+  The builders adapt the shared methods to `FunctionTool` using the existing
+  JSON/error wrapper from the public-data tools.
+- The former `search_domains.py`, `domain_search.py`, and
+  `domain_search_tools.py` modules are consolidated into this single module;
+  repository callers import their functions directly from `search.py`.
 - `knowledge_base.py` seeds the four feature tools and shares the existing web
   callback and public-data tool instances with the domain service.
 - MCP's search module exposes the same operations using `DomainSearch`. Its web

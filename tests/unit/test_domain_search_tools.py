@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from src.internal.tools.domain_search import DomainSearch
-from src.internal.tools.domain_search_tools import build_domain_search_tools
+from src.internal.tools.search import DomainSearch
+from src.internal.tools.search import build_domain_search_tools
 from src.internal.tools.registry import ToolRegistry
 from src.internal.tools.search import SearchPage
 
