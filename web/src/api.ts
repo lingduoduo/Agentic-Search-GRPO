@@ -34,6 +34,7 @@ import type {
   SendChatMessageBody,
   SendSearchMessageBody,
   SearchFullResponse,
+  SearchDomainOption,
 } from "./types";
 
 /**
@@ -462,6 +463,12 @@ export async function* sendChatMessage(
       }
     }
   }
+}
+
+export function fetchSearchDomains(): Promise<{
+  domains: SearchDomainOption[];
+}> {
+  return requestJson<{ domains: SearchDomainOption[] }>("/api/search-domains");
 }
 
 export function sendSearchMessage(

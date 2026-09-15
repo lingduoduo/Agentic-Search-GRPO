@@ -14,6 +14,7 @@ const defaultProps = {
   onSearchUrlChange: vi.fn(),
   onTopKChange: vi.fn(),
   onSourceProviderChange: vi.fn(),
+  onDomainChange: vi.fn(),
   onSubmit: vi.fn(),
 };
 
@@ -127,5 +128,39 @@ describe("SearchComposer", () => {
   it("shows the Source dropdown when showSourcePicker is set (dev mode)", () => {
     render(<SearchComposer {...defaultProps} showSourcePicker />);
     expect(screen.getByText("Local Retrieval")).toBeInTheDocument();
+  });
+});
+
+describe("SearchComposer domain selector", () => {
+  const domainProps = {
+    ...defaultProps,
+    domain: "general",
+    domainOptions: [
+      { name: "general", description: "Broad or mixed-topic search; default" },
+      { name: "finance", description: "Markets, investments, banking" },
+      { name: "social_media", description: "Public social posts" },
+    ],
+    onDomainChange: vi.fn(),
+  };
+
+  it("renders the selector even without dev mode", () => {
+    // Unlike Source and Retrieval URL, the domain is a product control.
+    render(<SearchComposer {...domainProps} />);
+    expect(screen.getByLabelText("Domain")).toHaveValue("general");
+    expect(screen.queryByLabelText(/^Source$/)).not.toBeInTheDocument();
+  });
+
+  it("reports the selected domain", async () => {
+    const onDomainChange = vi.fn();
+    render(<SearchComposer {...domainProps} onDomainChange={onDomainChange} />);
+    await userEvent.selectOptions(screen.getByLabelText("Domain"), "finance");
+    expect(onDomainChange).toHaveBeenCalledWith("finance");
+  });
+
+  it("labels underscored identifiers readably", () => {
+    render(<SearchComposer {...domainProps} />);
+    expect(
+      screen.getByRole("option", { name: "social media" }),
+    ).toBeInTheDocument();
   });
 });

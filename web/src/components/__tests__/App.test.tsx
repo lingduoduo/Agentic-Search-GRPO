@@ -7,6 +7,8 @@ vi.mock("../../api", () => ({
   createSession: vi.fn().mockResolvedValue({ id: "s1", messages: [], title: null, user_id: null }),
   runAgent: vi.fn(),
   streamAgent: vi.fn(),
+  // The Assist composer loads the domain taxonomy on mount.
+  fetchSearchDomains: vi.fn().mockResolvedValue({ domains: [] }),
   submitToolApproval: vi.fn(),
   getAdminSummary: vi.fn().mockRejectedValue(new Error("no admin")),
   getAnalyticsByLLM: vi.fn().mockRejectedValue(new Error()),
@@ -546,5 +548,34 @@ describe("page navigation", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(screen.getByRole("textbox", { name: /question/i })).toBeInTheDocument();
+  });
+});
+
+describe("App search domain", () => {
+  it("sends the selected domain in the agent request", async () => {
+    (api.fetchSearchDomains as ReturnType<typeof vi.fn>).mockResolvedValue({
+      domains: [
+        { name: "general", description: "Broad or mixed-topic search; default" },
+        { name: "finance", description: "Markets, investments, banking" },
+      ],
+    });
+    mockStreamAgent.mockReturnValue(fakeStream("search"));
+    render(<App />);
+    const select = await screen.findByLabelText("Domain");
+    await userEvent.selectOptions(select, "finance");
+    await submitQuery("etf fees");
+    await waitFor(() => expect(mockStreamAgent).toHaveBeenCalled());
+    expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({
+      query: "etf fees",
+      domain: "finance",
+    });
+  });
+
+  it("defaults to general when the user picks nothing", async () => {
+    mockStreamAgent.mockReturnValue(fakeStream("search"));
+    render(<App />);
+    await submitQuery("etf fees");
+    await waitFor(() => expect(mockStreamAgent).toHaveBeenCalled());
+    expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({ domain: "general" });
   });
 });

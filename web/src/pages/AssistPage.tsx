@@ -1,7 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Bot, Gauge, MessageSquarePlus, Search } from "lucide-react";
-import { createSession, streamAgent, submitToolApproval } from "../api";
+import {
+  createSession,
+  fetchSearchDomains,
+  streamAgent,
+  submitToolApproval,
+} from "../api";
 import { AnswerPanel } from "../components/AnswerPanel";
 import { ClarificationPrompt } from "../components/ClarificationPrompt";
 import { DevConsole } from "../components/debug/DevConsole";
@@ -16,6 +21,7 @@ import type {
   ClarificationView,
   ControlFlowEventView,
   ProgressStep,
+  SearchDomainOption,
   SearchSourceProvider,
   SourceDocumentView,
   ToolApprovalView,
@@ -44,6 +50,10 @@ export function AssistPage() {
   const [query, setQuery] = useState("");
   const [searchUrl, setSearchUrl] = useState(DEFAULT_SEARCH_URL);
   const [topK, setTopK] = useState(5);
+  const [domain, setDomain] = useState("general");
+  const [domainOptions, setDomainOptions] = useState<SearchDomainOption[]>([
+    { name: "general", description: "Broad or mixed-topic search; default" },
+  ]);
   const [intent, setIntent] = useState<"search" | "chat" | "tool" | undefined>(undefined);
   const [clarification, setClarification] = useState<
     { view: ClarificationView; query: string } | null
@@ -70,6 +80,22 @@ export function AssistPage() {
   // Dev-only observability console; gated at build time, never on in prod.
   const debugPanels = import.meta.env.VITE_DEBUG_PANELS === "1";
   const requestRef = useRef<AbortController | null>(null);
+
+  // The taxonomy lives in DOMAIN_REGISTRY; fetching it keeps the 17
+  // identifiers and their order from being copied into the bundle. On
+  // failure the composer keeps its "general" fallback rather than
+  // disappearing, since domain selection is optional.
+  useEffect(() => {
+    let active = true;
+    fetchSearchDomains()
+      .then((r) => {
+        if (active && r.domains.length > 0) setDomainOptions(r.domains);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const status = useMemo(() => {
     if (isLoading) return "Searching";
@@ -134,6 +160,7 @@ export function AssistPage() {
         // Only forwarded in dev mode; otherwise the backend resolves the URL.
         search_url: DEV_MODE ? searchUrl : undefined,
         top_k: topK,
+        domain,
         source_provider: DEV_MODE ? sourceProvider : undefined,
         route: options?.route,
       };
@@ -304,6 +331,9 @@ export function AssistPage() {
         onSearchUrlChange={setSearchUrl}
         onTopKChange={handleTopKChange}
         onSourceProviderChange={handleSourceProviderChange}
+        domain={domain}
+        domainOptions={domainOptions}
+        onDomainChange={setDomain}
         onSubmit={handleSubmit}
         onExampleSelect={(q) => {
           setQuery(q);
