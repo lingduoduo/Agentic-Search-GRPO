@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
 
     summary = asyncio.run(_run(labels, cache, args.provider))
     report = _finite(summary)
-    Path(args.report).write_text(json.dumps(report, indent=2))
+    Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: report[k] for k in ("paired", "control")}, indent=2))
     print(f"report written to {args.report}")
 
