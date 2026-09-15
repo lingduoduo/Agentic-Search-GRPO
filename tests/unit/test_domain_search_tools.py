@@ -93,12 +93,14 @@ def test_facade_tools_are_withheld_from_agents_but_extract_page_is_offered():
 def test_no_capability_target_is_reachable_two_ways_from_the_agent_menu():
     """The invariant that makes the withholding above durable."""
     from src.internal.tools.knowledge_base import seed_tools
-    from src.internal.tools.search import CAPABILITY_ROUTES
+    from src.internal.tools.search import iter_capabilities
 
     registry = ToolRegistry()
     seed_tools(registry)
     offered = {tool.name for tool in registry.agent_tools()}
-    direct_targets = {name for name, _ in CAPABILITY_ROUTES.values()}
+    direct_targets = {
+        cap.tool_name for _tag, cap in iter_capabilities() if cap.tool_name
+    }
 
     assert direct_targets <= offered, "capability targets must stay directly callable"
     assert FACADE_TOOLS.isdisjoint(offered), (

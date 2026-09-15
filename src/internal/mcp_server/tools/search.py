@@ -204,8 +204,6 @@ async def search_domain(
     tag: str | None = None,
     params: dict[str, Any] | None = None,
     max_results: int = 5,
-    sub_domain: str | None = None,
-    sub_domain_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search through existing web providers or a local public-data capability.
 
@@ -219,8 +217,6 @@ async def search_domain(
         tag=tag,
         params=params,
         max_results=max_results,
-        sub_domain=sub_domain,
-        sub_domain_params=sub_domain_params,
     )
 
 
@@ -240,8 +236,6 @@ async def batch_search(
     tag: str | None = None,
     params: dict[str, Any] | None = None,
     max_results: int | None = None,
-    sub_domain: str | None = None,
-    sub_domain_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run 1–5 local domain searches concurrently, retaining order and per-query errors.
 
@@ -254,8 +248,6 @@ async def batch_search(
             "tag": tag,
             "params": params,
             "max_results": max_results,
-            "sub_domain": sub_domain,
-            "sub_domain_params": sub_domain_params,
         }.items()
         if value is not None
     }

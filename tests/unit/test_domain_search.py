@@ -101,8 +101,8 @@ async def test_native_capability_uses_actual_tool_without_hints(service):
     result = await client.search(
         "battery",
         domain="academic",
-        sub_domain="academic.arxiv",
-        sub_domain_params='{"limit":2}',
+        tag="academic.arxiv",
+        params='{"limit":2}',
     )
     assert calls[-1] == ("paper", "battery", 2)
     assert result["results"][0]["content"] == "Abstract"
@@ -115,7 +115,6 @@ async def test_native_capability_uses_actual_tool_without_hints(service):
         {"domain": "unknown"},
         {"tag": "legal.nonexistent"},
         {"tag": "finance.quote", "domain": "code"},
-        {"tag": "finance.quote", "sub_domain": "finance.web"},
         {"tag": "finance.quote", "params": {"bad": "value"}},
         {"tag": "finance.quote", "params": {"symbol": "MSFT"}},
         {"tag": "academic.arxiv", "params": {"limit": False}},

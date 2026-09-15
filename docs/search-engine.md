@@ -221,6 +221,58 @@ domain field. It queries the local index only, where topic hints do not apply.
 web-search flow, public-data tools, and page fetcher. It adds no service
 integration, credentials, or CLI. The taxonomy remains in `search.py`.
 
+### One registry, derived tags
+
+A domain and its capabilities are a single declaration. `DOMAIN_REGISTRY` maps
+each of the 17 identifiers to a `SearchDomain` carrying its description, its
+query hint, and its capabilities:
+
+```python
+"finance": SearchDomain(
+    "Markets, investments, banking, and financial analysis",
+    "finance",
+    (
+        WEB_CAPABILITY,
+        Capability("quote", "symbol", "records", "get_stock_quote"),
+        Capability("crypto", "symbol", "records", "get_crypto_price"),
+        Capability("currency", "from_currency", "records", "convert_currency"),
+    ),
+),
+```
+
+A tag such as `finance.quote` is **derived** — `f"{domain}.{capability.name}"`
+— not a key anyone writes. Previously the domain and its routes were two
+structures joined only by a string convention, so `"fnance.quote"` was an
+accepted key belonging to no domain, and reading the relationship back out took
+`tag.startswith(domain + ".")` and `tag.split(".", 1)[0]`. Neither is possible
+now: `iter_capabilities()` yields each `(tag, capability)` pair from the
+structure itself.
+
+Every domain declares a `web` capability whose `tool_name` is `None`, meaning
+the built-in web cascade rather than a seeded tool. It used to be fabricated
+inside `get_sub_domains`; declaring it lets one loop emit both entry kinds.
+
+Each capability states what it `returns`: `documents` for Wikipedia, arXiv,
+Wayback, and web search, or `records` for stock quotes, crypto prices, currency
+conversion, weather, geocoding, and nearby places. `get_sub_domains` reports it
+so a caller can tell titled text from structured fields before choosing. The
+field deliberately does not reuse the routing layer's `RetrieverTarget`: every
+routed tool here is a remote API, so that enum would be constant, and its
+values name local retrieval mechanisms rather than result shape.
+
+The routing layer's own route list in `src/internal/routing/registry.py` stays
+separate. Its entries name modalities — docs, structured, graph, live — and a
+topic is orthogonal to a modality: a finance question may be an article, a
+table, or a live quote.
+
+### One name per concept
+
+`search` accepts `query`, `domain`, `tag`, `params`, and `max_results`. The
+aliases `sub_domain` and `sub_domain_params`, along with the equality guards
+that reconciled the two spellings, were removed. The dotted tag format is
+unchanged, so a client that discovers a tag with `get_sub_domains` and passes it
+back is unaffected; only a caller using an alias spelling must rename it.
+
 The tool registry and MCP expose four operations. Three of them —
 `get_sub_domains`, `search_domain`, and `batch_search` — are registered but
 deliberately **not offered to the agent loop**: every tag below routes to a
