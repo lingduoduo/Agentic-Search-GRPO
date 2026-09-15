@@ -120,6 +120,7 @@ from src.internal.tools import search_tool
 from src.internal.tools.search import (
     DOMAIN_REGISTRY,
     normalize_search_domain,
+    prepare_domain_query,
 )
 
 from .static import APP_CSS
@@ -2374,6 +2375,7 @@ async def _run_direct_search(
     rerank_url: str | None = None,
     top_k: int,
     filters: dict | None = None,
+    domain: str = "general",
 ) -> list[ContextDocument]:
     # Over-fetch so MMR has candidates beyond top_k to diversify from.
     fetch_k = top_k * 2
@@ -2389,8 +2391,15 @@ async def _run_direct_search(
                 )
                 documents.extend(browser_docs)
             continue
+        # Hint web providers only: appending a topic word to a corpus query
+        # upweights documents containing that word rather than focusing the
+        # search. Not _is_web_provider — that set is {"serpapi"} and means
+        # "needs full-page fetch", so it excludes google and serper.
+        provider_query = (
+            query if provider == "retrieval" else prepare_domain_query(query, domain)
+        )
         pages = await search_tool(
-            query,
+            provider_query,
             provider=provider,
             search_url=search_url,
             page_size=fetch_k,
@@ -2405,7 +2414,7 @@ async def _run_direct_search(
             _documents_from_search_pages(
                 pages,
                 source_provider=provider,
-                query=query,
+                query=provider_query,
                 start_index=len(documents) + 1,
             )
         )
@@ -2413,7 +2422,7 @@ async def _run_direct_search(
     # "auto" (internal + serpapi) deliberately excludes the slow browser.
     if browser_search_url and source_provider not in {"browser", "all", "auto"}:
         browser_docs = await _run_browser_search(
-            query,
+            prepare_domain_query(query, domain),
             browser_search_url=browser_search_url,
             top_k=fetch_k,
             existing_count=len(documents),

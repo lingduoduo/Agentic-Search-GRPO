@@ -67,7 +67,7 @@ async def _passthrough_fetch(pages, **_kwargs):
 def _capture_search_tool(seen: dict[str, str]):
     async def fake_search_tool(query, *, provider, **_kwargs):
         seen[provider] = query
-        return [SearchPage(title="t", url="http://x", contents="c")]
+        return [SearchPage(title="t", url="http://x", summary="c")]
 
     return fake_search_tool
 
@@ -152,7 +152,7 @@ async def test_hybrid_hints_each_expanded_query_exactly_once(monkeypatch):
     async def fake_search_tool(query, *, provider, **_kwargs):
         if provider != "retrieval":
             seen.append(query)
-        return [SearchPage(title="t", url="http://x", contents="c")]
+        return [SearchPage(title="t", url="http://x", summary="c")]
 
     monkeypatch.setattr("src.internal.servers.web.app.search_tool", fake_search_tool)
     monkeypatch.setattr(
