@@ -6,14 +6,18 @@ provider so the suite stays fast and spends no SerpAPI quota.
 
 from __future__ import annotations
 
+import importlib.util
+import math
 from pathlib import Path
 
 import pytest
 
 from src.internal.retrieval.domain_eval import (
     DEFAULT_LABELS_PATH,
+    ArmResult,
     DiskCache,
     LabelledQuery,
+    QueryOutcome,
     authority_precision,
     host_matches,
     jaccard,
@@ -223,3 +227,76 @@ def test_the_measurement_core_stays_torch_free():
         capture_output=True,
     )
     assert result.returncode == 0, "domain_eval must not import torch"
+
+
+_CLI_SPEC = importlib.util.spec_from_file_location(
+    "run_domain_relevance_eval",
+    Path(__file__).resolve().parents[2] / "examples" / "run_domain_relevance_eval.py",
+)
+
+
+def _cli():
+    module = importlib.util.module_from_spec(_CLI_SPEC)
+    _CLI_SPEC.loader.exec_module(module)
+    return module
+
+
+def _outcome(domain, delta, *, excluded=False, jaccard_value=0.5):
+    arm = ArmResult(urls=["https://x.com/a"], empty=False)
+    return QueryOutcome(
+        domain=domain,
+        query="q",
+        general=arm,
+        domain_arm=arm,
+        delta=delta,
+        jaccard=jaccard_value,
+        excluded=excluded,
+    )
+
+
+def test_general_control_is_excluded_from_the_paired_deltas():
+    # Three forced zeros would shrink the mean difference toward the null.
+    summary = _cli().summarise(
+        [_outcome("general", 0.0), _outcome("academic", 0.5), _outcome("code", 0.3)]
+    )
+    assert summary["paired"]["n"] == 2
+
+
+def test_excluded_queries_do_not_enter_the_paired_deltas():
+    summary = _cli().summarise(
+        [
+            _outcome("academic", 0.5),
+            _outcome("code", 0.4),
+            _outcome("legal", 0.9, excluded=True),
+        ]
+    )
+    assert summary["paired"]["n"] == 2
+    assert summary["excluded_count"] == 1
+
+
+def test_no_per_domain_p_values_are_reported():
+    # 16 tests at n=3 under BH correction could not reject anything; printing
+    # them would present that vacuum as a finding.
+    summary = _cli().summarise([_outcome("academic", 0.5), _outcome("code", 0.2)])
+    for domain_stats in summary["per_domain"].values():
+        assert "p_value" not in domain_stats
+
+
+def test_every_reported_float_is_finite():
+    # The Dev Console reads data/eval/*.json; a non-finite float arrives as null.
+    summary = _cli().summarise([_outcome("academic", 0.5), _outcome("code", 0.2)])
+
+    def _check(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                _check(v)
+        elif isinstance(node, float):
+            assert math.isfinite(node), node
+
+    _check(summary)
+
+
+def test_an_all_excluded_run_is_marked_uninterpretable():
+    summary = _cli().summarise([_outcome("academic", 0.5, excluded=True)])
+    assert summary["interpretable"] is False
+    assert summary["paired"]["p_value"] is None
