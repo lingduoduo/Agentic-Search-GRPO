@@ -59,11 +59,48 @@ async def test_invalid_native_tool_arguments_are_json_errors():
     assert "unsupported capability" in json.loads(result)["error"]
 
 
-def test_seeded_features_are_available_to_agents():
+# The three facade tools route to public-data tools the agent already holds
+# directly, so offering both doubles the menu without adding reach. PR #479
+# established that a system prompt alone does not fix that; withholding does.
+FACADE_TOOLS = frozenset({"search_domain", "get_sub_domains", "batch_search"})
+
+
+def test_seeded_features_stay_registered_and_invocable():
+    """Withholding is an agent-menu decision, not a removal: /admin and MCP keep them."""
     from src.internal.tools.knowledge_base import seed_tools
 
     registry = ToolRegistry()
     seed_tools(registry)
-    assert {"search_domain", "get_sub_domains", "extract_page", "batch_search"} <= {
-        tool.name for tool in registry.agent_tools()
-    }
+    all_four = FACADE_TOOLS | {"extract_page"}
+
+    assert all_four <= {summary["name"] for summary in registry.all_summaries()}
+    assert all(registry.get(name) is not None for name in all_four)
+
+
+def test_facade_tools_are_withheld_from_agents_but_extract_page_is_offered():
+    from src.internal.tools.knowledge_base import seed_tools
+
+    registry = ToolRegistry()
+    seed_tools(registry)
+    offered = {tool.name for tool in registry.agent_tools()}
+
+    assert FACADE_TOOLS.isdisjoint(offered)
+    # Nothing else seeded fetches a URL, so this one adds reach rather than a
+    # second path to it.
+    assert "extract_page" in offered
+
+
+def test_no_capability_target_is_reachable_two_ways_from_the_agent_menu():
+    """The invariant that makes the withholding above durable."""
+    from src.internal.tools.knowledge_base import seed_tools
+    from src.internal.tools.search import CAPABILITY_ROUTES
+
+    registry = ToolRegistry()
+    seed_tools(registry)
+    offered = {tool.name for tool in registry.agent_tools()}
+    direct_targets = {name for name, _ in CAPABILITY_ROUTES.values()}
+
+    assert direct_targets <= offered, "capability targets must stay directly callable"
+    assert FACADE_TOOLS.isdisjoint(offered), (
+        "a facade over already-offered tools must not also be on the menu"
+    )

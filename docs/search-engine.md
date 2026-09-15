@@ -128,7 +128,19 @@ search-agent component do not expose a domain selector.
 web-search flow, public-data tools, and page fetcher. It adds no service
 integration, credentials, or CLI. The taxonomy remains in `search.py`.
 
-The tool registry and MCP expose four operations:
+The tool registry and MCP expose four operations. Three of them —
+`get_sub_domains`, `search_domain`, and `batch_search` — are registered but
+deliberately **not offered to the agent loop**: every tag below routes to a
+public-data tool the agent already holds directly, so putting both on the menu
+gives a small model two paths to the same nine tools and a third way to run the
+web search it already has in `web_search`. `NOT_AGENT_CALLABLE` in
+`knowledge_base.py` withholds them, the same remedy applied to the
+`search`/`search_routing_tool` pair, where a system prompt alone was tested and
+did not fix selection while the duplicates were present. They stay fully
+reachable through `/admin/tools` (always mounted) and MCP's own wrappers, and
+through `/api/debug/tools` when `AGENTIC_SEARCH_DEBUG_PANELS` is set.
+`extract_page` is agent-callable, because nothing else seeded there fetches a
+URL.
 
 | Operation | Behavior |
 | --- | --- |
