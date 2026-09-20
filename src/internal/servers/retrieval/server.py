@@ -110,7 +110,6 @@ def create_app(service: RetrievalService | None = None) -> FastAPI:
             "query_expansion_enabled": os.environ.get(
                 "QUERY_EXPANSION_ENABLED", "false"
             ),
-            "adaptive_mmr": os.environ.get("ADAPTIVE_MMR", "false"),
         }
         if hasattr(_service, "_result_cache") and _service._result_cache is not None:
             stats.update(_service._result_cache.stats())

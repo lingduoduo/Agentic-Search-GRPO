@@ -577,7 +577,6 @@ curl -s -X PATCH http://localhost:7860/api/admin/retrieval/config \
 QUERY_EXPANSION_ENABLED=true SPELL_CORRECTION_ENABLED=true EXPANSION_MAX_TERMS=3 \
   BM25_VARIANT=bm25plus \
   RESULT_CACHE_REDIS_URL=redis://localhost:6379 RESULT_CACHE_TTL=300 \
-  ADAPTIVE_MMR=true \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
