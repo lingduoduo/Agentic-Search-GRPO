@@ -11,8 +11,14 @@ import json
 import logging
 import os
 from typing import Any
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Bundled default acronym table. It lives here, not under data/, because that
+# directory is gitignored -- a default file there would be invisible to every
+# clone. ACRONYM_PATH overrides this file rather than merging with it.
+DEFAULT_ACRONYM_PATH = Path(__file__).resolve().parent / "acronyms.json"
 
 
 def _build_symspell() -> Any:
@@ -51,12 +57,22 @@ class QueryOptimizer:
         spell_enabled: bool = False,
     ) -> None:
         self._acronyms: dict[str, str] = {}
-        if acronym_path:
-            try:
-                with open(acronym_path) as f:
-                    self._acronyms = {k.upper(): v for k, v in json.load(f).items()}
-            except FileNotFoundError:
-                logger.warning("Acronym file not found: %s", acronym_path)
+        source = acronym_path or DEFAULT_ACRONYM_PATH
+        try:
+            with open(source) as f:
+                self._acronyms = {k.upper(): v for k, v in json.load(f).items()}
+        except FileNotFoundError:
+            logger.warning("Acronym file not found: %s", source)
+        except (ValueError, TypeError, AttributeError) as exc:
+            # A malformed table must not take the process down; expansion
+            # degrades to a no-op, and the warning below says so.
+            logger.warning("Acronym file could not be read (%s): %s", source, exc)
+        if not self._acronyms:
+            logger.warning(
+                "Query expansion is enabled but no acronyms were loaded from %s; "
+                "expansion will have no effect.",
+                source,
+            )
         self._max_terms = max_terms
         self._sym = _build_symspell() if spell_enabled else None
 

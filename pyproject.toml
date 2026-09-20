@@ -24,6 +24,9 @@ mcp-documents = [
 where = ["."]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"*" = ["*.json"]
+
 [tool.pytest.ini_options]
 # Default run covers unit + regression tests only.
 # Integration tests require a live server stack (Postgres, OpenSearch, Redis, etc.)
