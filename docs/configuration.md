@@ -145,28 +145,21 @@ falls through to the existing LLM/rule fallbacks.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg. Requires `ACRONYM_PATH`; see below |
-| `ACRONYM_PATH` | — | JSON file of `{"ACRONYM": "expansion"}`. Without it, acronym expansion has nothing to expand |
+| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg, using the bundled default table |
+| `ACRONYM_PATH` | bundled default | JSON file of `{"ACRONYM": "expansion"}`. Replaces the built-in table rather than extending it |
 | `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg. Requires the `symspellpy` package |
-| `EXPANSION_MAX_TERMS` | `3` | Max acronym expansions added per query, to prevent BM25 query bloat. Only has an effect when `ACRONYM_PATH` is set |
+| `EXPANSION_MAX_TERMS` | `3` | Max acronym expansions added per query, to prevent BM25 query bloat |
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
 
-**Query expansion needs an acronym file.** `QUERY_EXPANSION_ENABLED=true` on
-its own does not expand anything. Expansion substitutes acronyms read from the
-JSON file at `ACRONYM_PATH`; with no file configured, the acronym table is
-empty and every query passes through unchanged:
-
-```
-QUERY_EXPANSION_ENABLED=true, ACRONYM_PATH unset : "ML and IR systems"
-QUERY_EXPANSION_ENABLED=true, ACRONYM_PATH set   : "ML and IR systems machine learning information retrieval"
-```
-
-This is silent by design as it stands: unlike spell correction, which logs
-`symspellpy not installed; spell correction disabled` when its dependency is
-missing, an absent acronym file produces no warning. `EXPANSION_MAX_TERMS`
-caps the expansions added per query and therefore also does nothing until an
-acronym file is configured.
+**Query expansion ships with a default table.** `QUERY_EXPANSION_ENABLED=true`
+expands acronyms from a table bundled at
+`src/internal/retrieval/acronyms.json`, covering this system's own vocabulary
+(`RAG`, `IR`, `NDCG`, `MMR`, `GRPO`, and similar). Setting `ACRONYM_PATH`
+replaces that table rather than adding to it, so a custom file should include
+any built-in entries it still wants. If the resulting table is empty — an
+unreadable or empty custom file — expansion logs a warning and becomes a no-op
+rather than failing silently.
 
 **Not environment variables.** Three knobs that look like settings are CLI
 flags instead. The FAISS index type is `--faiss_type` on the index-build CLI
