@@ -1,0 +1,18 @@
+{
+  "RAG": "retrieval augmented generation",
+  "IR": "information retrieval",
+  "NLP": "natural language processing",
+  "LLM": "large language model",
+  "ANN": "approximate nearest neighbor",
+  "KNN": "k nearest neighbors",
+  "MRR": "mean reciprocal rank",
+  "NDCG": "normalized discounted cumulative gain",
+  "TF-IDF": "term frequency inverse document frequency",
+  "RRF": "reciprocal rank fusion",
+  "MMR": "maximal marginal relevance",
+  "SFT": "supervised fine tuning",
+  "GRPO": "group relative policy optimization",
+  "DPO": "direct preference optimization",
+  "PPO": "proximal policy optimization",
+  "SERP": "search engine results page"
+}
