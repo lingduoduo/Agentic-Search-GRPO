@@ -146,20 +146,22 @@ falls through to the existing LLM/rule fallbacks.
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg, using the bundled default table |
-| `ACRONYM_PATH` | bundled default | JSON file of `{"ACRONYM": "expansion"}`. Replaces the built-in table rather than extending it |
+| `ACRONYM_PATH` | — | JSON file of `{"ACRONYM": "expansion"}`. Overrides both the corpus-derived and bundled tables |
+| `ACRONYM_CORPUS_PATH` | `BM25_CORPUS_PATH`, else `data/corpus.jsonl` | Corpus scanned for `long form (ABBR)` glosses to build the acronym table |
 | `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg. Requires the `symspellpy` package |
 | `EXPANSION_MAX_TERMS` | `3` | Max acronym expansions added per query, to prevent BM25 query bloat |
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
 
-**Query expansion ships with a default table.** `QUERY_EXPANSION_ENABLED=true`
-expands acronyms from a table bundled at
-`src/internal/retrieval/acronyms.json`, covering this system's own vocabulary
-(`RAG`, `IR`, `NDCG`, `MMR`, `GRPO`, and similar). Setting `ACRONYM_PATH`
-replaces that table rather than adding to it, so a custom file should include
-any built-in entries it still wants. If the resulting table is empty — an
-unreadable or empty custom file — expansion logs a warning and becomes a no-op
-rather than failing silently.
+**Query expansion reads the corpus first.** With `QUERY_EXPANSION_ENABLED=true`
+the acronym table is built from the corpus at `ACRONYM_CORPUS_PATH` by reading
+the glosses it already contains — `ionizing radiation (IR)` in a medical corpus
+gives `IR` → ionizing radiation there, rather than this repository's
+`information retrieval`. A corpus that defines nothing falls back to the
+bundled table at `src/internal/retrieval/acronyms.json`, and setting
+`ACRONYM_PATH` overrides both. The startup log names which source was used and
+how many acronyms it holds. `EXPANSION_MAX_TERMS` caps how many expansions land
+on any one query.
 
 **Not environment variables.** Three knobs that look like settings are CLI
 flags instead. The FAISS index type is `--faiss_type` on the index-build CLI
