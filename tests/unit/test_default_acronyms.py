@@ -69,3 +69,49 @@ def test_core_vocabulary_is_present(acronym):
     payload = json.loads(DEFAULT_ACRONYM_PATH.read_text(encoding="utf-8"))
 
     assert acronym in payload
+
+
+def _corpus(tmp_path, *texts):
+    path = tmp_path / "corpus.jsonl"
+    path.write_text("\n".join(json.dumps({"title": "", "text": t}) for t in texts))
+    return path
+
+
+def test_a_corpus_derived_table_beats_the_bundled_one(tmp_path):
+    """HCV is not in the bundle; RAG is. The corpus wins outright, not merged."""
+    corpus = _corpus(tmp_path, "hepatitis c virus (HCV) prevalence rose")
+
+    optimizer = QueryOptimizer(None, corpus_path=corpus)
+
+    assert optimizer.expand("HCV rates") == "HCV rates hepatitis c virus"
+    assert optimizer.expand("RAG systems") == "RAG systems"
+
+
+def test_an_empty_extraction_falls_back_to_the_bundle(tmp_path):
+    corpus = _corpus(tmp_path, "this text defines no acronyms at all")
+
+    optimizer = QueryOptimizer(None, corpus_path=corpus)
+
+    assert (
+        optimizer.expand("RAG systems") == "RAG systems retrieval augmented generation"
+    )
+
+
+def test_an_explicit_acronym_path_still_overrides_the_corpus(tmp_path):
+    corpus = _corpus(tmp_path, "hepatitis c virus (HCV) prevalence rose")
+    user_file = tmp_path / "user.json"
+    user_file.write_text(json.dumps({"ZZZ": "zulu zulu"}))
+
+    optimizer = QueryOptimizer(str(user_file), corpus_path=corpus)
+
+    assert optimizer.expand("ZZZ here") == "ZZZ here zulu zulu"
+    assert optimizer.expand("HCV rates") == "HCV rates"
+
+
+def test_the_demo_corpus_falls_back():
+    """Pins the real-world case: 20 documents define nothing."""
+    optimizer = QueryOptimizer(None, corpus_path="data/corpus.jsonl")
+
+    assert (
+        optimizer.expand("RAG systems") == "RAG systems retrieval augmented generation"
+    )
