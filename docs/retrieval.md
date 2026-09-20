@@ -488,12 +488,6 @@ RERANKER_PROVIDER=local RERANKER_TWO_STAGE=true \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
-**ONNX runtime** (lower latency than PyTorch, requires `pip install optimum[onnxruntime]`):
-```bash
-RERANKER_PROVIDER=local RERANKER_USE_ONNX=true RERANKER_MODEL=BAAI/bge-reranker-base \
-  PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
-```
-
 **Evaluate reranker quality and latency:**
 ```bash
 # Baseline vs reranked NDCG/MRR + per-query latency
@@ -575,7 +569,6 @@ curl -s -X PATCH http://localhost:7860/api/admin/retrieval/config \
 **Enable query expansion and result caching:**
 ```bash
 QUERY_EXPANSION_ENABLED=true SPELL_CORRECTION_ENABLED=true EXPANSION_MAX_TERMS=3 \
-  BM25_VARIANT=bm25plus \
   RESULT_CACHE_REDIS_URL=redis://localhost:6379 RESULT_CACHE_TTL=300 \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
