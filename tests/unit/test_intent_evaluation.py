@@ -1,7 +1,6 @@
 import functools
 import json
 from pathlib import Path
-from time import perf_counter
 
 import numpy as np
 import pytest
@@ -636,6 +635,7 @@ DATA = Path(__file__).resolve().parents[2] / "data"
 #   test-slice route accuracy  0.8159 (201 queries, split seed 17) -> floor 0.79
 #   out-of-scope AUC           0.8578 (31 held-out probes)         -> floor 0.83
 #   p95 routing latency       12.20 ms                             -> ceiling 25.0 ms
+#     (that bar now lives in tests/load/test_intent_routing_latency.py -- see #593)
 #
 # The accuracy floor is unchanged at 0.79 and the measurement rose slightly
 # (0.8108 -> 0.8159) despite nearly doubling the slice.
@@ -665,7 +665,6 @@ DATA = Path(__file__).resolve().parents[2] / "data"
 # encoder-specific context only and must not be compared across encoders.
 _TEST_SLICE_ACCURACY_FLOOR = 0.79
 _OUT_OF_SCOPE_AUC_FLOOR = 0.83
-_P95_LATENCY_CEILING_MS = 25.0
 
 
 @functools.lru_cache(maxsize=1)
@@ -761,27 +760,3 @@ def test_the_report_covers_the_whole_bulk_set():
 
     assert len(queries) >= 170
     assert len(legacy) == 30
-
-
-def test_routing_one_request_stays_under_the_latency_ceiling():
-    """Encode plus decide, the whole serving cost of a route decision."""
-    pytest.importorskip("sentence_transformers")
-    _report()  # skips for the same reasons as the bars above
-
-    from src.model.pre_training.intents.model import encode_texts
-    from src.model.pre_training.intents.model import INDEX_FILENAME, IntentIndex
-
-    index = IntentIndex.load(DATA / "intent_index" / INDEX_FILENAME)
-    query = "book the meeting room for tomorrow afternoon"
-    decide = functools.partial(index.decide, min_margin=0.015, min_module_score=0.45)
-    for _ in range(5):
-        decide(encode_texts([query])[0])
-
-    timings = []
-    for _ in range(50):
-        start = perf_counter()
-        decide(encode_texts([query])[0])
-        timings.append((perf_counter() - start) * 1_000)
-
-    p95 = sorted(timings)[int(0.95 * (len(timings) - 1))]
-    assert p95 <= _P95_LATENCY_CEILING_MS, p95
