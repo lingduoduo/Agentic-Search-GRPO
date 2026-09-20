@@ -60,7 +60,7 @@ Routing configuration spans separate capabilities:
 | `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` | Minimum cosine similarity for a module label to be emitted alongside the route; defaults to `0.8215`, derived on the tuning slice at the serving `top_k`. It was `0.45` until #520 — below every score `e5-small-v2` produces, so the gate could not fire at all |
 | `AGENTIC_SEARCH_INTENT_TOP_K` | Neighbors averaged per route; defaults to `8`. Re-selected on the wider evaluation instrument; it was `15` on the previous one and an unswept `3` before that — see [the instrument section](training-and-evaluation.md#the-instrument-widened--and-what-that-revealed-about-top_k) |
 | `AGENTIC_SEARCH_ROUTE_CLARIFICATION` | Ask the user which route was meant when no step in the cascade has a signal; `true` by default. Set `false` to always choose a route, as before. |
-| `SEARCH_DIRECT_COS_MIN` | Semantic threshold for accepting internal evidence without external fallback |
+| `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN` | Semantic threshold for accepting internal evidence without external fallback |
 | `AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL` | Allows a request body to override the server-owned retrieval URL; development only |
 | `AGENTIC_SEARCH_SEARCH_CACHE_TTL` | Seconds a retrieval row, web-provider page or rerank score stays in the web app's process-local serving cache; defaults to `300`, `0` disables it. No Redis involved. See [Serving cache](retrieval.md#serving-cache) |
 
@@ -136,7 +136,6 @@ falls through to the existing LLM/rule fallbacks.
 | `RERANKER_CACHE_REDIS_URL` | — | Enable `CachedReranker`; set to a Redis URL |
 | `RERANKER_CACHE_TTL_SECONDS` | `300` | TTL for cached reranker scores |
 | `RERANKER_MAX_TOKENS` | `512` | `PassageTruncator` token limit before scoring (0 = disabled) |
-| `RERANKER_USE_ONNX` | `false` | Load reranker via ONNX runtime (`ONNXReranker`) |
 | `RERANKER_TWO_STAGE` | `false` | Enable `TwoStageReranker` (fast pre-filter → heavy scorer) |
 | `RERANKER_PRE_FILTER_TOP_N` | `50` | Candidates passed to the heavy scorer in two-stage mode |
 | `RERANKER_FAST_MODEL` | inherits `RERANKER_MODEL` | Fast-stage model name in two-stage mode |
@@ -149,12 +148,15 @@ falls through to the existing LLM/rule fallbacks.
 | `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym + WordNet synonym expansion in BM25 leg |
 | `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg |
 | `EXPANSION_MAX_TERMS` | `3` | Max added terms per query to prevent BM25 query bloat |
-| `BM25_VARIANT` | — | Set to `bm25plus` to enable BM25+ lower-bound floor (`δ=1.0`) |
-| `FAISS_INDEX_TYPE` | `hnsw` | `ivfpq` for IVF-PQ quantized index; `hnsw` for original |
-| `EF_SEARCH` | — | HNSW `ef_search` override (higher = more recall, slower) |
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
-| `LATENCY_SLO_MS` | `120` | CI SLO gate: P99 above this exits non-zero in `eval_runner` |
+
+**Not environment variables.** Three knobs that look like settings are CLI
+flags instead. The FAISS index type is `--faiss_type` on the index-build CLI
+(default `Flat`; it takes any FAISS `index_factory` string, so `HNSW32` and
+IVF variants both work), HNSW search breadth is `--hnsw_ef_search` on the same
+CLI, and the evaluation latency gate is `--slo-ms`, with `--qt-slo-ms` for the
+query-transform leg, on `eval_runner`.
 
 ## Query transformation
 

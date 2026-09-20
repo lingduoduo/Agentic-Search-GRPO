@@ -142,8 +142,8 @@ The backend queries the configured internal retrieval URL first. Error documents
 The top internal result is accepted immediately when any tier succeeds:
 
 - normalized query exactly matches the top document title;
-- title is within one edit and semantic cosine exceeds `SEARCH_DIRECT_COS_MIN`;
-- query-to-passage semantic cosine exceeds `SEARCH_DIRECT_COS_MIN`.
+- title is within one edit and semantic cosine exceeds `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN`;
+- query-to-passage semantic cosine exceeds `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN`.
 
 Accepted internal evidence returns `hook_metadata.search_mode="direct"`, plus the gate `tier` and `top_score`. The answer is deterministic result rendering; no answer-generation model is invoked.
 
@@ -285,7 +285,7 @@ This is serving-time routing and inference. It is unrelated to GRPO training, ev
 - Local policy modes: `SEARCH_AGENT_MODEL` or `SEARCH_AGENT_SERVER_URL`.
 - Provider-backed chat and classification: `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, and provider credentials.
 - Optional similarity route: `AGENTIC_SEARCH_INTENT_INDEX_PATH`, `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`), `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` (default `0.8215`, diagnostics only), and `AGENTIC_SEARCH_INTENT_TOP_K` (default `8`).
-- Sufficiency threshold: `SEARCH_DIRECT_COS_MIN`.
+- Sufficiency threshold: `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN`.
 
 See [Configuration](configuration.md) for setup details.
 
