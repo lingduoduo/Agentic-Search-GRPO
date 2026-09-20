@@ -108,10 +108,15 @@ def test_an_explicit_acronym_path_still_overrides_the_corpus(tmp_path):
     assert optimizer.expand("HCV rates") == "HCV rates"
 
 
-def test_the_demo_corpus_falls_back():
-    """Pins the real-world case: 20 documents define nothing."""
+def test_the_demo_corpus_uses_the_one_acronym_it_defines():
+    """Pins the real-world case: 20 documents define exactly one acronym.
+
+    The corpus glosses "dense passage retrieval (DPR)" and never says what RAG
+    means, so DPR expands and RAG does not. Any derived pair beats the bundled
+    table -- a corpus that defines its own vocabulary is better evidence than a
+    table written elsewhere.
+    """
     optimizer = QueryOptimizer(None, corpus_path="data/corpus.jsonl")
 
-    assert (
-        optimizer.expand("RAG systems") == "RAG systems retrieval augmented generation"
-    )
+    assert optimizer.expand("DPR index") == "DPR index dense passage retrieval"
+    assert optimizer.expand("RAG systems") == "RAG systems"
