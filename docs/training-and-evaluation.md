@@ -10,7 +10,7 @@ Serving still uses indexes built offline by the `index_builder`. Filter-aware an
 
 ## Intent routing by nearest canonical example
 
-Serving enters through `src.internal.servers.web.intent.recognize_intent`, which returns strategy, clarification, and metadata together. The optional similarity adapter lives in `web/intent/similarity.py`; offline build and evaluation remain in `src/model/pre_training/intents/`. Module labels and composite flags are diagnostics, not a multi-step execution plan. See [request routing](request-routing.md#auto-router-decision-order) for the complete cascade.
+Serving enters through `src.internal.servers.web.intent.recognize_intent`, which returns strategy, clarification, and metadata together. The optional similarity adapter lives in `src/internal/servers/web/intent/similarity.py`; offline build and evaluation remain in `src/model/pre_training/intents/`. Module labels and composite flags are diagnostics, not a multi-step execution plan. See [request routing](request-routing.md#auto-router-decision-order) for the complete cascade.
 
 **There is no intent training run any more.** The optional three-label (`chat`, `search`, `tool`) request router used to be a small MLP trained on generated examples. It is gone — module, checkpoint format, wordpiece bundle and all. What replaced it compares the incoming request against roughly 300 curated canonical examples and takes the route whose nearest examples are closest. The whole offline workflow is three commands, none of which trains anything:
 
