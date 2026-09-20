@@ -153,6 +153,21 @@ falls through to the existing LLM/rule fallbacks.
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
 
+**Measured: expansion did not help.** On the TF-IDF backend over two BEIR
+benchmarks, corpus-derived acronym expansion *lowered* NDCG@10 in every
+configuration tested — and by more on the queries where it actually fires,
+which is the signature of a real effect rather than noise:
+
+| dataset | queries | fires | NDCG@10 base | expanded | delta | delta on firing subset |
+|---|---|---|---|---|---|---|
+| scifact | 300 | 222 | 0.5811 | 0.5473 | −0.0338 | −0.0456 |
+| nfcorpus | 323 | 34 | 0.2936 | 0.2879 | −0.0057 | −0.0538 |
+
+Lowering `EXPANSION_MAX_TERMS` to 1 reduces the harm but does not remove it.
+Recall@10 and MRR move the same way. `QUERY_EXPANSION_ENABLED` is off by
+default and should stay off unless you have measured a gain on your own corpus.
+See #601.
+
 **Query expansion reads the corpus first.** With `QUERY_EXPANSION_ENABLED=true`
 the acronym table is built from the corpus at `ACRONYM_CORPUS_PATH` by reading
 the glosses it already contains — `ionizing radiation (IR)` in a medical corpus
