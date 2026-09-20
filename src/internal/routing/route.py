@@ -29,6 +29,5 @@ class RouteDecision:
     domain: str
     sources: list[str] = field(default_factory=list)
     retriever: RetrieverTarget = RetrieverTarget.HYBRID
-    construction_target: RetrieverTarget = RetrieverTarget.HYBRID
     confidence: float = 1.0
     strategy: str = "heuristic"

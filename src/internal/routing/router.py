@@ -93,7 +93,6 @@ class Router:
             domain=route.name,
             sources=list(route.sources),
             retriever=route.retriever,
-            construction_target=route.retriever,
             confidence=confidence,
             strategy=strategy,
         )
