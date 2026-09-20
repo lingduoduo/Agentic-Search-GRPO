@@ -738,7 +738,20 @@ def test_parser_watchdog_terminates_a_process_over_the_rss_limit(monkeypatch):
     pid_reader, pid_writer = context.Pipe(duplex=False)
     monkeypatch.setattr(documents, "_USES_PARENT_RESOURCE_WATCHDOG", True)
     monkeypatch.setattr(documents, "PARSER_MEMORY_BYTES", 256 * 1024 * 1024)
-    monkeypatch.setattr(documents, "PARSER_TIMEOUT_SECONDS", 5.0)
+    # Same trap #504 fixed for the sibling timeout test: the deadline covers
+    # child startup, not just the parser body. Measured here, startup is the
+    # entire cost -- 1.41s of a 1.42s run on an idle machine -- and #504
+    # measured 2.0-2.5s on a loaded one. When startup outruns the budget the
+    # timeout fires first and this test fails on ParserTimeoutError, matching
+    # "timed out" instead of "resource limit": a failure that says nothing
+    # about the watchdog. Derive the deadline so what is under test is the
+    # kill, not the machine's speed.
+    #
+    # The probe sleeps 2.0s after allocating, so +3.0 leaves the watchdog the
+    # whole window to notice. If it never fires, this now fails with DID NOT
+    # RAISE -- the honest symptom -- rather than a timeout wearing its clothes.
+    deadline = _measure_parser_startup_seconds() + 3.0
+    monkeypatch.setattr(documents, "PARSER_TIMEOUT_SECONDS", deadline)
 
     with pytest.raises(documents.ParserResourceError, match="resource limit"):
         documents._run_parser_in_process(
@@ -749,7 +762,7 @@ def test_parser_watchdog_terminates_a_process_over_the_rss_limit(monkeypatch):
         )
 
     pid_writer.close()
-    assert pid_reader.poll(1)
+    assert pid_reader.poll(10)
     pid = pid_reader.recv()
     pid_reader.close()
     with pytest.raises(ProcessLookupError):
