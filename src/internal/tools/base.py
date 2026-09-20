@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -153,7 +154,18 @@ class FunctionTool(Tool):
         else:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, lambda: self._fn(**arguments))
-        return str(result), result, {}
+        # JSON, not str(): the source-card builder json.loads this back into
+        # structure and _fit_json_array trims JSON arrays by whole items. A
+        # Python repr defeats both silently. A str passes through untouched,
+        # since json.dumps would only add quotes. See #596.
+        if isinstance(result, str):
+            response = result
+        else:
+            try:
+                response = json.dumps(result, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                response = str(result)
+        return response, result, {}
 
     @classmethod
     def from_fn(
