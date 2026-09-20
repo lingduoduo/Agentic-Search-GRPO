@@ -722,7 +722,7 @@ Routes come from a config-driven registry (`ROUTING_REGISTRY_PATH` → JSON of `
 | Knowledge Graph | `graph` | net-new (no exec) | read-only Cypher (`MATCH…RETURN`), word-boundary write-clause rejection |
 | API Request | `api` | net-new (no exec) | `{endpoint, params}` filtered to an `ApiSpec` allowlist |
 
-The three net-new constructors **build and validate but never execute** a query — there is no live SQL/KG/API backend, so `RetrievalService` short-circuits the `sql`/`graph`/`api` targets to `([], "routed:<target>")`. When a real backend is wired later, only the executor changes. Every `route()`/`construct()` degrades to a safe empty/None payload rather than raising.
+The three net-new constructors **build and validate but never execute** a query — there is no live SQL/KG/API backend, so `RetrievalService` runs its ordinary hybrid retrieval for the `sql`/`graph`/`api` targets and records the decision as a mode suffix (`hybrid+routed:sql`). An unbacked route annotates a search rather than emptying it. When a real backend is wired later, only the executor changes. Every `route()`/`construct()` degrades to a safe empty/None payload rather than raising.
 
 **Enable per-query routing:**
 ```bash
