@@ -577,7 +577,6 @@ curl -s -X PATCH http://localhost:7860/api/admin/retrieval/config \
 QUERY_EXPANSION_ENABLED=true SPELL_CORRECTION_ENABLED=true EXPANSION_MAX_TERMS=3 \
   BM25_VARIANT=bm25plus \
   RESULT_CACHE_REDIS_URL=redis://localhost:6379 RESULT_CACHE_TTL=300 \
-  ADAPTIVE_MMR=true \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
@@ -697,8 +696,7 @@ retriever-target routing shape the internal-retrieval leg.
 
 **Pipeline:**
 ```
-query → Router.route() → RouteDecision(domain, sources, retriever, construction_target)
-      → QueryConstructor.construct() → ConstructedQuery(target, payload, text)
+query → Router.route() → RouteDecision(domain, sources, retriever)
 ```
 
 **Router strategies** (heuristic default; LLM strategies fall back to it on any failure):
@@ -711,18 +709,9 @@ query → Router.route() → RouteDecision(domain, sources, retriever, construct
 
 Routes come from a config-driven registry (`ROUTING_REGISTRY_PATH` → JSON of `{name, description, sources, retriever}`; a built-in default mirrors the local corpus). `RetrieverTarget` ∈ `sparse · dense · hybrid · metadata · sql · graph · api`.
 
-**Six query constructors** (`construction/`, one `construct(query, route) -> ConstructedQuery` interface):
+The router emits a decision only; there is no query-construction layer. Targets with no execution backend (`sql`, `graph`, `api`) fall through to ordinary hybrid retrieval and are recorded as a mode suffix (`hybrid+routed:sql`) — an unbacked route annotates a search rather than emptying it (#590). A construction layer that built and validated queries for those targets was removed in #591: nothing executed what it produced, and its substring-based validators rejected ordinary queries such as `SELECT created_at FROM orders`.
 
-| Constructor | Target | Backing | Output |
-|-------------|--------|---------|--------|
-| Metadata Filter | `metadata` | wraps `QueryConstructor` | NL → `{filters}` + cleaned query |
-| Vector Search | `dense` | params | `{top_k, namespace, filters}` |
-| Hybrid Retrieval | `hybrid` | reuses `adaptive_mmr_lambda` | `{rrf_k, w_sparse, w_dense, mmr_lambda}` |
-| SQL Generation | `sql` | net-new (no exec) | schema-aware Text-to-SQL, SELECT-only + table allowlist + multi-statement reject |
-| Knowledge Graph | `graph` | net-new (no exec) | read-only Cypher (`MATCH…RETURN`), word-boundary write-clause rejection |
-| API Request | `api` | net-new (no exec) | `{endpoint, params}` filtered to an `ApiSpec` allowlist |
-
-The three net-new constructors **build and validate but never execute** a query — there is no live SQL/KG/API backend, so `RetrievalService` runs its ordinary hybrid retrieval for the `sql`/`graph`/`api` targets and records the decision as a mode suffix (`hybrid+routed:sql`). An unbacked route annotates a search rather than emptying it. When a real backend is wired later, only the executor changes. Every `route()`/`construct()` degrades to a safe empty/None payload rather than raising.
+Every `route()` degrades to the default route rather than raising.
 
 **Enable per-query routing:**
 ```bash

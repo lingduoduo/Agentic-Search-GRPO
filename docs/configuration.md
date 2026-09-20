@@ -152,7 +152,6 @@ falls through to the existing LLM/rule fallbacks.
 | `BM25_VARIANT` | — | Set to `bm25plus` to enable BM25+ lower-bound floor (`δ=1.0`) |
 | `FAISS_INDEX_TYPE` | `hnsw` | `ivfpq` for IVF-PQ quantized index; `hnsw` for original |
 | `EF_SEARCH` | — | HNSW `ef_search` override (higher = more recall, slower) |
-| `ADAPTIVE_MMR` | `false` | Select MMR `λ` by query length (short → 0.8, long → 0.3) |
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
 | `LATENCY_SLO_MS` | `120` | CI SLO gate: P99 above this exits non-zero in `eval_runner` |

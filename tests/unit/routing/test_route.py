@@ -29,7 +29,6 @@ def test_route_decision_defaults():
         domain="docs",
         sources=["local"],
         retriever=RetrieverTarget.HYBRID,
-        construction_target=RetrieverTarget.HYBRID,
     )
     assert d.confidence == 1.0
     assert d.strategy == "heuristic"

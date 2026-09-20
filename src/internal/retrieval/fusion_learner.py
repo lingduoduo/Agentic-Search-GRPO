@@ -1,7 +1,6 @@
 """Learn per-source RRF weights and provide adaptive MMR lambda.
 
 FusionLearner: grid-searches w_sparse over a QA pairs dataset.
-adaptive_mmr_lambda: returns MMR lambda scaled to query length.
 """
 
 from __future__ import annotations
@@ -67,21 +66,3 @@ class FusionLearner:
             logger.info("Fusion weights saved to %s", output_path)
 
         return best
-
-
-def adaptive_mmr_lambda(query: str) -> float:
-    """Return MMR lambda based on query length.
-
-    Short  (≤3 tokens)  → 0.8  (prioritise relevance).
-    Medium (4-6 tokens) → 0.6.
-    Medium (7-9 tokens) → 0.5  (balanced).
-    Long   (≥10 tokens) → 0.3  (prioritise diversity).
-    """
-    n = len(query.split())
-    if n <= 3:
-        return 0.8
-    if n <= 6:
-        return 0.6
-    if n <= 9:
-        return 0.5
-    return 0.3

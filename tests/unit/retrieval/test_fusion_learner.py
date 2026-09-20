@@ -12,7 +12,6 @@ from src.internal.retrieval.fusion import weighted_rrf_fuse
 from src.internal.retrieval.fusion_learner import (
     FusionLearner,
     FusionWeights,
-    adaptive_mmr_lambda,
 )
 
 
@@ -64,29 +63,3 @@ def test_fusion_learner_returns_fusion_weights(tmp_path):
     assert isinstance(weights, FusionWeights)
     assert 0.0 < weights.w_sparse < 1.0
     assert abs(weights.w_sparse + weights.w_dense - 1.0) < 1e-6
-
-
-def test_adaptive_mmr_lambda_short_query():
-    assert adaptive_mmr_lambda("ML") >= 0.7
-
-
-def test_adaptive_mmr_lambda_long_query():
-    assert (
-        adaptive_mmr_lambda(
-            "what are the best practices for building enterprise search systems"
-        )
-        <= 0.4
-    )
-
-
-def test_adaptive_mmr_lambda_medium_query():
-    result = adaptive_mmr_lambda("retrieval augmented generation with reranking")
-    assert 0.4 <= result <= 0.7
-
-
-def test_adaptive_mmr_lambda_tiers():
-    assert adaptive_mmr_lambda("faiss") == 0.8  # 1 token (≤3)
-    assert adaptive_mmr_lambda("a b c") == 0.8  # 3 tokens (≤3, was 0.5 before)
-    assert adaptive_mmr_lambda("one two three four") == 0.6  # 4-6
-    assert adaptive_mmr_lambda("one two three four five six seven") == 0.5  # 7-9
-    assert adaptive_mmr_lambda(" ".join(["w"] * 12)) == 0.3  # ≥10
