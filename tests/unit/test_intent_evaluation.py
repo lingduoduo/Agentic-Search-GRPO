@@ -760,3 +760,132 @@ def test_the_report_covers_the_whole_bulk_set():
 
     assert len(queries) >= 170
     assert len(legacy) == 30
+
+
+# ---------------------------------------------------------------------------
+# Serving-cost invariants. These replace a p95 wall-clock assertion that flaked
+# under suite load (#593). What that SLA really guarded is that a route
+# decision does not reload the encoder or re-read the index -- both counting
+# questions, and counting does not care what else is running.
+# ---------------------------------------------------------------------------
+
+
+def _index_or_skip():
+    """Load the real index, or skip. Deliberately lighter than ``_report()``.
+
+    These tests count work, not accuracy, so they need the index to exist but
+    not to have been built with the current encoder -- and they must not pay
+    for a full evaluation run.
+    """
+    from src.model.pre_training.intents.model import INDEX_FILENAME
+
+    index_dir = DATA / "intent_index"
+    if not (index_dir / INDEX_FILENAME).exists():
+        pytest.skip(f"intent index is missing: {index_dir / INDEX_FILENAME}")
+    return IntentIndex.load(index_dir / INDEX_FILENAME)
+
+
+def _fake_encoder(dim):
+    """A stand-in for SentenceTransformer that records how it was used."""
+    state = {"constructions": 0, "encodes": []}
+
+    class _Fake:
+        def __init__(self, model_name, device=None):
+            state["constructions"] += 1
+
+        def encode(self, texts, **kwargs):
+            state["encodes"].append(list(texts))
+            rows = np.zeros((len(texts), dim), dtype=np.float32)
+            rows[:, 0] = 1.0  # unit vector: the index requires normalized rows
+            return rows
+
+    return _Fake, state
+
+
+def _patch_encoder(monkeypatch, dim):
+    """Install the fake and give it an empty cache to fill."""
+    sentence_transformers = pytest.importorskip("sentence_transformers")
+    from src.model.pre_training.intents import model as model_mod
+
+    fake, state = _fake_encoder(dim)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake)
+    monkeypatch.setattr(model_mod, "_MODEL_CACHE", {})
+    return state
+
+
+def _decide_ten_times(index, encode_texts):
+    for _ in range(10):
+        index.decide(
+            encode_texts(["book the meeting room"])[0],
+            min_margin=0.015,
+            min_module_score=0.45,
+        )
+
+
+def test_the_encoder_is_constructed_once_across_many_decisions(monkeypatch):
+    """A cache break would put a multi-second model load on every request.
+
+    This is the regression the old p95 ceiling actually guarded: ``_model``
+    says "Loading costs seconds; encoding costs ms".
+    """
+    from src.model.pre_training.intents.model import encode_texts
+
+    index = _index_or_skip()
+    state = _patch_encoder(monkeypatch, index._vectors.shape[1])
+
+    _decide_ten_times(index, encode_texts)
+
+    assert state["constructions"] == 1
+
+
+def test_each_decision_encodes_exactly_once(monkeypatch):
+    """One forward pass per decision, and one text per pass."""
+    from src.model.pre_training.intents.model import encode_texts
+
+    index = _index_or_skip()
+    state = _patch_encoder(monkeypatch, index._vectors.shape[1])
+
+    _decide_ten_times(index, encode_texts)
+
+    assert len(state["encodes"]) == 10
+    assert all(len(batch) == 1 for batch in state["encodes"])
+
+
+def test_decide_computes_similarities_a_fixed_number_of_times(monkeypatch):
+    """Scoring cost per decision must not scale with routes or modules.
+
+    Two per decision today -- ``route_scores`` computes them, then
+    ``_emit_modules`` -> ``module_scores`` computes them again. That
+    redundancy is pinned here rather than fixed; collapsing it is an
+    optimization, and this test is what would tell you it worked.
+    """
+    index = _index_or_skip()
+    calls = {"n": 0}
+    original = IntentIndex._similarities
+
+    def counting(self, vector):
+        calls["n"] += 1
+        return original(self, vector)
+
+    monkeypatch.setattr(IntentIndex, "_similarities", counting)
+
+    vector = index._vectors[0]
+    for _ in range(10):
+        index.decide(vector, min_margin=0.015, min_module_score=0.45)
+
+    assert calls["n"] == 20
+
+
+def test_decide_never_re_reads_the_index_from_disk(monkeypatch):
+    """Break ``np.load`` *after* loading: a decision that works touched no disk."""
+    index = _index_or_skip()
+
+    def _exploding_load(*args, **kwargs):
+        raise AssertionError("decide() re-read the index from disk")
+
+    monkeypatch.setattr(np, "load", _exploding_load)
+
+    vector = index._vectors[0]
+    for _ in range(10):
+        decision = index.decide(vector, min_margin=0.015, min_module_score=0.45)
+    assert decision.route
