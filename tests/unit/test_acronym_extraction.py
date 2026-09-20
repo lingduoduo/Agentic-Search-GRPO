@@ -70,3 +70,25 @@ def test_malformed_lines_are_skipped(tmp_path):
     corpus.write_text('not json\n{"text": "hepatitis c virus (HCV) here"}\n')
 
     assert extract_acronyms_from_corpus(corpus) == {"HCV": "hepatitis c virus"}
+
+
+def test_the_repo_corpus_schema_is_read(tmp_path):
+    """corpus.jsonl is {id, title, contents, metadata}, not {title, text}.
+
+    Reading only `text` sees the title and misses every document body -- which
+    is what this extractor did before the schema was checked against a real
+    corpus file.
+    """
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text(
+        json.dumps(
+            {
+                "id": "doc_001",
+                "title": "A study",
+                "contents": "we measured hepatitis c virus (HCV) prevalence",
+                "metadata": {"acl": ["public"]},
+            }
+        )
+    )
+
+    assert extract_acronyms_from_corpus(corpus) == {"HCV": "hepatitis c virus"}

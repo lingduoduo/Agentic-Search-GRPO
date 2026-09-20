@@ -63,7 +63,11 @@ def extract_acronyms_from_corpus(path) -> dict[str, str]:
                     continue  # one bad line must not lose the whole corpus
                 if not isinstance(record, dict):
                     continue
-                text = f"{record.get('title', '')} {record.get('text', '')}"
+                # `contents` first, `text` second: corpus.jsonl in this repo is
+                # {id, title, contents, metadata}, and the retrieval servers read
+                # it the same way. Reading only `text` sees titles and nothing else.
+                body = record.get("contents") or record.get("text") or ""
+                text = f"{record.get('title', '')} {body}"
                 for acronym, expansion in extract_acronyms(text).items():
                     pairs.setdefault(acronym, expansion)
     except OSError as exc:
