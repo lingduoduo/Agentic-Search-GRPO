@@ -145,11 +145,28 @@ falls through to the existing LLM/rule fallbacks.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym + WordNet synonym expansion in BM25 leg |
-| `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg |
-| `EXPANSION_MAX_TERMS` | `3` | Max added terms per query to prevent BM25 query bloat |
+| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg. Requires `ACRONYM_PATH`; see below |
+| `ACRONYM_PATH` | — | JSON file of `{"ACRONYM": "expansion"}`. Without it, acronym expansion has nothing to expand |
+| `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg. Requires the `symspellpy` package |
+| `EXPANSION_MAX_TERMS` | `3` | Max acronym expansions added per query, to prevent BM25 query bloat. Only has an effect when `ACRONYM_PATH` is set |
 | `RESULT_CACHE_REDIS_URL` | — | Enable `ResultCache`; set to a Redis URL |
 | `RESULT_CACHE_TTL` | `300` | TTL in seconds for cached full search responses |
+
+**Query expansion needs an acronym file.** `QUERY_EXPANSION_ENABLED=true` on
+its own does not expand anything. Expansion substitutes acronyms read from the
+JSON file at `ACRONYM_PATH`; with no file configured, the acronym table is
+empty and every query passes through unchanged:
+
+```
+QUERY_EXPANSION_ENABLED=true, ACRONYM_PATH unset : "ML and IR systems"
+QUERY_EXPANSION_ENABLED=true, ACRONYM_PATH set   : "ML and IR systems machine learning information retrieval"
+```
+
+This is silent by design as it stands: unlike spell correction, which logs
+`symspellpy not installed; spell correction disabled` when its dependency is
+missing, an absent acronym file produces no warning. `EXPANSION_MAX_TERMS`
+caps the expansions added per query and therefore also does nothing until an
+acronym file is configured.
 
 **Not environment variables.** Three knobs that look like settings are CLI
 flags instead. The FAISS index type is `--faiss_type` on the index-build CLI
