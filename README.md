@@ -15,6 +15,8 @@ Agentic Search is a retrieval-backed platform for building multi-turn search, RA
 - Identity-aware access: signing in narrows results to what you may read and unlocks user-scoped tools and memory, without changing which engine runs
 - MCP in both directions — a server exposing search and retrieval to compatible clients, and a client that turns another server's tools into ordinary registry tools
 
+---
+
 ## Architecture
 
 [![Architecture](agentic-search-grpo-architecture.png)](agentic-search-grpo-architecture.html)
@@ -64,46 +66,6 @@ GEN_AI_API_KEY=...
 ```
 
 Provider, web-search, retrieval, reranking, routing, and application settings are documented in [Configuration](docs/configuration.md).
-
-## Ingestion
-
-The offline `index_builder` turns a corpus into the searchable sparse/dense indexes that queries read at request time — chunking, embedding, and writing the index artifacts. Chunking offers three strategies, one at a time: a default paragraph-and-section splitter, plus opt-in **recursive** (structure-aware — keeps code blocks and tables intact and splits prose down a Markdown heading hierarchy) and **semantic** (embedding-similarity) modes. Recursive and semantic are mutually exclusive. See [Ingestion](docs/ingestion.md) for the pipeline and connector data models, and [Retrieval](docs/retrieval.md#chunking) for chunking details.
-
-## Search engine
-
-The search agent classifies each request, tries internal retrieval first, and falls through to web search when evidence is weak. It also exposes a dedicated retrieval-only surface at `POST /search/send-search-message` (the **Search** page, `/search`). See [Search engine](docs/search-engine.md) for capabilities and request routing.
-
-A request may name a **search domain** — `finance`, `academic`, `legal`, `health`, and so on — on `POST /api/agent` or from the Assist page; `GET /api/search-domains` lists all seventeen. Sixteen carry a topic hint, which is appended to the query; `general` is the default and adds nothing. The hint steers the query; it is not a result filter. A non-`general` domain is only honoured by the `search_tool` and `hybrid_search` modes, or by auto when `mode` is omitted; any other mode rejects it with a 400 rather than ignoring it silently. The same taxonomy also routes the agent's own `search_domain` tool to a capability — web search, or one of the keyless public data tools for the six that return structured records — but that is the tool path, not this one.
-
-## Chat engine
-
-The chat agent answers conversational requests with retrieval-grounded synthesis and multi-turn memory. A direct `POST /chat/send-chat-message` endpoint (the **Chat** page, `/chat`) calls the local model with no retrieval, streaming a multi-turn transcript. See [Chat engine](docs/chat-engine.md) for capabilities and routing.
-
-## Tool engine
-
-The tool agent runs multi-turn function calling with structured tool dispatch over a registry of built-in and OpenAPI-backed tools. A dedicated `POST /tool/send-tool-message` surface (the **Tools** page, `/tools`) streams tool calls, gates tools with approval prompts, and fetches the web via a serpapi→browser cascade. See [Tool engine](docs/tool-engine.md) for capabilities, routing, and the tool registry.
-
-#### Built-in public data tools
-
-The tool agent ships nine keyless public data-source tools, seeded by
-`src/internal/tools/public_data/`. They need no API keys or configuration:
-
-| Tool | Source |
-| --- | --- |
-| `search_wikipedia` | Wikipedia action API |
-| `search_arxiv` | ArXiv export API |
-| `search_wayback` | Internet Archive CDX API |
-| `get_weather` | Open-Meteo |
-| `get_stock_quote` | Yahoo Finance chart API |
-| `get_crypto_price` | CoinGecko |
-| `convert_currency` | exchangerate-api.com |
-| `search_location` | Nominatim (OpenStreetMap) |
-| `search_nearby_places` | Overpass (OpenStreetMap) |
-
-The first three are citeable: they answer with `{title, content, url}` records,
-so their results appear as source cards on `/tools`. The rest answer with a
-JSON object of facts. Any upstream failure returns `{"error": ...}` from that
-one tool and leaves the turn intact.
 
 ## Run locally
 
@@ -171,6 +133,48 @@ Check the API health endpoint:
 curl -s http://127.0.0.1:7860/health | python3 -m json.tool
 ```
 
+## Search engine
+
+The search agent classifies each request, tries internal retrieval first, and falls through to web search when evidence is weak. It also exposes a dedicated retrieval-only surface at `POST /search/send-search-message` (the **Search** page, `/search`). See [Search engine](docs/search-engine.md) for capabilities and request routing.
+
+A request may name a **search domain** — `finance`, `academic`, `legal`, `health`, and so on — on `POST /api/agent` or from the Assist page; `GET /api/search-domains` lists all seventeen. Sixteen carry a topic hint, which is appended to the query; `general` is the default and adds nothing. The hint steers the query; it is not a result filter. A non-`general` domain is only honoured by the `search_tool` and `hybrid_search` modes, or by auto when `mode` is omitted; any other mode rejects it with a 400 rather than ignoring it silently. The same taxonomy also routes the agent's own `search_domain` tool to a capability — web search, or one of the keyless public data tools for the six that return structured records — but that is the tool path, not this one.
+
+## Chat engine
+
+The chat agent answers conversational requests with retrieval-grounded synthesis and multi-turn memory. A direct `POST /chat/send-chat-message` endpoint (the **Chat** page, `/chat`) calls the local model with no retrieval, streaming a multi-turn transcript. See [Chat engine](docs/chat-engine.md) for capabilities and routing.
+
+---
+
+## Tool engine
+
+The tool agent runs multi-turn function calling with structured tool dispatch over a registry of built-in and OpenAPI-backed tools. A dedicated `POST /tool/send-tool-message` surface (the **Tools** page, `/tools`) streams tool calls, gates tools with approval prompts, and fetches the web via a serpapi→browser cascade. See [Tool engine](docs/tool-engine.md) for capabilities, routing, and the tool registry.
+
+### Built-in public data tools
+
+The tool agent ships nine keyless public data-source tools, seeded by
+`src/internal/tools/public_data/`. They need no API keys or configuration:
+
+| Tool | Source |
+| --- | --- |
+| `search_wikipedia` | Wikipedia action API |
+| `search_arxiv` | ArXiv export API |
+| `search_wayback` | Internet Archive CDX API |
+| `get_weather` | Open-Meteo |
+| `get_stock_quote` | Yahoo Finance chart API |
+| `get_crypto_price` | CoinGecko |
+| `convert_currency` | exchangerate-api.com |
+| `search_location` | Nominatim (OpenStreetMap) |
+| `search_nearby_places` | Overpass (OpenStreetMap) |
+
+The first three are citeable: they answer with `{title, content, url}` records,
+so their results appear as source cards on `/tools`. The rest answer with a
+JSON object of facts. Any upstream failure returns `{"error": ...}` from that
+one tool and leaves the turn intact.
+
+## Ingestion
+
+The offline `index_builder` turns a corpus into the searchable sparse/dense indexes that queries read at request time — chunking, embedding, and writing the index artifacts. Chunking offers three strategies, one at a time: a default paragraph-and-section splitter, plus opt-in **recursive** (structure-aware — keeps code blocks and tables intact and splits prose down a Markdown heading hierarchy) and **semantic** (embedding-similarity) modes. Recursive and semantic are mutually exclusive. See [Ingestion](docs/ingestion.md) for the pipeline and connector data models, and [Retrieval](docs/retrieval.md#chunking) for chunking details.
+
 ## Common development commands
 
 ```bash
@@ -182,6 +186,7 @@ cd web && npm run build             # production bundle served by FastAPI
 
 See [Testing](docs/testing.md) for focused suites and integration-test prerequisites.
 
+---
 
 ## Documentation
 
