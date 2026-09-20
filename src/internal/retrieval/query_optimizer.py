@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_ACRONYM_PATH = Path(__file__).resolve().parent / "acronyms.json"
 
 
+def _read_acronym_file(path) -> dict[str, str]:
+    """Read an acronym JSON file. Never raises: an unusable file yields {}."""
+    try:
+        with open(path) as handle:
+            return {k.upper(): v for k, v in json.load(handle).items()}
+    except FileNotFoundError:
+        logger.warning("Acronym file not found: %s", path)
+    except (ValueError, TypeError, AttributeError) as exc:
+        logger.warning("Acronym file could not be read (%s): %s", path, exc)
+    return {}
+
+
 def _build_symspell() -> Any:
     try:
         from symspellpy import SymSpell  # type: ignore[import]
@@ -53,21 +65,33 @@ class QueryOptimizer:
         self,
         acronym_path: str | None,
         *,
+        corpus_path=None,
         max_terms: int = 3,
         spell_enabled: bool = False,
     ) -> None:
+        # Three sources, strict precedence: an explicit file wins; otherwise the
+        # corpus defines its own vocabulary; otherwise the bundled table. A
+        # static table assumes a domain -- scifact's IR is ionizing radiation,
+        # not information retrieval. See #601.
         self._acronyms: dict[str, str] = {}
-        source = acronym_path or DEFAULT_ACRONYM_PATH
-        try:
-            with open(source) as f:
-                self._acronyms = {k.upper(): v for k, v in json.load(f).items()}
-        except FileNotFoundError:
-            logger.warning("Acronym file not found: %s", source)
-        except (ValueError, TypeError, AttributeError) as exc:
-            # A malformed table must not take the process down; expansion
-            # degrades to a no-op, and the warning below says so.
-            logger.warning("Acronym file could not be read (%s): %s", source, exc)
-        if not self._acronyms:
+        if acronym_path:
+            source = str(acronym_path)
+            self._acronyms = _read_acronym_file(acronym_path)
+        else:
+            from .acronym_extraction import extract_acronyms_from_corpus
+
+            derived = extract_acronyms_from_corpus(corpus_path)
+            if derived:
+                self._acronyms = derived
+                source = f"corpus:{corpus_path}"
+            else:
+                self._acronyms = _read_acronym_file(DEFAULT_ACRONYM_PATH)
+                source = f"bundled:{DEFAULT_ACRONYM_PATH.name}"
+        if self._acronyms:
+            logger.info(
+                "Query expansion: %d acronyms from %s", len(self._acronyms), source
+            )
+        else:
             logger.warning(
                 "Query expansion is enabled but no acronyms were loaded from %s; "
                 "expansion will have no effect.",
@@ -92,6 +116,11 @@ class QueryOptimizer:
             return _PassthroughOptimizer()
         return cls(
             os.environ.get("ACRONYM_PATH"),
+            corpus_path=(
+                os.environ.get("ACRONYM_CORPUS_PATH")
+                or os.environ.get("BM25_CORPUS_PATH")
+                or "data/corpus.jsonl"
+            ),
             max_terms=int(os.environ.get("EXPANSION_MAX_TERMS", "3")),
             spell_enabled=spell,
         )
