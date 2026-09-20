@@ -2,6 +2,45 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Correction (2026-09-20, after merge).** The problem statement below is
+> **wrong**, and the change it justified fixed nothing that was broken.
+>
+> Every tool in the registry is wrapped by `guarded`
+> (`src/internal/tools/public_data/_http.py:137`), which already serialized:
+>
+> ```python
+> async def _wrapped(**kwargs) -> str:
+>     try:
+>         return json.dumps(await fn(**kwargs))
+> ```
+>
+> Verified by code-object origin, which `functools.wraps` cannot fake: 13 of 14
+> registered tools route through `_http.py:145`; the one that does not
+> (`search`) returns `str` anyway. So the nine public data tools **already
+> returned JSON strings**. Card recovery already succeeded, and
+> `_fit_json_array` already engaged — re-run on a real guarded list tool, it
+> produced `6 of 12 results shown, 6 omitted for length`, the exact output the
+> text below calls impossible.
+>
+> Two compounding errors produced this document. The survey read
+> `__wrapped__`'s annotation (`-> dict`), but `functools.wraps` copies
+> `__annotations__` onto a wrapper that returns `str`. And the "before"
+> evidence came from a `FunctionTool` constructed by hand around an *unguarded*
+> callable, then reported as the real tools' behaviour.
+>
+> **What survives:** the change is inert for every existing tool — a `str`
+> result passes through untouched — so there was no regression, and the tests
+> are valid unit tests of `FunctionTool.execute`'s contract. It stands as a
+> guard for any future tool built without `guarded`. **What does not:** that it
+> repaired a live defect, and that #596 had a demonstrated consumer. #596's
+> original framing — a question with no consumer, not to be fixed on sight —
+> was correct.
+>
+> Kept as written below rather than rewritten, so the reasoning that produced a
+> wrong conclusion stays legible. Do not cite the claims in "The problem" as
+> fact.
+
+
 **Goal:** Make `FunctionTool.execute` emit JSON for non-string results, so the source-card structure recovery and the loop's whole-item truncation — both already written — actually run.
 
 **Architecture:** One branch in `FunctionTool.execute`. Strings pass through untouched; everything else goes through `json.dumps(..., ensure_ascii=False, default=str)` with a fallback to today's `str()`.
