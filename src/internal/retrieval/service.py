@@ -198,6 +198,7 @@ class RetrievalService:
         Without pipeline: single query, identical behaviour to previous releases.
         Result cache (if enabled) is checked before retrieval and populated after.
         """
+        routed = ""
         if self._router is not None:
             from src.internal.routing.route import RetrieverTarget
 
@@ -208,13 +209,14 @@ class RetrievalService:
                 RetrieverTarget.API,
             ):
                 # No execution backend for these targets — construct-only.
-                # Degrade to empty results so routing never breaks a request.
-                return [], f"routed:{decision.retriever.value}"
+                # Run ordinary retrieval anyway, since an unbacked route must
+                # not cost the caller its results, and record the decision.
+                routed = f"+routed:{decision.retriever.value}"
 
         if self._result_cache:
             cached = self._result_cache.get(query, filters, top_k)
             if cached is not None:
-                return cached, "cached"
+                return cached, "cached" + routed
 
         reranker_multiplier = (
             float(os.environ.get("RERANKER_OVER_FETCH_MULTIPLIER", "2.0"))
@@ -327,7 +329,7 @@ class RetrievalService:
         if self._result_cache:
             self._result_cache.set(query, filters, top_k, fused)
 
-        return fused, mode
+        return fused, mode + routed
 
     def graph_search(
         self,
