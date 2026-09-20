@@ -9,6 +9,7 @@ Agentic Search is a retrieval-backed platform for building multi-turn search, RA
 - Dense, sparse, and hybrid retrieval with fusion, reranking, and optimization workflows
 - Connector data models, document ingestion, and offline index building via the `index_builder` CLI
 - Web search through Google Custom Search, SerpAPI, and browser automation
+- Search domains — seventeen topic domains, selectable from the HTTP API or the Assist page, that hint a query toward a subject and route it to the capability that answers it: web search, or one of the keyless public data tools
 - A React UI with four surfaces — an auto-routing Assistant plus direct Search, Chat, and Tool pages — with streaming responses, a running conversation transcript, source inspection, and observability panels
 - Post-training for search agents — supervised (SFT), preference (DPO), and reinforcement (GRPO) — plus evaluation workflows
 - Identity-aware access: signing in narrows results to what you may read and unlocks user-scoped tools and memory, without changing which engine runs
@@ -71,6 +72,8 @@ The offline `index_builder` turns a corpus into the searchable sparse/dense inde
 ## Search engine
 
 The search agent classifies each request, tries internal retrieval first, and falls through to web search when evidence is weak. It also exposes a dedicated retrieval-only surface at `POST /search/send-search-message` (the **Search** page, `/search`). See [Search engine](docs/search-engine.md) for capabilities and request routing.
+
+A request may name one of seventeen **search domains** — `finance`, `academic`, `legal`, `health`, and so on — on `POST /api/agent` or from the Assist page; `GET /api/search-domains` lists them. A domain appends a fixed topic hint to the query and selects the capability that answers it, which is web search for most and a keyless public data tool for the six that return structured records. It is a query hint, not a result filter.
 
 ## Chat engine
 
