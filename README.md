@@ -73,7 +73,7 @@ The offline `index_builder` turns a corpus into the searchable sparse/dense inde
 
 The search agent classifies each request, tries internal retrieval first, and falls through to web search when evidence is weak. It also exposes a dedicated retrieval-only surface at `POST /search/send-search-message` (the **Search** page, `/search`). See [Search engine](docs/search-engine.md) for capabilities and request routing.
 
-A request may name a **search domain** — `finance`, `academic`, `legal`, `health`, and so on — on `POST /api/agent` or from the Assist page; `GET /api/search-domains` lists all seventeen. Sixteen carry a topic hint, which is appended to the query; `general` is the default and adds nothing. The domain also selects the capability that answers the request, which is web search for most and a keyless public data tool for the six that return structured records. The hint steers the query; it is not a result filter.
+A request may name a **search domain** — `finance`, `academic`, `legal`, `health`, and so on — on `POST /api/agent` or from the Assist page; `GET /api/search-domains` lists all seventeen. Sixteen carry a topic hint, which is appended to the query; `general` is the default and adds nothing. The hint steers the query; it is not a result filter. A non-`general` domain is only honoured by the `search_tool` and `hybrid_search` modes, or by auto when `mode` is omitted; any other mode rejects it with a 400 rather than ignoring it silently. The same taxonomy also routes the agent's own `search_domain` tool to a capability — web search, or one of the keyless public data tools for the six that return structured records — but that is the tool path, not this one.
 
 ## Chat engine
 
