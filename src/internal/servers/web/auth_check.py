@@ -119,6 +119,7 @@ _INLINE_GUARDS = _AUTH_DEPENDENCIES | {
         "src.internal.servers.query_and_chat.search_backend",
         "_authenticated_search_filters",
     ),
+    ("src.internal.servers.web.ws_channel", "authenticate_ws"),
 }
 
 
@@ -195,10 +196,19 @@ def check_router_auth(
                 unguarded.append(f"UNKNOWN {path}")
                 continue
             registered.setdefault(path, set()).update(methods)
-            guarded = isinstance(route, APIRoute) and (
-                _has_auth_dependency(route.dependant)
-                or _has_inline_guard(route.endpoint)
-            )
+            if isinstance(route, APIRoute):
+                guarded = _has_auth_dependency(route.dependant) or _has_inline_guard(
+                    route.endpoint
+                )
+            elif isinstance(route, WebSocketRoute):
+                # A socket cannot carry a FastAPI auth dependency -- there is no
+                # response to fail with -- so it authenticates inline, from a
+                # single-use token. Recognise that the same way, rather than
+                # declaring the path public: it is authenticated, not public,
+                # and the allowlist would make this audit pass by lying.
+                guarded = _has_inline_guard(route.endpoint)
+            else:
+                guarded = False
             for method in sorted(methods):
                 if method in public.get(path, set()):
                     logger.info("[auth_check] public %s %s", method, path)

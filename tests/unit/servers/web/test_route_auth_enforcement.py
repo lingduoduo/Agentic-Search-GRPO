@@ -155,3 +155,28 @@ def test_unused_nested_guard_is_not_authentication():
 
     with pytest.raises(RuntimeError, match="GET /unused"):
         check_router_auth(app, [])
+
+
+def test_unguarded_websocket_route_still_fails():
+    """The socket branch must not become a hole while becoming reachable."""
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.websocket("/ws/open")
+    async def open_socket(websocket):  # pragma: no cover - never accepted
+        await websocket.accept()
+
+    with pytest.raises(RuntimeError, match="WEBSOCKET /ws/open"):
+        check_router_auth(app, [])
+
+
+def test_websocket_route_guarded_inline_passes():
+    """A socket authenticates inline; it cannot carry an auth dependency."""
+    from src.internal.servers.web.ws_channel import authenticate_ws
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.websocket("/ws/guarded")
+    async def guarded_socket(websocket):  # pragma: no cover - never accepted
+        await authenticate_ws(websocket)
+
+    check_router_auth(app, [])
