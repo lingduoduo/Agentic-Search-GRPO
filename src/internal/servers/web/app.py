@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets as _secrets
 import uuid as _uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -12,14 +13,14 @@ from itertools import islice
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from src.internal.servers.sse import sse_frame
 from src.internal.servers.sse import sse_response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src.internal.auth import AuthenticatedUser
 from src.internal.servers._auth import caller_may_use_session, make_require_admin
@@ -102,7 +103,15 @@ from src.internal.servers.scim.api import register_scim_exception_handlers
 from src.internal.servers.web.seeding import seed_db
 from src.internal.tools.knowledge_base import seed_tools, tool_knowledge_base
 from src.internal.tools.registry import tool_registry
+from src.internal.servers.redis.redis_pool import WS_TOKEN_TTL_SECONDS
+from src.internal.servers.redis.redis_pool import WsTokenRateLimitExceeded
+from src.internal.servers.redis.redis_pool import store_ws_token
 from src.internal.servers.web.run_driver import AgentRunDriver
+from src.internal.servers.web.ws_channel import WS_CLOSE_UNAUTHENTICATED
+from src.internal.servers.web.ws_channel import RunHandle
+from src.internal.servers.web.ws_channel import authenticate_ws
+from src.internal.servers.web.ws_channel import WsSession
+from src.internal.servers.web.ws_channel import serve
 from src.internal.servers.web.tool_approval import (
     ApprovalConflict,
     ApprovalExpired,
@@ -243,6 +252,11 @@ class SourceDocumentView(BaseModel):
     url: str | None = None
     score: float = 0.0
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class WsTokenResponse(BaseModel):
+    token: str
+    expires_in: int
 
 
 class AgentExperienceRequest(BaseModel):
@@ -1616,6 +1630,7 @@ def create_web_app(
         on_approval=None,
         on_token=None,
         on_claim=None,
+        caller: "AuthenticatedUser | None" = None,
     ) -> AgentExperienceResponse:
         query = request.query.strip()
         if not query:
@@ -1628,7 +1643,10 @@ def create_web_app(
         _reject_domain_for_mode(domain, request.mode)
         hook_metadata: dict[str, object] = {}
 
-        auth_user = _optional_user_from_request(http_request, db)
+        # `caller` is supplied by transports that do not authenticate from
+        # request headers -- the WebSocket channel authenticates from a
+        # single-use token, so there is nothing on the socket to resolve.
+        auth_user = caller or _optional_user_from_request(http_request, db)
         # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
         # needs user_id, which comes from capabilities; memory selection
         # therefore sees the raw query.
@@ -2057,6 +2075,125 @@ def create_web_app(
             raise HTTPException(status_code=410, detail="Approval expired") from exc
         return ToolApprovalDecisionResponse(id=approval_id, decision=request.decision)
 
+    @app.websocket("/api/agent/ws")
+    async def agent_ws(websocket: WebSocket) -> None:
+        """Bidirectional control channel for one agent run.
+
+        Authenticates from a single-use token, then carries the same events
+        /api/agent/stream emits, driven by the same AgentRunDriver and
+        resolving approvals through the same broker.
+        """
+        user_id = await authenticate_ws(websocket)
+        caller = _ws_caller(user_id, db) if user_id else None
+        if caller is None:
+            # Either no valid token, or the row it names is gone or inactive.
+            await websocket.close(code=WS_CLOSE_UNAUTHENTICATED)
+            return
+
+        async def start_run(session: WsSession, message: dict) -> None:
+            if session._run is not None:
+                await session.error("A run is already in flight", code=409)
+                return
+            try:
+                request = AgentExperienceRequest(**message.get("request", {}))
+            except ValidationError as exc:
+                await session.error(
+                    f"Invalid request: {exc.error_count()} errors", code=400
+                )
+                return
+
+            driver = AgentRunDriver(_uuid.uuid4().hex)
+            await session.send({"type": "session.started", "run_id": driver.run_id})
+
+            async def on_trace(event: ControlFlowEvent) -> None:
+                await driver.on_trace(_control_flow_event_view(event).model_dump())
+
+            async def on_approval(approval_request):
+                return await _request_tool_approval(
+                    websocket.app.state.tool_approval_broker,
+                    session.user_id,
+                    approval_request,
+                    driver.queue,
+                )
+
+            async def pump() -> None:
+                events = driver.run(
+                    _run_agent_impl(
+                        request,
+                        websocket,
+                        request_id=driver.run_id,
+                        on_turn=driver.on_turn,
+                        on_trace=on_trace,
+                        on_approval=on_approval,
+                        on_claim=driver.on_claim,
+                        caller=caller,
+                    ),
+                    finalize=lambda result: _terminal_events(driver.run_id, result),
+                    on_error=_error_event,
+                )
+                try:
+                    async for event in events:
+                        await session.send({**event, "run_id": driver.run_id})
+                finally:
+                    session._run = None
+
+            session._run = RunHandle(driver.run_id, asyncio.create_task(pump()))
+
+        async def submit_approval(session: WsSession, message: dict) -> None:
+            # Function-local, matching the HTTP approval endpoint above.
+            from src.agents.tool import ApprovalDecision
+
+            approval_id = message.get("approval_id")
+            decision = message.get("decision")
+            if not approval_id or not decision:
+                await session.error("approval_id and decision are required", code=400)
+                return
+            try:
+                await websocket.app.state.tool_approval_broker.decide(
+                    approval_id,
+                    session.user_id,
+                    ApprovalDecision(decision),
+                )
+            except ValueError:
+                await session.error("Unknown decision", code=400)
+            except ApprovalForbidden:
+                await session.error("Approval forbidden", code=403)
+            except ApprovalNotFound:
+                await session.error("Approval not found", code=404)
+            except ApprovalConflict:
+                await session.error("Approval already decided", code=409)
+            except ApprovalExpired:
+                await session.error("Approval expired", code=410)
+
+        await serve(
+            websocket,
+            user_id=caller.id,
+            start_run=start_run,
+            submit_approval=submit_approval,
+        )
+
+    @app.post("/api/agent/ws-token", response_model=WsTokenResponse)
+    async def mint_ws_token(http_request: Request) -> WsTokenResponse:
+        """Mint a short-lived, single-use token for the WebSocket channel.
+
+        The socket cannot carry the session cookie through a FastAPI
+        dependency, so authentication happens here, over ordinary HTTP, and the
+        socket presents the resulting token exactly once.
+        """
+        user = _require_auth(http_request, db)
+        token = _secrets.token_urlsafe(32)
+        try:
+            await store_ws_token(token, user.id)
+        except WsTokenRateLimitExceeded as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - Redis down, any driver error
+            logger.warning("ws-token mint failed: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="WebSocket transport unavailable",
+            ) from exc
+        return WsTokenResponse(token=token, expires_in=WS_TOKEN_TTL_SECONDS)
+
     @app.post("/api/agent/stream")
     async def stream_agent(
         request: AgentExperienceRequest,
@@ -2106,6 +2243,29 @@ def create_web_app(
         return sse_response(_generate())
 
     return app
+
+
+def _ws_caller(user_id: str, store: AgenticSearchStore) -> "AuthenticatedUser | None":
+    """Rebuild a caller from a WebSocket token's subject.
+
+    The token carries only an id, so group membership -- which drives ACL --
+    must come from the store. Reading it at connect time rather than trusting
+    the mint is also what keeps a socket's access equal to the same user's over
+    SSE after their groups change.
+    """
+    record = store.get_user(user_id)
+    if (
+        record is None
+        or not record.metadata.get("is_active", True)
+        or not store.get_user_active(user_id)
+    ):
+        return None
+    return AuthenticatedUser(
+        id=user_id,
+        email=record.email,
+        group_ids=frozenset(store.list_group_ids_for_user(user_id)),
+        metadata={"role": record.metadata.get("role", "basic")},
+    )
 
 
 def _terminal_events(run_id: str, result: "AgentExperienceResponse") -> list[dict]:
