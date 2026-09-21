@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC
+from datetime import timezone
 
 import pytest
 
@@ -141,7 +141,7 @@ async def test_approval_decisions(decision, code, executions):
     assert requests[0].tool_name == "mutate"
     assert requests[0].arguments == {"value": 7}
     assert requests[0].approval_id
-    assert requests[0].created_at.tzinfo is UTC
+    assert requests[0].created_at.tzinfo is timezone.utc
     assert requests[0].expires_at > requests[0].created_at
     result = _trace(output)[0]
     assert result["error_code"] == code

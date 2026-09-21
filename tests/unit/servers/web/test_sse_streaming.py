@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 import pytest
@@ -57,7 +57,7 @@ def _answer_result(question: str) -> AnswerGenerationResult:
 def _approval_request(approval_id: str):
     from src.agents.tool import ToolApprovalRequest
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     return ToolApprovalRequest(
         approval_id=approval_id,
         tool_name="create_ticket",
@@ -393,7 +393,7 @@ def test_stream_tool_approval_can_resume_same_request(monkeypatch, tmp_path):
         assert on_turn is not None
         for turn in range(100):
             await on_turn(turn, "queued_tool", 0)
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         decision = await on_approval(
             ToolApprovalRequest(
                 approval_id="approval-1",

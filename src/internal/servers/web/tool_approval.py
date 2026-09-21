@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from src.agents.tool import ApprovalDecision, ToolApprovalRequest
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class ToolApprovalBroker:
             id=request.approval_id,
             tool_name=request.tool_name,
             arguments=sanitize_tool_arguments(request.arguments),
-            expires_at=request.expires_at.astimezone(UTC)
+            expires_at=request.expires_at.astimezone(timezone.utc)
             .isoformat()
             .replace("+00:00", "Z"),
         )
@@ -143,11 +143,16 @@ class ToolApprovalBroker:
         try:
             if on_registered is not None:
                 on_registered(view)
-            remaining = (request.expires_at - datetime.now(UTC)).total_seconds()
+            remaining = (
+                request.expires_at - datetime.now(timezone.utc)
+            ).total_seconds()
             timeout = max(0.0, min(self._timeout_seconds, remaining))
             try:
                 decision = await asyncio.wait_for(asyncio.shield(future), timeout)
-            except TimeoutError:
+            # asyncio.TimeoutError, not the builtin: 3.11 made them the same
+            # object, but on 3.10 -- the floor pyproject declares -- they are
+            # distinct and the builtin does not catch this.
+            except asyncio.TimeoutError:
                 async with self._lock:
                     if not future.done():
                         future.set_result(ApprovalDecision.EXPIRED)
@@ -199,7 +204,7 @@ class ToolApprovalBroker:
                     raise ApprovalForbidden(approval_id)
                 if pending.future.done():
                     raise ApprovalConflict(approval_id)
-                if datetime.now(UTC) >= pending.expires_at:
+                if datetime.now(timezone.utc) >= pending.expires_at:
                     pending.future.set_result(ApprovalDecision.EXPIRED)
                     self.counters["expired"] += 1
                     raise ApprovalExpired(approval_id)
