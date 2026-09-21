@@ -79,3 +79,37 @@ def test_no_module_imports_a_name_newer_than_the_supported_floor():
         f"these need Python newer than the declared floor {floor_text}: "
         + "; ".join(sorted(offenders))
     )
+
+
+def _ci_unit_test_matrix() -> list[tuple[int, int]]:
+    """The Python versions the unit-test job runs on.
+
+    Parsed with a regex rather than PyYAML: pyyaml is importable here but is
+    not a declared dependency, and reaching for an undeclared import is the
+    mistake #607 fixed.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    block = re.search(
+        r"unit-tests:.*?python-version:\s*\[([^\]]+)\]", workflow, re.DOTALL
+    )
+    assert block, "cannot find the unit-test job's python-version matrix"
+    return [
+        (int(major), int(minor))
+        for major, minor in re.findall(r'"(\d+)\.(\d+)"', block.group(1))
+    ]
+
+
+def test_ci_runs_the_floor_it_claims_to_support():
+    """Testing only the newest version is how 3.11-only code reached main.
+
+    A static guard catches names that do not exist. It cannot catch behaviour
+    that differs -- `asyncio.TimeoutError` merging into the builtin in 3.11, or
+    `sum()` gaining compensation in 3.12 -- and only running there does.
+    """
+    floor = _python_floor()
+    matrix = _ci_unit_test_matrix()
+
+    assert floor in matrix, (
+        f"requires-python declares {floor[0]}.{floor[1]} but CI runs "
+        f"{['.'.join(map(str, v)) for v in matrix]}"
+    )
