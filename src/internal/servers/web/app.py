@@ -102,6 +102,7 @@ from src.internal.servers.scim.api import register_scim_exception_handlers
 from src.internal.servers.web.seeding import seed_db
 from src.internal.tools.knowledge_base import seed_tools, tool_knowledge_base
 from src.internal.tools.registry import tool_registry
+from src.internal.servers.web.run_driver import AgentRunDriver
 from src.internal.servers.web.tool_approval import (
     ApprovalConflict,
     ApprovalExpired,
@@ -2071,122 +2072,67 @@ def create_web_app(
           {"type": "error",    "detail": "..."}           — on failure
         """
 
-        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=100)
-        dropped_trace_events = 0
-        dropped_claim_events = 0
+        driver = AgentRunDriver(_uuid.uuid4().hex)
         auth_user = _optional_user_from_request(http_request, db)
-        request_id = _uuid.uuid4().hex
-        loop = asyncio.get_running_loop()
-
-        async def on_turn(turn: int, tool_name: "str | None", doc_count: int) -> None:
-            text = (
-                f"{tool_name} · {doc_count} docs" if tool_name else "writing answer..."
-            )
-            await queue.put({"type": "progress", "turn": turn, "text": text})
-
-        def _offer(item: dict) -> None:
-            # The terminal answer event still carries the full text, so a
-            # dropped claim doesn't lose data — but it's worth counting.
-            nonlocal dropped_claim_events
-            try:
-                queue.put_nowait(item)
-            except asyncio.QueueFull:
-                dropped_claim_events += 1
-
-        def on_claim(text: str) -> None:
-            # Called from the generate_answer worker thread (see #547's
-            # asyncio.to_thread offload in AgenticRAGLoop.run), so hop back to
-            # the loop before touching the queue — put_nowait is not
-            # thread-safe.
-            loop.call_soon_threadsafe(_offer, {"type": "claim", "text": text})
 
         async def on_trace(event: ControlFlowEvent) -> None:
-            nonlocal dropped_trace_events
-            try:
-                queue.put_nowait(
-                    {
-                        "type": "trace",
-                        "event": _control_flow_event_view(event).model_dump(),
-                    }
-                )
-            except asyncio.QueueFull:
-                dropped_trace_events += 1
+            await driver.on_trace(_control_flow_event_view(event).model_dump())
 
         async def on_approval(approval_request):
             return await _request_tool_approval(
                 http_request.app.state.tool_approval_broker,
                 auth_user.id,
                 approval_request,
-                queue,
+                driver.queue,
             )
 
         async def _generate():
-            task = asyncio.create_task(
+            events = driver.run(
                 _run_agent_impl(
                     request,
                     http_request,
-                    request_id=request_id,
-                    on_turn=on_turn,
+                    request_id=driver.run_id,
+                    on_turn=driver.on_turn,
                     on_trace=on_trace,
                     on_approval=on_approval if auth_user is not None else None,
-                    on_claim=on_claim,
-                )
+                    on_claim=driver.on_claim,
+                ),
+                finalize=lambda result: _terminal_events(driver.run_id, result),
+                on_error=_error_event,
             )
-            try:
-                while not task.done():
-                    try:
-                        item = await asyncio.wait_for(queue.get(), timeout=0.05)
-                        yield sse_frame(item)
-                    except asyncio.TimeoutError:
-                        continue
-                while not queue.empty():
-                    yield sse_frame(queue.get_nowait())
-                result: AgentExperienceResponse = task.result()
-                yield sse_frame({"type": "answer", "text": result.answer})
-                yield sse_frame(
-                    {
-                        "type": "done",
-                        "request_id": request_id,
-                        "session_id": result.session_id,
-                        "citations": result.citations,
-                        "documents": [d.model_dump() for d in result.documents],
-                        "intent": result.intent,
-                        "clarification": result.clarification,
-                        "route": result.hook_metadata.get("route"),
-                        "route_degraded": result.hook_metadata.get("route_degraded"),
-                        "tool_calls": [tc.model_dump() for tc in result.tool_calls],
-                        "control_flow_trace": [
-                            event.model_dump() for event in result.control_flow_trace
-                        ],
-                    }
-                )
-                if dropped_trace_events:
-                    logger.warning(
-                        "dropped %d live control-flow trace events",
-                        dropped_trace_events,
-                    )
-                if dropped_claim_events:
-                    logger.warning(
-                        "dropped %d live claim events",
-                        dropped_claim_events,
-                    )
-            except BaseException as exc:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                if isinstance(exc, asyncio.CancelledError):
-                    return  # client disconnected
-                if isinstance(exc, HTTPException):
-                    yield sse_frame({"type": "error", "detail": exc.detail})
-                else:
-                    yield sse_frame({"type": "error", "detail": str(exc)})
+            async for event in events:
+                yield sse_frame(event)
 
         return sse_response(_generate())
 
     return app
+
+
+def _terminal_events(run_id: str, result: "AgentExperienceResponse") -> list[dict]:
+    """The answer/done pair that closes a successful run, on any transport."""
+    return [
+        {"type": "answer", "text": result.answer},
+        {
+            "type": "done",
+            "request_id": run_id,
+            "session_id": result.session_id,
+            "citations": result.citations,
+            "documents": [d.model_dump() for d in result.documents],
+            "intent": result.intent,
+            "clarification": result.clarification,
+            "route": result.hook_metadata.get("route"),
+            "route_degraded": result.hook_metadata.get("route_degraded"),
+            "tool_calls": [tc.model_dump() for tc in result.tool_calls],
+            "control_flow_trace": [
+                event.model_dump() for event in result.control_flow_trace
+            ],
+        },
+    ]
+
+
+def _error_event(exc: BaseException) -> dict:
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    return {"type": "error", "detail": detail}
 
 
 def _ensure_session(
