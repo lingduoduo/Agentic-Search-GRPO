@@ -31,11 +31,11 @@
 **Interfaces:**
 - Produces: a driver owning `run_id`, the bounded `asyncio.Queue(maxsize=100)`, the `on_turn`/`on_claim`/`on_trace`/`on_approval` callbacks, the drop counters, and the `_run_agent_impl` task. It yields **event dicts**; it must not know about SSE or WebSocket.
 
-- [ ] **Step 1: Lift the closure verbatim**
+- [x] **Step 1: Lift the closure verbatim**
 
 Move the queue, callbacks and task construction out of `stream_agent`. Keep `loop.call_soon_threadsafe` in `on_claim` — claims arrive from the `asyncio.to_thread` worker (#547) — and keep `put_nowait` + drop counters for trace/claim, which is the backpressure contract.
 
-- [ ] **Step 2: Repoint the SSE endpoint at it**
+- [x] **Step 2: Repoint the SSE endpoint at it**
 
 `stream_agent` becomes: build a driver, drain its events, `sse_frame` each one. The terminal `answer`/`done`/`error` framing stays in the endpoint for now.
 
@@ -52,11 +52,11 @@ Move the queue, callbacks and task construction out of `stream_agent`. Keep `loo
 **Interfaces:**
 - Produces: `POST /api/agent/ws-token` → `{"token": ...}`, authenticated with the same helper the approval endpoint uses (`_require_auth`).
 
-- [ ] **Step 1: The endpoint**
+- [x] **Step 1: The endpoint**
 
 Generate a token (`secrets.token_urlsafe`), call `store_ws_token(token, user.id)`, return it. Map `WsTokenRateLimitExceeded` → **429**, and a Redis connection failure → **503**.
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
 
 401 anonymous; 200 authenticated; 429 past `WS_TOKEN_RATE_LIMIT_MAX`; 503 with Redis down. Use a fake Redis rather than requiring a live one — the unit suite must not gain a service dependency.
 
@@ -70,13 +70,13 @@ Generate a token (`secrets.token_urlsafe`), call `store_ws_token(token, user.id)
 - Modify: `src/internal/servers/web/auth_check.py`
 - Test: `tests/unit/servers/web/test_route_auth_enforcement.py`
 
-- [ ] **Step 1: Stop rejecting every WebSocket route**
+- [x] **Step 1: Stop rejecting every WebSocket route**
 
 `guarded` is `isinstance(route, APIRoute) and (...)`, so a `WebSocketRoute` is always unguarded and `check_router_auth` **raises**, meaning the app will not start. Allow a `WebSocketRoute` to be guarded by `_has_inline_guard(route.endpoint)`, which already works on any callable.
 
 Do **not** add the socket to `PUBLIC_ENDPOINT_SPECS`. It is token-authenticated, not public; the allowlist would make the audit pass by lying.
 
-- [ ] **Step 2: Prove both directions**
+- [x] **Step 2: Prove both directions**
 
 A WebSocket route with an inline token guard passes. A WebSocket route **without** one still raises — otherwise this step has traded one dormant branch for a silent hole.
 
@@ -94,23 +94,23 @@ A WebSocket route with an inline token guard passes. A WebSocket route **without
 **Interfaces:**
 - Produces: `WS /api/agent/ws`; client events `session.start`, `approval.submit`, `session.cancel`, `ping`; server events `session.started`, `progress`, `claim`, `trace`, `tool_call`, `approval_required`, `answer`, `error`, `done`, `pong`.
 
-- [ ] **Step 1: Authenticate and accept**
+- [x] **Step 1: Authenticate and accept**
 
 Read `token` from the query string, `retrieve_ws_token_data` (GETDEL — single use), bind `user_id` to the connection, else close without starting anything. Reject a second use of the same token.
 
-- [ ] **Step 2: Dispatch client events**
+- [x] **Step 2: Dispatch client events**
 
 A small table, not a chain of `if`s. Unknown `type` → `error` with a code, never a disconnect. Malformed JSON → `error`, not a traceback.
 
-- [ ] **Step 3: `session.start` → drive a run**
+- [x] **Step 3: `session.start` → drive a run**
 
 Build the Task-1 driver, reply `session.started` with `run_id`, then pump its events with `send_json`. Do not re-implement the run loop.
 
-- [ ] **Step 4: Approvals across the socket**
+- [x] **Step 4: Approvals across the socket**
 
 `approval_required` goes out from the same `on_approval` hook. `approval.submit` calls `broker.decide(...)`. Map `ApprovalNotFound`/`Forbidden`/`Conflict`/`Expired` onto `error` events carrying 404/403/409/410 as a `code`, so the two transports cannot drift.
 
-- [ ] **Step 5: Cancel, terminal cleanup, disconnect**
+- [x] **Step 5: Cancel, terminal cleanup, disconnect**
 
 `session.cancel` cancels the run task. Terminal `done`/`error` drops the run and its queue. A mid-run disconnect cancels the run and leaves no orphan tasks or futures.
 
@@ -123,11 +123,11 @@ Build the Task-1 driver, reply `session.started` with `run_id`, then pump its ev
 **Files:**
 - Test: `tests/unit/servers/web/test_ws_channel.py`
 
-- [ ] **Step 1: Same events, same shapes**
+- [x] **Step 1: Same events, same shapes**
 
 Run the same stubbed agent through SSE and through the socket; assert the event sequence and payload shapes match, modulo framing. This is the guard against the two transports drifting.
 
-- [ ] **Step 2: Same approval semantics**
+- [x] **Step 2: Same approval semantics**
 
 Assert the four approval error cases produce the same distinctions on both transports.
 
@@ -138,3 +138,38 @@ Assert the four approval error cases produce the same distinctions on both trans
 ### Deliberately deferred
 
 A frontend client for the socket. The backend must prove itself first, and the existing UI keeps working on SSE throughout — which is the whole point of not replacing it yet.
+
+
+---
+
+## What changed during implementation
+
+Two deviations from this plan, both recorded because they are the kind a
+reviewer should see rather than infer from the diff.
+
+**Task 1 Step 2 said the terminal events stay in the endpoint.** They moved to
+module-level `_terminal_events` / `_error_event` instead. Leaving them behind
+would have forced the socket to rebuild the `answer`/`done` payload, which is
+precisely the drift the spec exists to prevent; the parity test in Task 5 is
+only meaningful because both transports go through one builder.
+
+**Task 4 Step 1 put authentication inside `serve()`.** It moved into the route
+body. `_has_inline_guard` scans an endpoint's own source, so a guard hidden
+behind a dispatcher is invisible to the audit -- the app failed to start with
+exactly the `RuntimeError` Task 3 predicted, which is the plan catching its own
+mistake. Authenticating where the route can be read to do so is also plainer.
+
+**One thing the spec missed entirely.** `_run_agent_impl` derives identity from
+request headers, but the socket authenticates by token, so a WS run would have
+executed anonymously -- wrong attribution, and wrong ACL, since `group_ids`
+drives it. `_run_agent_impl` now takes an optional `caller`, and `_ws_caller`
+rebuilds the identity from the store rather than the token, which carries only
+a subject. Reading groups at connect time is also strictly better than trusting
+the mint: it keeps a socket's access equal to the same user's over SSE after
+their groups change.
+
+**Verification.** 4345 passed on 3.12 (4327 before, +18). The 3.10 interpreter
+available here cannot run the web suite -- `boto3` is missing from that env,
+pre-existing and unrelated -- so the new modules were checked with `py_compile`
+on 3.10 and by the version-floor guard instead. That is weaker than running
+them, and worth saying plainly.
