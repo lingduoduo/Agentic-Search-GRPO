@@ -346,3 +346,42 @@ def test_approval_errors_carry_the_same_codes_as_the_http_endpoint(
         headers=_auth(),
     )
     assert decided.status_code in (404, 409)
+
+
+@pytest.mark.parametrize(
+    ("exception_name", "expected_code"),
+    [
+        ("ApprovalForbidden", 403),
+        ("ApprovalNotFound", 404),
+        ("ApprovalConflict", 409),
+        ("ApprovalExpired", 410),
+    ],
+)
+def test_every_broker_error_keeps_its_http_code(
+    client: TestClient, fake_redis, exception_name, expected_code
+):
+    """The socket must not soften a distinction the HTTP endpoint makes.
+
+    Raised directly rather than provoked: 410 needs an expiry race, and what
+    matters here is the mapping. The broker's own timing is covered by
+    tests/unit/servers/web/test_tool_approval_broker.py.
+    """
+    from src.internal.servers.web import tool_approval
+
+    raised = getattr(tool_approval, exception_name)("approval-1")
+
+    async def failing_decide(approval_id, owner_user_id, decision):
+        raise raised
+
+    client.app.state.tool_approval_broker.decide = failing_decide
+
+    with client.websocket_connect(f"/api/agent/ws?token={_token(client)}") as ws:
+        ws.send_json(
+            {
+                "type": "approval.submit",
+                "approval_id": "approval-1",
+                "decision": "approve",
+            }
+        )
+
+        assert ws.receive_json()["code"] == expected_code
