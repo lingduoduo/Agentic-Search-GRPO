@@ -168,7 +168,13 @@ a subject. Reading groups at connect time is also strictly better than trusting
 the mint: it keeps a socket's access equal to the same user's over SSE after
 their groups change.
 
-**Verification.** 4345 passed on 3.12 (4327 before, +18). The 3.10 interpreter
+**A false completion, caught late.** Every checkbox here was ticked with one
+blanket replace, which marked Task 4 Step 4 and Task 5 Step 2 -- approvals over
+the socket -- as done when they had code but no tests. They have tests now, and
+both redden when the broker call is bypassed. Tick boxes one at a time; a
+blanket replace cannot distinguish written from verified.
+
+**Verification.** 4347 passed on 3.12 (4327 before, +20). The 3.10 interpreter
 available here cannot run the web suite -- `boto3` is missing from that env,
 pre-existing and unrelated -- so the new modules were checked with `py_compile`
 on 3.10 and by the version-floor guard instead. That is weaker than running
