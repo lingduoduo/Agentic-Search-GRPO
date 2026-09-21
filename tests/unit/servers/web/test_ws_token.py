@@ -99,3 +99,25 @@ def test_redis_unavailable_reports_the_transport_unavailable(
     response = client.post("/api/agent/ws-token", headers=_auth())
 
     assert response.status_code == 503
+
+
+def test_token_does_not_survive_its_ttl(client: TestClient, fake_redis: FakeRedis):
+    """A token past WS_TOKEN_TTL_SECONDS authenticates nobody."""
+    token = client.post("/api/agent/ws-token", headers=_auth()).json()["token"]
+
+    fake_redis.advance(redis_pool.WS_TOKEN_TTL_SECONDS + 1)
+
+    assert asyncio.run(redis_pool.retrieve_ws_token_data(token)) is None
+
+
+def test_an_expired_token_is_refused_by_the_socket(
+    client: TestClient, fake_redis: FakeRedis
+):
+    from starlette.websockets import WebSocketDisconnect
+
+    token = client.post("/api/agent/ws-token", headers=_auth()).json()["token"]
+    fake_redis.advance(redis_pool.WS_TOKEN_TTL_SECONDS + 1)
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/api/agent/ws?token={token}") as ws:
+            ws.receive_json()

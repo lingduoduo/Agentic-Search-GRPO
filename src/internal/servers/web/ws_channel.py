@@ -32,6 +32,27 @@ CLIENT_EVENTS = frozenset(
     {"session.start", "approval.submit", "session.cancel", "ping"}
 )
 
+# Every event this transport can send. Kept here, and pinned by a test against
+# what the code actually emits, because a vocabulary that lists something
+# nothing produces is how a protocol starts advertising capabilities it lacks.
+#
+# `tool_call` is deliberately absent: the agent stream reports tool calls in
+# `done.tool_calls`, not as a streamed event. A separate `tool_call` event
+# exists only on /tool/send-tool-message, which is a different surface.
+SERVER_EVENTS = frozenset(
+    {
+        "session.started",
+        "progress",
+        "claim",
+        "trace",
+        "approval_required",
+        "answer",
+        "error",
+        "done",
+        "pong",
+    }
+)
+
 
 async def authenticate_ws(websocket: WebSocket) -> str | None:
     """Return the user id a single-use token belongs to, or None.

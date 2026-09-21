@@ -44,10 +44,21 @@ give it a second consumer.
 `ping`
 
 **server → client:** `session.started`, `progress`, `claim`, `trace`,
-`tool_call`, `approval_required`, `answer`, `error`, `done`, `pong`
+`approval_required`, `answer`, `error`, `done`, `pong`
 
-Seven of the ten server events already exist verbatim as SSE `type` values;
-only `session.started`, `pong` are new, and `token` is deliberately excluded.
+Seven of the nine already exist verbatim as SSE `type` values; only
+`session.started` and `pong` are new, and `token` is deliberately excluded.
+
+**Corrected during implementation: `tool_call` is not one of them.** This spec
+first listed it, and the agent stream never emits such an event -- tool calls
+are reported inside `done.tool_calls`. A separate `tool_call` event exists only
+on `/tool/send-tool-message`, a different surface. Listing it would have been
+the exact failure this document warns about two paragraphs below, committed in
+the act of warning about it.
+
+`ws_channel.SERVER_EVENTS` now holds the list, and a test asserts it equals
+what the three modules actually emit -- in both directions, so neither an
+undocumented event nor a documented phantom survives.
 
 **No `token` event.** The grounded agent's meaningful streaming unit is the
 claim — `/api/agent/stream` emits `claim` because the answer is the join of

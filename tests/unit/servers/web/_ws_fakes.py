@@ -14,6 +14,8 @@ class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.counters: dict[str, int] = {}
+        self.expiry: dict[str, int] = {}
+        self.now = 0
 
     def pipeline(self) -> "FakePipeline":
         return FakePipeline(self)
@@ -24,9 +26,22 @@ class FakeRedis:
 
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.values[key] = value
+        if ex is not None:
+            self.expiry[key] = self.now + ex
 
     async def getdel(self, key: str) -> str | None:
+        deadline = self.expiry.get(key)
+        if deadline is not None and self.now >= deadline:
+            # Expired keys are gone, not merely stale.
+            self.values.pop(key, None)
+            self.expiry.pop(key, None)
+            return None
+        self.expiry.pop(key, None)
         return self.values.pop(key, None)
+
+    def advance(self, seconds: int) -> None:
+        """Move this fake's clock, so TTL can be tested without sleeping."""
+        self.now += seconds
 
 
 class FakePipeline:
