@@ -237,6 +237,33 @@ export function submitToolApproval(
   });
 }
 
+/**
+ * Decode an SSE byte stream into typed events.
+ *
+ * The server frames each event as a single `data: <json>` line closed by a
+ * blank line (see src/internal/servers/sse.py), so a frame never spans lines
+ * and this does not reassemble multi-line `data:` runs. It also ignores
+ * `event:`, `id:` and `retry:`, none of which the server emits.
+ */
+async function* readSSE<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice("data:".length).trim();
+      if (payload) yield JSON.parse(payload) as T;
+    }
+  }
+}
+
 export async function* streamAgent(
   request: AgentExperienceRequest,
   init?: Pick<RequestInit, "signal">,
@@ -253,28 +280,7 @@ export async function* streamAgent(
     throw new Error(`Stream request failed: ${response.status}`);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data:")) {
-        const payload = trimmed.slice("data:".length).trim();
-        if (payload) {
-          yield JSON.parse(payload) as SSEEvent;
-        }
-      }
-    }
-  }
+  yield* readSSE<SSEEvent>(response.body);
 }
 
 export function getQueryHistory(
@@ -408,23 +414,7 @@ export async function* sendToolMessage(
   if (!response.ok || !response.body) {
     throw new Error(`Tool stream failed: ${response.status}`);
   }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data:")) {
-        const payload = trimmed.slice("data:".length).trim();
-        if (payload) yield JSON.parse(payload) as ToolStreamEvent;
-      }
-    }
-  }
+  yield* readSSE<ToolStreamEvent>(response.body);
 }
 
 export function getToolHistory(): Promise<{ sessions: ToolSessionSummary[] }> {
@@ -446,23 +436,7 @@ export async function* sendChatMessage(
   if (!response.ok || !response.body) {
     throw new Error(`Chat stream failed: ${response.status}`);
   }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data:")) {
-        const payload = trimmed.slice("data:".length).trim();
-        if (payload) yield JSON.parse(payload) as ChatStreamEvent;
-      }
-    }
-  }
+  yield* readSSE<ChatStreamEvent>(response.body);
 }
 
 export function fetchSearchDomains(): Promise<{

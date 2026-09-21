@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import logging
 import uuid as _uuid
 from collections.abc import AsyncIterator, Callable
@@ -15,6 +14,9 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
+
+from src.internal.servers.sse import sse_frame
+from src.internal.servers.sse import sse_response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -2069,9 +2071,6 @@ def create_web_app(
           {"type": "error",    "detail": "..."}           — on failure
         """
 
-        def _sse(data: dict) -> str:
-            return f"data: {_json.dumps(data)}\n\n"
-
         queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=100)
         dropped_trace_events = 0
         dropped_claim_events = 0
@@ -2137,14 +2136,14 @@ def create_web_app(
                 while not task.done():
                     try:
                         item = await asyncio.wait_for(queue.get(), timeout=0.05)
-                        yield _sse(item)
+                        yield sse_frame(item)
                     except asyncio.TimeoutError:
                         continue
                 while not queue.empty():
-                    yield _sse(queue.get_nowait())
+                    yield sse_frame(queue.get_nowait())
                 result: AgentExperienceResponse = task.result()
-                yield _sse({"type": "answer", "text": result.answer})
-                yield _sse(
+                yield sse_frame({"type": "answer", "text": result.answer})
+                yield sse_frame(
                     {
                         "type": "done",
                         "request_id": request_id,
@@ -2181,18 +2180,11 @@ def create_web_app(
                 if isinstance(exc, asyncio.CancelledError):
                     return  # client disconnected
                 if isinstance(exc, HTTPException):
-                    yield _sse({"type": "error", "detail": exc.detail})
+                    yield sse_frame({"type": "error", "detail": exc.detail})
                 else:
-                    yield _sse({"type": "error", "detail": str(exc)})
+                    yield sse_frame({"type": "error", "detail": str(exc)})
 
-        return StreamingResponse(
-            _generate(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return sse_response(_generate())
 
     return app
 

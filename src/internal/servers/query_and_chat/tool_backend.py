@@ -8,12 +8,10 @@ Parallels search_backend/chat_backend. Endpoints:
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 
 from src.context.models import SearchFilters
 from src.internal.access.capabilities import resolve_capabilities
@@ -25,6 +23,8 @@ from src.internal.memory.working import (
     schedule_compression,
 )
 from src.internal.servers._auth import caller_may_use_session
+from src.internal.servers.sse import sse_frame
+from src.internal.servers.sse import sse_response
 from src.internal.servers.query_and_chat.models import (
     SendToolMessageRequest,
     ToolAgentMessageResponse,
@@ -151,9 +151,6 @@ def create_tool_router(
                 )
 
         async def _gen() -> AsyncGenerator[str, None]:
-            def _sse(data: dict) -> str:
-                return f"data: {_json.dumps(data)}\n\n"
-
             queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=100)
 
             async def on_turn(turn: int, tool_name, doc_count: int) -> None:
@@ -179,18 +176,18 @@ def create_tool_router(
                 while not task.done():
                     try:
                         item = await asyncio.wait_for(queue.get(), timeout=0.05)
-                        yield _sse(item)
+                        yield sse_frame(item)
                     except asyncio.TimeoutError:
                         continue
                 while not queue.empty():
-                    yield _sse(queue.get_nowait())
+                    yield sse_frame(queue.get_nowait())
 
                 answer, tool_calls, num_turns, truncated = task.result()
                 store.add_chat_message(session_id, role="assistant", content=answer)
                 for tc in tool_calls:
-                    yield _sse({"type": "tool_call", **tc.model_dump()})
-                yield _sse({"type": "answer", "text": answer})
-                yield _sse(
+                    yield sse_frame({"type": "tool_call", **tc.model_dump()})
+                yield sse_frame({"type": "answer", "text": answer})
+                yield sse_frame(
                     {
                         "type": "done",
                         "session_id": session_id,
@@ -201,16 +198,9 @@ def create_tool_router(
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Streaming tool agent failed for: %r", body.message)
-                yield _sse({"type": "error", "detail": str(exc)})
+                yield sse_frame({"type": "error", "detail": str(exc)})
 
-        return StreamingResponse(
-            _gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return sse_response(_gen())
 
     @router.get("/tool-history")
     def tool_history(
