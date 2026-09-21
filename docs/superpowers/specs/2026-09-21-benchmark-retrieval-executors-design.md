@@ -59,8 +59,19 @@ That bound matters, because if the legs held the GIL the 2-worker pool would
 buy nothing. Measured separately: `faiss.IndexFlatIP.search` over 200k x 128
 vectors gives **2.01x** on two threads with OpenMP pinned to one thread, and
 **1.55x** at the production OpenMP default (8 threads, 8 cores) -- real, but
-diminished, because FAISS already saturates the cores. The sparse leg was
-**not** verified; pyserini needs a Lucene index and none exists locally.
+diminished, because FAISS already saturates the cores.
+
+The sparse leg was verified the same way, against a Lucene index built over the
+5,183-document scifact corpus and driven through the production
+`SparseRetriever.retrieve`: **1.71x** on two threads. Both legs release the GIL,
+so the `sleep` numbers below are the representative ones.
+
+Running pyserini locally on Apple Silicon needs two things that are easy to miss,
+because `import pyserini` succeeds either way and only the first real call fails:
+the JVM must match the interpreter's architecture (the default `java` here is
+x86_64 Corretto 17 against an arm64 Python, which fails in `dlopen`), and Lucene
+needs Java 21+ (class file 65 -- Corretto 18 tops out at 62). The probe ran with
+`JAVA_HOME` pointed at the Homebrew arm64 Java 25.
 
 ## Findings
 
@@ -94,8 +105,10 @@ degrade gracefully: it collapses between 16 and 32 concurrent requests.
 
 ## What this does not establish
 
-Synthetic task latencies on one 8-core macOS machine. The sparse leg's GIL
-behaviour is unverified. Percentiles come from small samples. The structural
+Synthetic task latencies on one 8-core macOS machine. Percentiles come from
+small samples. The GIL probes used one corpus each (200k random vectors for
+dense, 5,183 scifact documents for sparse); a larger index changes the absolute
+times, though not which side of the GIL the work falls on. The structural
 findings -- per-call pool, no queue, two threads per request, deadline measured
 from submit -- are independent of the numbers.
 

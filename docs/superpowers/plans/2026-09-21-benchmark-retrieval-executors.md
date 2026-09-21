@@ -73,7 +73,9 @@ At an 80ms task: `search` scales linearly to 64 concurrent with wait under 1ms a
 
 - [x] **Step 2: Verify the premise the `search` result depends on**
 
-The 2-worker pool only helps if the legs release the GIL. Probe `faiss.IndexFlatIP.search` directly: 2.01x on two threads with OpenMP pinned to 1, 1.55x at the production default. Record that the sparse leg is unverified — pyserini needs a Lucene index that does not exist locally.
+The 2-worker pool only helps if the legs release the GIL. Probe `faiss.IndexFlatIP.search` directly: 2.01x on two threads with OpenMP pinned to 1, 1.55x at the production default. Then do the same for the sparse leg: build a Lucene index over scifact and drive the production `SparseRetriever.retrieve` — 1.71x. Both legs release the GIL, so the `sleep` numbers are the representative ones.
+
+On Apple Silicon this needs `JAVA_HOME` set to an arm64 JDK at Java 21+; the default `java` is x86_64 and Corretto 18 is too old for Lucene. `import pyserini` succeeds regardless, so the failure surfaces only at the first real call.
 
 - [x] **Step 3: Mutation-check and full suite**
 
