@@ -146,3 +146,117 @@ def test_guarded_result_is_a_coroutine_function():
         return {}
 
     assert inspect.iscoroutinefunction(_ok)
+
+
+async def _no_sleep(_seconds):
+    """Backoff must not slow the suite; the delay itself is not under test."""
+    return None
+
+
+class _SequencedSession:
+    """Replays one queued outcome per request, recording each call."""
+
+    calls: list[dict] = []
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def request(self, method, url, **kwargs):
+        _SequencedSession.calls.append({"method": method, "url": url, **kwargs})
+        outcome = self._outcomes.pop(0) if self._outcomes else 200
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(status=outcome, body=json.dumps({"ok": outcome}))
+
+
+def _install_sequence(monkeypatch, outcomes):
+    _SequencedSession.calls = []
+    shared = _SequencedSession(outcomes)
+
+    class _Aiohttp:
+        @staticmethod
+        def ClientTimeout(total=None):
+            return total
+
+        @staticmethod
+        def ClientSession(timeout=None):
+            return shared
+
+    monkeypatch.setattr(_http, "aiohttp", _Aiohttp)
+    monkeypatch.setattr(_http.asyncio, "sleep", _no_sleep)
+
+
+def test_a_transient_status_is_retried_and_can_succeed(monkeypatch):
+    """The whole point: a 503 that would have worked on the next try."""
+    _install_sequence(monkeypatch, [503, 200])
+
+    result = asyncio.run(get_json("https://example.org/x"))
+
+    assert result == {"ok": 200}
+    assert len(_SequencedSession.calls) == 2
+
+
+def test_retries_stop_at_the_attempt_cap(monkeypatch):
+    _install_sequence(monkeypatch, [503, 503, 503, 200])
+
+    with pytest.raises(PublicDataError, match="HTTP 503"):
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert len(_SequencedSession.calls) == _http._MAX_ATTEMPTS == 3
+
+
+def test_a_non_transient_status_is_not_retried(monkeypatch):
+    """A 404 is an answer, not a blip."""
+    _install_sequence(monkeypatch, [404, 200])
+
+    with pytest.raises(PublicDataError, match="HTTP 404"):
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert len(_SequencedSession.calls) == 1
+
+
+def test_a_network_error_is_retried(monkeypatch):
+    _install_sequence(monkeypatch, [OSError("connection reset"), 200])
+
+    result = asyncio.run(get_json("https://example.org/x"))
+
+    assert result == {"ok": 200}
+    assert len(_SequencedSession.calls) == 2
+
+
+def test_a_post_is_never_retried(monkeypatch):
+    """Retrying a write needs an idempotency guarantee this layer lacks."""
+    _install_sequence(monkeypatch, [503, 200])
+
+    with pytest.raises(PublicDataError, match="HTTP 503"):
+        asyncio.run(
+            _http._fetch(
+                "POST", "https://example.org/x", timeout_seconds=1.0, as_json=True
+            )
+        )
+
+    assert len(_SequencedSession.calls) == 1
+
+
+def test_no_retry_once_the_elapsed_budget_is_spent(monkeypatch):
+    """A caller with a long timeout must not pay it three times over."""
+    _install_sequence(monkeypatch, [503, 200])
+    # `_http.time` is the stdlib module, so this patch is global and asyncio's
+    # internals call it too. A non-exhausting fake keeps those calls from
+    # consuming the scripted values -- an iterator here raises StopIteration
+    # from inside the event loop instead of failing the assertion.
+    scripted = [0.0, _http._RETRY_BUDGET_SECONDS + 1.0]
+    monkeypatch.setattr(
+        _http.time, "monotonic", lambda: scripted.pop(0) if scripted else 1e9
+    )
+
+    with pytest.raises(PublicDataError, match="HTTP 503"):
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert len(_SequencedSession.calls) == 1

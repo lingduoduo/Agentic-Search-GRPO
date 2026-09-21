@@ -9,9 +9,12 @@ Absolute import of the aiohttp shim: this module sits one package deeper than
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
+import re
+import time
 from typing import Any, Callable
 
 from src.context.retrieval.client import aiohttp
@@ -24,6 +27,19 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "AgenticSearch/1.0 (+https://github.com/linghypshen/Agentic-Search)"
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
+
+# Retried because they say "try again", not "no": rate limits and the
+# gateway/unavailable family. Any other 4xx is an answer and repeating it only
+# wastes the turn. Measured need: web.archive.org answers ~2 of 6 identical
+# requests with 503, independent of User-Agent and query parameters.
+_RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = (0.4, 0.8)
+# No retry *starts* after this much wall time. The per-call timeout is a
+# parameter, not a constant -- search_nearby_places passes a much longer
+# Overpass budget -- so an attempt cap alone would let one dead host cost three
+# full timeouts inside an agent turn.
+_RETRY_BUDGET_SECONDS = 15.0
 
 # Upper bound on any single document body handed back to the model. Abstracts
 # and article intros are otherwise long enough to crowd out the rollout budget.
@@ -42,6 +58,12 @@ class PublicDataError(Exception):
     """An upstream call failed. ``guarded`` turns this into {"error": ...}."""
 
 
+def _status_of(error: PublicDataError) -> int | None:
+    """Recover the HTTP status from the message, or None for a network error."""
+    match = re.search(r"returned HTTP (\d{3})", str(error))
+    return int(match.group(1)) if match else None
+
+
 async def _fetch(
     method: str,
     url: str,
@@ -56,19 +78,40 @@ async def _fetch(
     if headers:
         merged.update(headers)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.request(
-                method, url, params=params, data=data, headers=merged
-            ) as response:
-                if response.status >= 400:
-                    raise PublicDataError(f"{url} returned HTTP {response.status}")
-                body = await response.text()
-    except PublicDataError:
-        raise
-    except Exception as exc:
-        logger.debug("public data request to %s failed", url, exc_info=True)
-        raise PublicDataError(f"request to {url} failed: {exc}") from exc
+    # Only GET. Retrying a write needs an idempotency guarantee this layer
+    # cannot make about somebody else's API.
+    attempts = _MAX_ATTEMPTS if method.upper() == "GET" else 1
+    started = time.monotonic()
+    body: str | None = None
+    last_error: PublicDataError | None = None
+
+    for attempt in range(attempts):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.request(
+                    method, url, params=params, data=data, headers=merged
+                ) as response:
+                    if response.status >= 400:
+                        raise PublicDataError(f"{url} returned HTTP {response.status}")
+                    body = await response.text()
+            break
+        except PublicDataError as exc:
+            status = _status_of(exc)
+            if status is not None and status not in _RETRYABLE_STATUSES:
+                raise
+            last_error = exc
+        except Exception as exc:
+            logger.debug("public data request to %s failed", url, exc_info=True)
+            last_error = PublicDataError(f"request to {url} failed: {exc}")
+
+        if attempt + 1 >= attempts:
+            break
+        if time.monotonic() - started >= _RETRY_BUDGET_SECONDS:
+            break
+        await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+
+    if body is None:
+        raise last_error or PublicDataError(f"request to {url} failed")
 
     if not as_json:
         return body
