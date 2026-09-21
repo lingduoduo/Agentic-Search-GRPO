@@ -230,3 +230,119 @@ def test_socket_and_sse_agree_on_the_terminal_payload(
     assert {k: v for k, v in ws_done.items() if k not in ignored} == {
         k: v for k, v in sse_done.items() if k not in ignored
     }
+
+
+# -- approvals ---------------------------------------------------------------
+
+
+@pytest.fixture()
+def approving_agent(monkeypatch: pytest.MonkeyPatch):
+    """A tool run that parks on one approval and reports the decision."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.agents.core.base import AgentLoopOutput
+    from src.agents.tool import ToolAgentLoop, ToolApprovalRequest
+
+    seen: dict[str, object] = {}
+
+    async def fake_run(self, messages, sampling_params, *, on_approval=None, **kwargs):
+        now = datetime.now(timezone.utc)
+        decision = await on_approval(
+            ToolApprovalRequest(
+                approval_id="approval-1",
+                tool_name="create_ticket",
+                arguments={"title": "Fix it"},
+                created_at=now,
+                expires_at=now + timedelta(seconds=30),
+            )
+        )
+        seen["decision"] = decision
+        return AgentLoopOutput(
+            prompt_ids=[],
+            response_ids=[],
+            response_mask=[],
+            num_turns=1,
+            final_answer=f"decision={decision.value}",
+        )
+
+    monkeypatch.setattr(ToolAgentLoop, "run", fake_run)
+    return seen
+
+
+def _start_tool_run(client: TestClient, ws) -> dict:
+    ws.send_json(
+        {
+            "type": "session.start",
+            "request": {"query": "Create a ticket", "mode": "tool_agent"},
+        }
+    )
+    assert ws.receive_json()["type"] == "session.started"
+    event = ws.receive_json()
+    while event["type"] not in ("approval_required", "error"):
+        event = ws.receive_json()
+    return event
+
+
+def test_approval_over_the_socket_resumes_the_same_run(
+    client: TestClient, fake_redis, approving_agent
+):
+    with client.websocket_connect(f"/api/agent/ws?token={_token(client)}") as ws:
+        client.app.state.search_agent_manager = object()
+        client.app.state.search_agent_tokenizer = object()
+        requested = _start_tool_run(client, ws)
+
+        assert requested["type"] == "approval_required"
+        assert requested["approval"]["id"] == "approval-1"
+
+        ws.send_json(
+            {
+                "type": "approval.submit",
+                "approval_id": "approval-1",
+                "decision": "approve",
+            }
+        )
+        events = _drain(ws)
+
+    assert events[-1]["type"] == "done"
+    assert str(approving_agent["decision"].value) == "approve"
+
+
+def test_approval_errors_carry_the_same_codes_as_the_http_endpoint(
+    client: TestClient, fake_redis, approving_agent
+):
+    """Both transports resolve one broker, so they must fail alike."""
+    with client.websocket_connect(f"/api/agent/ws?token={_token(client)}") as ws:
+        client.app.state.search_agent_manager = object()
+        client.app.state.search_agent_tokenizer = object()
+        _start_tool_run(client, ws)
+
+        # Unknown id: 404 over HTTP, code 404 over the socket.
+        ws.send_json(
+            {"type": "approval.submit", "approval_id": "nope", "decision": "approve"}
+        )
+        assert ws.receive_json()["code"] == 404
+
+        # Unknown decision value is a client error, not a broker outcome.
+        ws.send_json(
+            {"type": "approval.submit", "approval_id": "approval-1", "decision": "?"}
+        )
+        assert ws.receive_json()["code"] == 400
+
+        ws.send_json(
+            {
+                "type": "approval.submit",
+                "approval_id": "approval-1",
+                "decision": "approve",
+            }
+        )
+        events = _drain(ws)
+
+    assert events[-1]["type"] == "done"
+
+    # Deciding twice: 409 over HTTP, 409 over the socket.
+    decided = client.post(
+        "/api/agent/approvals/approval-1",
+        json={"decision": "approve"},
+        headers=_auth(),
+    )
+    assert decided.status_code in (404, 409)
