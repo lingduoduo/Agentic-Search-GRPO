@@ -12,7 +12,10 @@ Going through ``sse_response`` makes forgetting them impossible.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
 from collections.abc import AsyncGenerator
 
 from fastapi.responses import StreamingResponse
@@ -36,10 +39,67 @@ def sse_frame(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
+# A comment frame: any line starting with ":" is ignored by every SSE reader,
+# including the browser's EventSource and this repo's own readSSE. It exists to
+# put bytes on an idle connection, nothing more.
+SSE_COMMENT = ": keepalive\n\n"
+
+
+def heartbeat_seconds() -> float:
+    """How long a stream may be silent before it sends a keepalive.
+
+    Default 15s, comfortably under the 30-60s idle timeouts intermediaries
+    commonly apply. Zero disables it.
+    """
+    return float(os.environ.get("AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS", "15"))
+
+
+async def _with_heartbeat(
+    generator: AsyncGenerator[str, None], interval: float
+) -> AsyncGenerator[str, None]:
+    """Emit a comment frame whenever the stream goes quiet for `interval`.
+
+    A grounded answer can be silent for a long time -- retrieval, then
+    generation -- and a silent connection is one a proxy or load balancer is
+    entitled to drop. The agent is not hurried along: the pending event is
+    shielded, so a heartbeat interrupts the wait, never the work.
+    """
+    iterator = generator.__aiter__()
+    pending: asyncio.Future | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            try:
+                frame = await asyncio.wait_for(asyncio.shield(pending), interval)
+            except asyncio.TimeoutError:
+                yield SSE_COMMENT  # still waiting; the future keeps running
+                continue
+            except StopAsyncIteration:
+                pending = None
+                return
+            pending = None
+            yield frame
+    finally:
+        # A client that leaves during a quiet stretch leaves `pending` mid-flight,
+        # and closing a generator that is still running raises
+        # "aclose(): asynchronous generator is already running". So cancel it and
+        # *await* the cancellation: that unwinds the inner generator, after which
+        # closing it is safe. Suppressing the RuntimeError instead would hide the
+        # problem rather than fix it, and hide the next one too.
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with contextlib.suppress(BaseException):
+                await pending
+        await generator.aclose()
+
+
 def sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
     """Return an SSE response that a buffering proxy cannot hold back."""
+    interval = heartbeat_seconds()
+    body = _with_heartbeat(generator, interval) if interval > 0 else generator
     return StreamingResponse(
-        generator,
+        body,
         media_type="text/event-stream",
         headers=dict(SSE_HEADERS),
     )

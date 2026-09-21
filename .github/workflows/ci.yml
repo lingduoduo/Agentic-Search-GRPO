@@ -29,15 +29,24 @@ jobs:
         run: ruff check .
 
   unit-tests:
-    name: Python Unit Tests
+    # Both ends of the supported range. pyproject declares requires-python
+    # ">=3.10", and testing only 3.12 let three 3.11+/3.12-only constructs onto
+    # main -- datetime.UTC, the asyncio.TimeoutError/builtin merge, and 3.12's
+    # compensated sum() (#610). A static guard catches names that do not exist;
+    # only running on the floor catches behaviour that differs.
+    name: Python Unit Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies

@@ -59,6 +59,20 @@ describe("streamAgent", () => {
     for await (const event of streamAgent({ query: "q" })) types.push(event.type);
     expect(types).toEqual(["claim", "answer"]);
   });
+
+  // The backend sends `: keepalive` on an idle stream so an intermediary does
+  // not drop the connection. It must reach the reader as nothing at all.
+  it("ignores heartbeat comment frames", async () => {
+    mockFetchStream([
+      ": keepalive\n\n",
+      'data: {"type":"claim","text":"still working"}\n\n',
+      ": keepalive\n\n",
+      'data: {"type":"answer","text":"done"}\n\n',
+    ]);
+    const types: string[] = [];
+    for await (const event of streamAgent({ query: "q" })) types.push(event.type);
+    expect(types).toEqual(["claim", "answer"]);
+  });
 });
 
 /** Mocks `fetch` to return an SSE body streaming the given raw chunks. */
