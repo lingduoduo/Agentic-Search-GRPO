@@ -27,6 +27,8 @@ EXPECTED_KEYS = {
     "wait50",
     "wait99",
     "timeout_pct",
+    "refused_pct",
+    "goodput_rps",
     "threads",
 }
 

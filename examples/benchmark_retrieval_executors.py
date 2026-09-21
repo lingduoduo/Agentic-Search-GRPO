@@ -31,6 +31,7 @@ import threading
 import time
 
 from src.internal.retrieval.async_reranker import AsyncReranker
+from src.internal.retrieval.async_reranker import RerankerOverloaded
 from src.internal.retrieval.async_reranker import RerankerTimeoutError
 from src.internal.retrieval.backends.base import RetrievalBackend
 from src.internal.retrieval.backends.base import RetrievalResult
@@ -108,11 +109,12 @@ def _pct(values: list[float], p: float) -> float:
 
 def _drive(
     call, concurrency: int, per_thread: int
-) -> tuple[list[float], dict[str, float], float, int, int]:
+) -> tuple[list[float], dict[str, float], float, int, int, int]:
     """Run `call(call_id)` from `concurrency` threads. Returns latencies and peak threads."""
     latencies: list[float] = []
     submitted: dict[str, float] = {}
     timeouts = 0
+    refusals = 0
     lock = threading.Lock()
     peak = threading.active_count()
     stop = threading.Event()
@@ -127,7 +129,7 @@ def _drive(
     sampler.start()
 
     def worker(wid: int) -> None:
-        nonlocal timeouts
+        nonlocal timeouts, refusals
         for i in range(per_thread):
             call_id = f"w{wid}-{i}"
             t0 = time.perf_counter()
@@ -135,6 +137,9 @@ def _drive(
                 submitted[call_id] = t0
             try:
                 call(call_id)
+            except RerankerOverloaded:
+                with lock:
+                    refusals += 1
             except RerankerTimeoutError:
                 with lock:
                     timeouts += 1
@@ -151,7 +156,7 @@ def _drive(
     wall = time.perf_counter() - started
     stop.set()
     sampler.join(timeout=1)
-    return latencies, submitted, wall, peak, timeouts
+    return latencies, submitted, wall, peak, timeouts, refusals
 
 
 def run_level(args, concurrency: int) -> dict:
@@ -183,7 +188,7 @@ def run_level(args, concurrency: int) -> dict:
         def wait_for(call_id: str, t0: float) -> list[float]:
             return [stub.starts[call_id] - t0] if call_id in stub.starts else []
 
-    latencies, submitted, wall, peak, timeouts = _drive(
+    latencies, submitted, wall, peak, timeouts, refusals = _drive(
         call, concurrency, args.per_thread
     )
 
@@ -202,6 +207,10 @@ def run_level(args, concurrency: int) -> dict:
         "wait50": _pct(waits, 50) * 1000,
         "wait99": _pct(waits, 99) * 1000,
         "timeout_pct": 100.0 * timeouts / total if total else 0.0,
+        "refused_pct": 100.0 * refusals / total if total else 0.0,
+        # The only number that counts completed work: refusals return instantly
+        # and would otherwise inflate throughput into nonsense.
+        "goodput_rps": (total - timeouts - refusals) / wall if wall else float("nan"),
         "threads": peak,
     }
 
@@ -229,7 +238,8 @@ def main() -> None:
 
     header = (
         f"{'conc':>5} {'reqs':>6} {'rps':>9} {'p50':>9} {'p95':>9} {'p99':>9} "
-        f"{'wait50':>9} {'wait99':>9} {'tmo%':>7} {'thr':>5}"
+        f"{'wait50':>9} {'wait99':>9} {'tmo%':>7} {'refuse%':>8} "
+        f"{'good/s':>8} {'thr':>5}"
     )
     print(header)
     print("-" * len(header))
@@ -238,7 +248,8 @@ def main() -> None:
         print(
             f"{r['conc']:>5} {r['reqs']:>6} {r['rps']:>9.1f} {r['p50']:>9.2f} "
             f"{r['p95']:>9.2f} {r['p99']:>9.2f} {r['wait50']:>9.2f} "
-            f"{r['wait99']:>9.2f} {r['timeout_pct']:>7.1f} {r['threads']:>5}"
+            f"{r['wait99']:>9.2f} {r['timeout_pct']:>7.1f} "
+            f"{r['refused_pct']:>8.1f} {r['goodput_rps']:>8.1f} {r['threads']:>5}"
         )
 
 
