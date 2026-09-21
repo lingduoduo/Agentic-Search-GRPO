@@ -305,7 +305,14 @@ def create_chat_router(
                 logger.exception("Streaming chat failed for: %r", body.message)
                 yield _sse({"type": "error", "detail": str(exc)})
 
-        return StreamingResponse(_gen(), media_type="text/event-stream")
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return router
 
