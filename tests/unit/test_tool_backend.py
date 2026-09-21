@@ -81,6 +81,23 @@ def test_send_tool_message_streams_progress_then_done(monkeypatch):
     assert done["num_turns"] == 1 and done["session_id"]
 
 
+def test_tool_stream_sets_proxy_buffering_headers(monkeypatch):
+    """A buffering reverse proxy would otherwise deliver the stream in one lump."""
+    from src.internal.servers.web import tool_agent_runner
+
+    async def fake_run_tool_agent(query, *, on_turn=None, **kw):
+        return ("answer", [], [], "tool", {"tool_calls": [], "num_turns": 1})
+
+    monkeypatch.setattr(tool_agent_runner, "_run_tool_agent", fake_run_tool_agent)
+
+    client = TestClient(_make_app(with_model=True))
+    with client.stream(
+        "POST", "/tool/send-tool-message", json={"message": "hi", "stream": True}
+    ) as resp:
+        assert resp.headers["cache-control"] == "no-cache"
+        assert resp.headers["x-accel-buffering"] == "no"
+
+
 def test_send_tool_message_emits_approval_required(monkeypatch):
     from dataclasses import dataclass
 

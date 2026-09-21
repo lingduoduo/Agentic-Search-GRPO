@@ -141,8 +141,19 @@ def create_search_router(
     ) -> StreamingResponse | SearchFullResponse:
         """Execute a search with optional query expansion.
 
-        Returns JSON if ``stream=False``, or a newline-delimited JSON stream
-        (SSE-compatible) if ``stream=True``.
+        Returns JSON if ``stream=False``, or newline-delimited JSON if
+        ``stream=True``.
+
+        NDJSON is **not** SSE: these frames carry no ``data:`` prefix and no
+        blank-line terminator, so an SSE reader parses nothing out of this
+        response. The sibling streams -- ``/api/agent/stream``,
+        ``/chat/send-chat-message`` and ``/tool/send-tool-message`` -- are SSE;
+        this one is deliberately not, and the two are not interchangeable.
+
+        No shipped caller sets ``stream=True``: the web app and the MCP
+        retrieval client both hardcode ``stream: false``. The branch is kept
+        and tested rather than removed, pending a decision on whether the
+        search surface should stream at all.
         """
         filters = _authenticated_search_filters(http_request, body.filters, store)
 

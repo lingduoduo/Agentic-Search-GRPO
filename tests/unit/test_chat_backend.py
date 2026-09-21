@@ -282,6 +282,23 @@ def test_send_chat_message_streams_answer_then_done(monkeypatch):
     assert events[-1]["session_id"]
 
 
+def test_chat_stream_sets_proxy_buffering_headers(monkeypatch):
+    """A buffering reverse proxy would otherwise deliver the stream in one lump."""
+    from src.internal.servers.query_and_chat import chat_backend
+
+    async def fake_run_plain_chat(message, *, on_turn=None, **kw):
+        return "ok"
+
+    monkeypatch.setattr(chat_backend, "_run_plain_chat", fake_run_plain_chat)
+
+    client = TestClient(_make_app(with_model=True))
+    with client.stream(
+        "POST", "/chat/send-chat-message", json={"message": "hi", "stream": True}
+    ) as resp:
+        assert resp.headers["cache-control"] == "no-cache"
+        assert resp.headers["x-accel-buffering"] == "no"
+
+
 def _seed_long(store, n=45):
     session = store.create_chat_session(user_id=_USER_ID, title="long")
     records = [
