@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -16,7 +16,7 @@ from src.internal.servers.web.tool_approval import (
 
 
 def _request(approval_id: str = "approval-1", expires_in: float = 1.0):
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     return ToolApprovalRequest(
         approval_id=approval_id,
         tool_name="create_ticket",
@@ -161,7 +161,9 @@ async def test_decision_after_deadline_reports_expired() -> None:
     broker = ToolApprovalBroker()
     task = asyncio.create_task(broker.request("owner", _request()))
     await _wait_until_pending(broker)
-    broker._pending["approval-1"].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    broker._pending["approval-1"].expires_at = datetime.now(timezone.utc) - timedelta(
+        seconds=1
+    )
 
     with pytest.raises(ApprovalExpired):
         await broker.decide("approval-1", "owner", ApprovalDecision.APPROVE)

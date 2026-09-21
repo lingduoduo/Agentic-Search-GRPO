@@ -40,7 +40,7 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
@@ -337,7 +337,7 @@ class ToolAgentLoop(AgentLoopBase):
             metrics["tool_approvals_denied"] += 1
             return ApprovalDecision.DENY
 
-        created_at = datetime.now(UTC)
+        created_at = datetime.now(timezone.utc)
         request = ToolApprovalRequest(
             approval_id=uuid4().hex,
             tool_name=tool_call.name,
