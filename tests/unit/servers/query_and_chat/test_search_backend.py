@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
@@ -173,3 +174,91 @@ def test_search_uses_current_store_groups_instead_of_stale_token_claims(
     assert "group:current-group" in acl
     assert "group:engineering" not in acl
     store.close()
+
+
+def _stream_lines(client, monkeypatch, result_or_exc, query="deployment guide"):
+    """Drive the stream=True branch and return its decoded NDJSON lines."""
+
+    async def fake_run_expanded_search(q, **kwargs):
+        if isinstance(result_or_exc, Exception):
+            raise result_or_exc
+        return result_or_exc
+
+    monkeypatch.setattr(
+        "src.internal.servers.query_and_chat.search_backend.run_expanded_search",
+        fake_run_expanded_search,
+    )
+    with client.stream(
+        "POST",
+        "/search/send-search-message",
+        headers=_authenticated_headers(),
+        json={"search_query": query, "stream": True},
+    ) as response:
+        assert response.status_code == 200
+        content_type = response.headers["content-type"]
+        lines = [line for line in response.iter_lines() if line.strip()]
+    return content_type, lines
+
+
+def test_stream_emits_ndjson_queries_then_docs(tmp_path, monkeypatch):
+    client, store = _client(tmp_path)
+    store.upsert_user(UserRecord(id="alice", email="alice@example.com"))
+    result = SearchQueryResult(
+        original_query="deployment guide",
+        executed_queries=["deployment guide"],
+        results=[],
+    )
+
+    content_type, lines = _stream_lines(client, monkeypatch, result)
+
+    assert content_type.startswith("application/x-ndjson")
+    payloads = [json.loads(line) for line in lines]
+    assert [p["type"] for p in payloads] == ["search_queries", "search_docs"]
+    assert payloads[0]["all_executed_queries"] == ["deployment guide"]
+
+
+def test_stream_is_ndjson_and_not_sse(tmp_path, monkeypatch):
+    """Pins the distinction the docstring used to get wrong."""
+    client, store = _client(tmp_path)
+    store.upsert_user(UserRecord(id="alice", email="alice@example.com"))
+    result = SearchQueryResult(
+        original_query="deployment guide",
+        executed_queries=["deployment guide"],
+        results=[],
+    )
+
+    _, lines = _stream_lines(client, monkeypatch, result)
+
+    assert lines, "expected at least one frame"
+    assert not any(line.startswith("data:") for line in lines)
+
+
+def test_stream_re_emits_queries_after_expansion(tmp_path, monkeypatch):
+    client, store = _client(tmp_path)
+    store.upsert_user(UserRecord(id="alice", email="alice@example.com"))
+    result = SearchQueryResult(
+        original_query="deployment guide",
+        executed_queries=["deployment guide", "how to deploy"],
+        results=[],
+    )
+
+    _, lines = _stream_lines(client, monkeypatch, result)
+
+    payloads = [json.loads(line) for line in lines]
+    assert [p["type"] for p in payloads] == [
+        "search_queries",
+        "search_queries",
+        "search_docs",
+    ]
+    assert payloads[1]["all_executed_queries"] == ["deployment guide", "how to deploy"]
+
+
+def test_stream_emits_error_packet_when_search_fails(tmp_path, monkeypatch):
+    client, store = _client(tmp_path)
+    store.upsert_user(UserRecord(id="alice", email="alice@example.com"))
+
+    _, lines = _stream_lines(client, monkeypatch, RuntimeError("index offline"))
+
+    payloads = [json.loads(line) for line in lines]
+    assert [p["type"] for p in payloads] == ["search_queries", "search_error"]
+    assert "index offline" in payloads[-1]["error"]
