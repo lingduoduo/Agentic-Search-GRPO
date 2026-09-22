@@ -13,13 +13,21 @@ from enum import Enum
 
 @dataclass(frozen=True)
 class LoopSnapshot:
+    """The loop state the two control decisions are a pure function of.
+
+    Every field must be one a decision actually reads. ``model_emitted_answer``
+    used to sit here, set True before each ``final_answer_decision`` call and
+    False before each ``should_continue_searching`` call -- so each method only
+    ever saw one value and the flag could not disambiguate anything. Which
+    decision is being asked for is already carried by which method is called.
+    """
+
     rounds_used: int
     num_subquestions: int
     evidence_sufficient: bool
     prev_evidence_score: float
     curr_evidence_score: float
     consecutive_rejections: int
-    model_emitted_answer: bool  # reserved for Phase 2 state machine; not yet read
 
 
 class StopReason(Enum):
