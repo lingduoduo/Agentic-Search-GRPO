@@ -1297,6 +1297,22 @@ async def async_run_grpo_training_step(
     )
 
 
+class CheckpointNotSupportedError(RuntimeError):
+    """A trainer was asked to checkpoint but implements no hook for it.
+
+    Raised rather than skipped. ``train_loop`` writes its own step manifest
+    alongside whatever the trainer persists, so a skipped save leaves a
+    directory that looks like a checkpoint and holds no weights, and a skipped
+    load restores the step counter onto a freshly initialised policy. Both
+    report success while discarding the training they exist to protect --
+    the logs resume at step N while the model starts from scratch.
+
+    Trainers that implement the hooks: ``LLMGRPOTrainer`` and its subclass
+    ``SearchAgentGRPOTrainer``. Those that do not: ``GRPOTrainer`` (the bandit
+    trainer), ``DPOTrainer``, ``SFTTrainer``.
+    """
+
+
 @dataclass
 class TrainLoopConfig:
     max_steps: int
@@ -1305,20 +1321,37 @@ class TrainLoopConfig:
     step_timeout_s: float | None = None  # None disables the per-step timeout
 
 
+def _require_checkpoint_hook(trainer: Any, hook: str) -> Callable[[str], Any]:
+    """Return *trainer*'s checkpoint hook, or refuse the operation outright."""
+    fn = getattr(trainer, hook, None)
+    if not callable(fn):
+        raise CheckpointNotSupportedError(
+            f"{type(trainer).__name__} does not implement {hook}(), so this "
+            f"checkpoint would carry no model weights -- only a step number. "
+            f"Implement {hook}() on the trainer, or run without checkpointing."
+        )
+    return fn
+
+
 def save_checkpoint(trainer: Any, path: str, step: int) -> None:
-    """Persist trainer state plus the step manifest under *path*."""
+    """Persist trainer state plus the step manifest under *path*.
+
+    Refuses a trainer that cannot save: the manifest alone is not a checkpoint.
+    """
+    trainer_save = _require_checkpoint_hook(trainer, "save_checkpoint")
     Path(path).mkdir(parents=True, exist_ok=True)
-    trainer_save = getattr(trainer, "save_checkpoint", None)
-    if trainer_save is not None:
-        trainer_save(path)
+    trainer_save(path)
     (Path(path) / "trainer_state.json").write_text(json.dumps({"step": step}))
 
 
 def load_checkpoint(trainer: Any, path: str) -> int:
-    """Restore trainer state from *path*; return the step to resume at."""
-    trainer_load = getattr(trainer, "load_checkpoint", None)
-    if trainer_load is not None:
-        trainer_load(path)
+    """Restore trainer state from *path*; return the step to resume at.
+
+    Refuses a trainer that cannot load, rather than resuming the step counter
+    onto whatever weights the trainer happens to have been constructed with.
+    """
+    trainer_load = _require_checkpoint_hook(trainer, "load_checkpoint")
+    trainer_load(path)
     state = json.loads((Path(path) / "trainer_state.json").read_text())
     return int(state["step"])
 
@@ -1338,6 +1371,12 @@ async def train_loop(
     Returns the per-step metrics history (skipped steps are absent).
     """
     import asyncio
+
+    # Check both hooks before the first step, not at the first checkpoint: a run
+    # that will not be able to save is better stopped now than after it has
+    # spent the hours the checkpoint was meant to protect.
+    if config.ckpt_dir is not None and config.ckpt_every:
+        _require_checkpoint_hook(trainer, "save_checkpoint")
 
     start_step = load_checkpoint(trainer, resume_from) if resume_from else 0
     history: list[dict] = []
