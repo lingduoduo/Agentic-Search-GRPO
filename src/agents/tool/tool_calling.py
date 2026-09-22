@@ -50,6 +50,7 @@ from src.agents.core.base import (
     AgentLoopConfig,
     AgentLoopOutput,
     OnTurnCallback,
+    _crop_prompt_ids,
     register,
     simple_timer,
 )
@@ -266,7 +267,14 @@ class ToolAgentLoop(AgentLoopBase):
                 add_generation_prompt=True,
                 tokenize=True,
             )
-            return _as_token_ids(ids)[-self.prompt_length :]
+            # Crop like the base loop does, preserving the system prefix. A bare
+            # tail slice drops the system prompt and the tool schemas first --
+            # the tokens the model most needs in order to keep calling tools.
+            return _crop_prompt_ids(
+                _as_token_ids(ids),
+                self._encode_system_prefix(messages),
+                self.prompt_length,
+            )
         # Fallback: no tool schema injection
         return self._build_prompt_ids_sync(messages)
 
@@ -526,6 +534,17 @@ class ToolAgentLoop(AgentLoopBase):
             tool_response_ids = tool_response_ids[self._template_prefix_len :]
 
             if len(response_mask) + len(tool_response_ids) >= self.response_length:
+                break
+            # Same guard for the prompt budget. This is the only path back to
+            # generate(), so checking the next prompt's size here is what keeps
+            # the whole run within prompt_length -- the initial build is cropped,
+            # but from then on prompt_ids only ever grows. Stopping rather than
+            # cropping is deliberate: the teardown below recovers the
+            # prompt/response split from len(prompt_ids) - len(response_mask),
+            # so dropping tokens the mask already covers would desync the two.
+            # The tool results are already in working_messages, so the
+            # transcript keeps them either way.
+            if len(prompt_ids) + len(tool_response_ids) > self.prompt_length:
                 break
 
             prompt_ids = prompt_ids + tool_response_ids

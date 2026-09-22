@@ -355,112 +355,20 @@ async def test_search_tool_degrades_to_vdb_when_web_raises() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_planner_parses_web_search() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    decision = Planner().decide(
-        '<search retriever="web">latest news</search>', _state()
-    )
-
-    assert isinstance(decision, SearchAction)
-    assert decision.query == "latest news"
-    assert decision.retriever is Retriever.WEB
-
-
-def test_planner_search_defaults_to_vector_db_without_attribute() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    decision = Planner().decide("<search>what is faiss</search>", _state())
-
-    assert isinstance(decision, SearchAction)
-    assert decision.retriever is Retriever.VECTOR_DB
-
-
-def test_planner_unknown_retriever_value_falls_back_to_vector_db() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    decision = Planner().decide('<search retriever="quantum">q</search>', _state())
-
-    assert isinstance(decision, SearchAction)
-    assert decision.retriever is Retriever.VECTOR_DB
-
-
-def test_planner_parses_rerank_action() -> None:
-    from src.agents.components.planner import Planner, RerankAction
-
-    assert isinstance(Planner().decide("<rerank/>", _state()), RerankAction)
-
-
-def test_planner_parses_answer_action() -> None:
-    from src.agents.components.planner import AnswerAction, Planner
-
-    decision = Planner().decide("<answer>The answer is 42 [R1Q1D1].</answer>", _state())
-
-    assert isinstance(decision, AnswerAction)
-    assert decision.text == "The answer is 42 [R1Q1D1]."
-
-
-def test_planner_search_takes_precedence_over_answer() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    decision = Planner().decide(
-        "<search>more</search> then <answer>x</answer>", _state()
-    )
-
-    assert isinstance(decision, SearchAction)
-
-
-def test_planner_malformed_text_defaults_to_vector_db_search() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    decision = Planner().decide("no tags here at all", _state())
-
-    assert isinstance(decision, SearchAction)
-    assert decision.retriever is Retriever.VECTOR_DB
-
-
-def test_planner_flags_duplicate_query() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    state = _state()
-    state.record_search_round(["what is faiss"], [])
-    decision = Planner().decide("<search>what is faiss</search>", state)
-
-    assert isinstance(decision, SearchAction)
-    assert decision.query == "what is faiss"
-    assert decision.is_duplicate is True
-
-
-def test_planner_new_query_not_flagged_duplicate() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    state = _state()
-    state.record_search_round(["what is faiss"], [])
-    decision = Planner().decide("<search>brand new</search>", state)
-
-    assert isinstance(decision, SearchAction)
-    assert decision.is_duplicate is False
-
-
 def test_planner_duplicate_match_ignores_whitespace_and_case() -> None:
+    """Duplicate detection normalises before comparing, so a reformatted repeat
+    of an earlier query is still refused rather than searched twice."""
     from src.agents.components.planner import Planner
 
     state = _state()
     state.record_search_round(["what is faiss"], [])
-    decision = Planner().decide("<search>  What  Is   FAISS </search>", state)
 
-    assert decision.is_duplicate is True
+    allowed, repeated, _ = Planner().partition_search_requests(
+        [(None, "  What  Is   FAISS ")], state, effective_limit=5
+    )
 
-
-def test_planner_fallback_query_is_bounded() -> None:
-    from src.agents.components.planner import Planner, SearchAction
-
-    raw = "first line of reasoning\n" + ("x" * 1000)
-    decision = Planner().decide(raw, _state())
-
-    assert isinstance(decision, SearchAction)
-    assert decision.query == "first line of reasoning"
-    assert len(decision.query) <= 256
+    assert allowed == []
+    assert repeated == ["  What  Is   FAISS "]
 
 
 def test_planner_parses_complete_mixed_turn() -> None:

@@ -58,6 +58,19 @@ class LoopController:
         return max(base, min(base + bonus, cfg.max_search_limit_cap))
 
     def should_continue_searching(self, s: LoopSnapshot) -> StopDecision:
+        """Decide whether another search round is worth running.
+
+        The budget check comes first on purpose, and ``SearchAgentLoop`` acts
+        only on ``PLATEAU``. Together that means a round *at* the budget
+        proceeds normally and gets its evidence injected, instead of
+        early-stopping on a plateau it also satisfies — the last round's
+        documents would otherwise never reach the model that must answer from
+        them. ``BUDGET_EXHAUSTED`` therefore reads as "stop searching, the
+        caller already knows": enforcement itself lives in
+        ``Planner.partition_search_requests``, which refuses the queries.
+        Removing this arm looks like dead-code cleanup and is not;
+        ``test_the_final_round_within_budget_still_reaches_the_model`` pins it.
+        """
         cfg = self._cfg
         if s.rounds_used >= self.effective_search_limit(s.num_subquestions):
             return StopDecision(StopReason.BUDGET_EXHAUSTED)

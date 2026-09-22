@@ -136,6 +136,11 @@ class AgenticRAGResult:
     citations: list[str]
     rounds_used: int
     context: SearchContextBundle
+    # True when a sufficiency check failed open (LLM error or timeout) rather
+    # than returning a verdict. The loop then stops early for a reason that has
+    # nothing to do with the evidence, so `rounds_used == 1` does not mean the
+    # first round was enough. Callers that report confidence should say so.
+    sufficiency_degraded: bool = False
 
 
 class AgenticRAGLoop:
@@ -218,6 +223,7 @@ class AgenticRAGLoop:
         accumulated: dict[str, ContextDocument] = {}
         seen_queries: set[str] = set()
         rounds_used = 0
+        sufficiency_degraded = False
 
         t0 = time.perf_counter()
         bundle = await self._enhancer.enhance_async(question)
@@ -308,13 +314,18 @@ class AgenticRAGLoop:
             is_last = round_idx == self.config.max_rounds - 1
             if not is_last:
                 t_suff = time.perf_counter()
-                sufficient = await self._is_sufficient(question, merged)
+                sufficient, degraded = await self._is_sufficient(question, merged)
+                sufficiency_degraded = sufficiency_degraded or degraded
+                # A failed-open check is reported as a failure that fell back,
+                # not as a verdict: "sufficient" is this loop's stop condition, so
+                # a silent fail-open is indistinguishable from real sufficiency.
                 _emit(
                     "evidence_judge",
                     "sufficiency_check",
-                    "decided",
+                    "failed" if degraded else "decided",
                     duration_ms=round((time.perf_counter() - t_suff) * 1000),
                     sufficient=sufficient,
+                    fallback=degraded,
                     search_round=rounds_used,
                 )
                 if sufficient:
@@ -372,13 +383,23 @@ class AgenticRAGLoop:
             citations=gen_result.citations,
             rounds_used=rounds_used,
             context=merged,
+            sufficiency_degraded=sufficiency_degraded,
         )
 
-    async def _is_sufficient(self, question: str, context: SearchContextBundle) -> bool:
+    async def _is_sufficient(
+        self, question: str, context: SearchContextBundle
+    ) -> tuple[bool, bool]:
+        """Return ``(sufficient, degraded)`` for the current evidence.
+
+        ``degraded`` is True only when the check could not produce a verdict at
+        all (LLM error or timeout) and failed open. It is not an error the loop
+        recovers from -- it changes what ``sufficient=True`` means -- so it
+        travels with the verdict instead of being swallowed in a log line.
+        """
         if not context.documents:
-            return False
+            return False, False
         if self.llm is None:
-            return True
+            return True, False
         prompt = _SUFFICIENCY_PROMPT.format(
             question=question,
             context=context.to_context_text()[:1500],
@@ -391,10 +412,10 @@ class AgenticRAGLoop:
                 ),
                 timeout=self.config.sufficiency_timeout_s,
             )
-            return _llm_text(response).strip().lower().startswith("yes")
+            return _llm_text(response).strip().lower().startswith("yes"), False
         except Exception as exc:  # includes asyncio.TimeoutError
             logger.warning("Sufficiency check failed or timed out: %s", exc)
-            return True  # fail-open → stop looping on error/timeout
+            return True, True  # fail-open → stop looping on error/timeout
 
     async def _generate_followup(
         self, question: str, context: SearchContextBundle

@@ -407,8 +407,9 @@ async def test_sufficiency_check_times_out_fail_open():
     loop = AgenticRAGLoop(config, llm=llm)
     bundle = _make_bundle(["d1"])
 
-    result = await loop._is_sufficient("q?", bundle)
-    assert result is True  # fail-open on timeout, and returns promptly
+    sufficient, degraded = await loop._is_sufficient("q?", bundle)
+    assert sufficient is True  # fail-open on timeout, and returns promptly
+    assert degraded is True  # ...but the caller can tell it was not a verdict
 
 
 @pytest.mark.asyncio
@@ -575,3 +576,127 @@ async def test_synthesis_trace_carries_first_response_timings():
     assert synth, "no answer_generator event recorded"
     assert synth[-1].details["llm_first_token_ms"] == 12.5
     assert synth[-1].details["time_to_first_claim_ms"] == 88.0
+
+
+# ---------------------------------------------------------------------------
+# Degraded sufficiency — a failed-open check must not look like a real verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_degraded_sufficiency_is_reported_on_the_result():
+    """A timed-out sufficiency check stops the loop; the caller must be able to tell.
+
+    _is_sufficient fails open, so a slow or broken LLM silently collapses this
+    loop to single-round RAG. The answer is then under-researched for a reason
+    that has nothing to do with the evidence, and nothing said so.
+    """
+    import time as _time
+
+    def _slow_complete(messages, **kwargs):
+        if (
+            "evaluating whether retrieved documents are sufficient"
+            in messages[0].content
+        ):
+            _time.sleep(0.3)  # exceeds the tiny timeout below
+            return "no"
+        return "enhanced query"
+
+    llm = MagicMock()
+    llm.complete.side_effect = _slow_complete
+
+    async def _retrieve(query, **kwargs):
+        return _make_bundle(["d1"], query=query)
+
+    config = AgenticRAGConfig(max_rounds=3, sufficiency_timeout_s=0.05)
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", _batched(_retrieve)),
+        patch(
+            "src.agents.search.agentic_rag.generate_answer",
+            lambda request, **kwargs: _stub_generation_result(),
+        ),
+    ):
+        loop = AgenticRAGLoop(config, llm=llm)
+        result = await loop.run("q?")
+
+    assert result.rounds_used == 1, "fail-open should stop after the first round"
+    assert result.sufficiency_degraded is True
+
+
+@pytest.mark.asyncio
+async def test_a_real_sufficiency_verdict_is_not_marked_degraded():
+    """The flag must distinguish "the LLM said yes" from "the LLM never answered"."""
+    llm = _llm_responses("sub", "hyde", "broader", "yes", _GROUNDED_ANSWER)
+
+    async def _retrieve(query, **kwargs):
+        return _make_bundle(["d1"], query=query)
+
+    with patch("src.agents.search.agentic_rag.retrieve_contexts", _batched(_retrieve)):
+        loop = AgenticRAGLoop(AgenticRAGConfig(max_rounds=3), llm=llm)
+        result = await loop.run("q?")
+
+    assert result.rounds_used == 1
+    assert result.sufficiency_degraded is False
+
+
+@pytest.mark.asyncio
+async def test_degraded_sufficiency_is_recorded_on_the_control_flow_trace():
+    """The Dev Console needs the degradation visible, not just the verdict."""
+    import time as _time
+
+    from src.agents.core.control_flow_trace import ControlFlowRecorder
+
+    def _slow_complete(messages, **kwargs):
+        if (
+            "evaluating whether retrieved documents are sufficient"
+            in messages[0].content
+        ):
+            _time.sleep(0.3)
+            return "no"
+        return "enhanced query"
+
+    llm = MagicMock()
+    llm.complete.side_effect = _slow_complete
+
+    async def _retrieve(query, **kwargs):
+        return _make_bundle(["d1"], query=query)
+
+    recorder = ControlFlowRecorder("req-degraded")
+    config = AgenticRAGConfig(max_rounds=3, sufficiency_timeout_s=0.05)
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", _batched(_retrieve)),
+        patch(
+            "src.agents.search.agentic_rag.generate_answer",
+            lambda request, **kwargs: _stub_generation_result(),
+        ),
+    ):
+        loop = AgenticRAGLoop(config, llm=llm)
+        await loop.run("q?", recorder=recorder)
+
+    judge = [e for e in recorder.snapshot() if e.component == "evidence_judge"]
+    assert judge, "no evidence_judge event recorded"
+    # The check failed and the loop fell back to "sufficient". Both halves of
+    # that matter: "failed" alone would not say the run continued anyway.
+    assert judge[-1].status == "failed"
+    assert judge[-1].details["fallback"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_real_verdict_is_not_marked_as_a_fallback_on_the_trace():
+    """Without this, "failed" could not be told apart from a normal verdict."""
+    from src.agents.core.control_flow_trace import ControlFlowRecorder
+
+    llm = _llm_responses("sub", "hyde", "broader", "yes", _GROUNDED_ANSWER)
+
+    async def _retrieve(query, **kwargs):
+        return _make_bundle(["d1"], query=query)
+
+    recorder = ControlFlowRecorder("req-ok")
+    with patch("src.agents.search.agentic_rag.retrieve_contexts", _batched(_retrieve)):
+        loop = AgenticRAGLoop(AgenticRAGConfig(max_rounds=3), llm=llm)
+        await loop.run("q?", recorder=recorder)
+
+    judge = [e for e in recorder.snapshot() if e.component == "evidence_judge"]
+    assert judge, "no evidence_judge event recorded"
+    assert judge[-1].status == "decided"
+    assert judge[-1].details.get("fallback") is False
