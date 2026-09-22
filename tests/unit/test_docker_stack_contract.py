@@ -53,17 +53,18 @@ def _healthcheck_paths(service: dict) -> list[str]:
 def _dockerignore_excludes(rel_path: str) -> bool:
     """Whether *rel_path* is excluded from the build context.
 
-    Models the rule that matters here and that a naive "last match wins" reading
-    gets wrong: **docker does not descend into an excluded directory**, so a
-    negation for something inside one is unreachable. A bare ``data`` exclusion
-    followed by ``!data/corpus.jsonl`` keeps the corpus *out*; excluding the
-    contents with ``data/*`` lets the negation apply.
-
-    Both behaviours are established by build, not by reading the docs -- see
-    ``test_dockerignore_semantics_match_observed_docker_behaviour``. The first
-    version of this helper implemented last-match-wins only, passed, and shipped
-    a `.dockerignore` that left the corpus out of the image.
+    Last matching rule wins, including negations under an excluded directory.
+    An earlier version of this helper implemented a "docker does not descend into
+    an excluded directory" rule instead, on the strength of one build that was
+    actually run against a pre-#622 `.dockerignore` with no negations at all.
+    That rule held for the legacy builder; buildkit honours the negations.
+    ``test_dockerignore_semantics_match_measured_behaviour`` pins the three forms
+    that were then measured properly.
     """
+    return _excluded_by(_dockerignore_rules(), rel_path)
+
+
+def _dockerignore_rules() -> list[tuple[bool, str]]:
     rules = []
     for raw in DOCKERIGNORE.read_text().splitlines():
         line = raw.strip()
@@ -71,44 +72,53 @@ def _dockerignore_excludes(rel_path: str) -> bool:
             continue
         negate = line.startswith("!")
         rules.append((negate, (line[1:] if negate else line).rstrip("/")))
-    return _excluded_by(rules, rel_path)
+    return rules
 
 
 def _excluded_by(rules: list[tuple[bool, str]], rel_path: str) -> bool:
-    # An ancestor excluded *as a directory* prunes the walk; nothing under it can
-    # be re-included.
-    parts = rel_path.split("/")
-    for depth in range(1, len(parts)):
-        ancestor = "/".join(parts[:depth])
-        if any(not negate and pattern == ancestor for negate, pattern in rules):
-            return True
-    # Otherwise the last matching rule decides.
     excluded = False
     for negate, pattern in rules:
-        if rel_path == pattern or fnmatch(rel_path, pattern):
+        if (
+            rel_path == pattern
+            or fnmatch(rel_path, pattern)
+            or rel_path.startswith(pattern + "/")
+        ):
             excluded = not negate
     return excluded
 
 
-def test_dockerignore_semantics_match_observed_docker_behaviour():
-    """Pin the helper against what `docker build` actually did, both ways.
+@pytest.mark.parametrize(
+    ("label", "rules", "expected_excluded"),
+    [
+        # Measured with `docker build --no-cache` against buildkit 29.2.1, one
+        # form per build, reading only timestamped output lines -- an earlier
+        # attempt matched the FAIL string inside the echoed RUN command and
+        # reported every form as failing.
+        ("bare exclude, no negation (pre-#622)", [(False, "data")], True),
+        (
+            "bare exclude plus negations (#622)",
+            [(False, "data"), (True, "data/corpus.jsonl")],
+            False,
+        ),
+        (
+            "contents glob plus negations (current)",
+            [(False, "data/*"), (True, "data/corpus.jsonl")],
+            False,
+        ),
+    ],
+)
+def test_dockerignore_semantics_match_measured_behaviour(
+    label: str, rules: list[tuple[bool, str]], expected_excluded: bool
+) -> None:
+    """Only the first form keeps the corpus out; both negated forms let it in."""
+    assert _excluded_by(rules, "data/corpus.jsonl") is expected_excluded, label
 
-    Without these, the helper is just a restatement of my assumptions -- which is
-    how the broken `.dockerignore` passed review.
-    """
-    excluding_the_directory = [(False, "data"), (True, "data/corpus.jsonl")]
-    assert _excluded_by(excluding_the_directory, "data/corpus.jsonl") is True, (
-        "a bare `data` exclusion makes the negation unreachable -- observed: "
-        "the corpus was absent from the built image"
-    )
 
-    excluding_the_contents = [(False, "data/*"), (True, "data/corpus.jsonl")]
-    assert _excluded_by(excluding_the_contents, "data/corpus.jsonl") is False, (
-        "`data/*` lets the negation apply -- observed: the corpus was present"
+def test_unnegated_siblings_under_data_stay_excluded() -> None:
+    assert _excluded_by(
+        [(False, "data/*"), (True, "data/corpus.jsonl")],
+        "data/eval/domain_relevance.json",
     )
-    assert _excluded_by(excluding_the_contents, "data/eval/domain_relevance.json") is (
-        True
-    ), "everything else under data/ must still be excluded"
 
 
 # ---------------------------------------------------------------------------

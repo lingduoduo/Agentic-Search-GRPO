@@ -13,9 +13,10 @@ build
 node_modules
 web/node_modules
 web/dist
-# data/* not data/: docker does not descend into an excluded directory, so a
-# bare `data` leaves the negations below unreachable and the corpus absent from
-# the image. Verified by build, both ways -- see test_docker_stack_contract.py.
+# Exclude data/'s contents and re-include the two files the demo stack serves.
+# `data` + these negations also works with buildkit -- measured -- so this form
+# is a preference, not a fix. What does NOT work is `data` with no negations at
+# all, which is what shipped before #622 and left the corpus out of the image.
 data/*
 !data/corpus.jsonl
 !data/corpora.json
