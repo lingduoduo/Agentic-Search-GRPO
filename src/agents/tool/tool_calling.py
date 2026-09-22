@@ -50,7 +50,6 @@ from src.agents.core.base import (
     AgentLoopConfig,
     AgentLoopOutput,
     OnTurnCallback,
-    _crop_prompt_ids,
     register,
     simple_timer,
 )
@@ -256,10 +255,14 @@ class ToolAgentLoop(AgentLoopBase):
             logger.debug("Could not measure template prefix length: %s", exc)
             return 0
 
-    def _build_prompt_ids_with_tools_sync(
-        self, messages: list[dict[str, Any]]
-    ) -> list[int]:
-        """Like _build_prompt_ids_sync but injects tool schemas into the template."""
+    def _render_prompt_ids(self, messages: list[dict[str, Any]]) -> list[int]:
+        """Render with the tool schemas injected, overriding the base render.
+
+        Overriding the *render* rather than the whole build is what lets the tool
+        loop share the base's message-boundary fitting: schemas are part of what
+        has to fit, and a bare tail slice would drop them and the system prompt
+        first -- the tokens the model most needs to keep calling tools.
+        """
         if hasattr(self.tokenizer, "apply_chat_template"):
             ids = self.tokenizer.apply_chat_template(
                 messages,
@@ -267,15 +270,13 @@ class ToolAgentLoop(AgentLoopBase):
                 add_generation_prompt=True,
                 tokenize=True,
             )
-            # Crop like the base loop does, preserving the system prefix. A bare
-            # tail slice drops the system prompt and the tool schemas first --
-            # the tokens the model most needs in order to keep calling tools.
-            return _crop_prompt_ids(
-                _as_token_ids(ids),
-                self._encode_system_prefix(messages),
-                self.prompt_length,
-            )
-        # Fallback: no tool schema injection
+            return _as_token_ids(ids)
+        return super()._render_prompt_ids(messages)
+
+    def _build_prompt_ids_with_tools_sync(
+        self, messages: list[dict[str, Any]]
+    ) -> list[int]:
+        """Budget-fitted prompt ids including the tool schemas."""
         return self._build_prompt_ids_sync(messages)
 
     def _truncate_tool_response(self, text: str) -> str:
@@ -550,6 +551,8 @@ class ToolAgentLoop(AgentLoopBase):
             prompt_ids = prompt_ids + tool_response_ids
             response_mask.extend([0] * len(tool_response_ids))
             user_turns += 1
+
+        self.record_prompt_budget_metrics(metrics)
 
         # Split accumulated prompt_ids back into prompt / response portions.
         n = len(prompt_ids) - len(response_mask)

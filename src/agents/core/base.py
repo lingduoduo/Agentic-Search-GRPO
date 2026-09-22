@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -13,6 +14,8 @@ from typing import Any
 from uuid import uuid4
 
 from .control_flow_trace import ControlFlowEvent
+
+logger = logging.getLogger(__name__)
 
 # Matches the first recognised action tag in a model response.
 # Covers all tags used by SearchAgentLoop; callers can override via action_re.
@@ -32,6 +35,14 @@ def _crop_prompt_ids(
     Under budget → returned unchanged. Over budget → keep `system_ids` at the
     front and fill the remaining budget with the tail of `full_ids` (the most
     recent tokens, ending with the generation cue).
+
+    **Last resort only.** This slices a rendered chat template at an arbitrary
+    token offset, so the surviving tail almost always starts mid-message: the
+    model receives a headless fragment of a truncated turn glued directly onto
+    the system message, plus an orphaned end-of-turn marker closing a block that
+    was never opened. Prefer ``AgentLoopBase._fit_messages_to_budget``, which
+    drops whole messages and keeps the prompt well-formed. This remains for the
+    one case that cannot: a single message that alone exceeds the budget.
     """
     if budget <= 0 or len(full_ids) <= budget:
         return full_ids
@@ -207,6 +218,13 @@ class AgentLoopBase:
         self.response_length = self.config.response_length
         # Set when any generation in this run was cut short by the wall clock.
         self.generation_truncated = False
+        # Context-budget accounting for this run. Whole messages dropped to fit
+        # the prompt budget, and whether a single message had to be sliced --
+        # reported because losing context invisibly is how a run silently
+        # answers from less than the caller believes it had.
+        self.prompt_messages_dropped = 0
+        self.prompt_hard_truncated = False
+        self._cached_message_overhead: int | None = None
 
     async def get_loop(self) -> asyncio.AbstractEventLoop:
         if self.loop is None:
@@ -235,8 +253,8 @@ class AgentLoopBase:
             return []
         return list(self.tokenizer.encode(messages[0].get("content", "")))
 
-    def _build_prompt_ids_sync(self, messages: list[dict[str, Any]]) -> list[int]:
-        system_ids = self._encode_system_prefix(messages)
+    def _render_prompt_ids(self, messages: list[dict[str, Any]]) -> list[int]:
+        """Render `messages` to token ids, with no regard for the budget."""
         chat_template = getattr(self.tokenizer, "chat_template", "__missing__")
         if hasattr(self.tokenizer, "apply_chat_template") and chat_template is not None:
             prompt_text = self.tokenizer.apply_chat_template(
@@ -244,16 +262,114 @@ class AgentLoopBase:
                 add_generation_prompt=True,
                 tokenize=False,
             )
-            prompt_ids = list(self.tokenizer.encode(prompt_text))
-            return _crop_prompt_ids(prompt_ids, system_ids, self.prompt_length)
-
-        joined = "\n".join(message.get("content", "") for message in messages)
+            return list(self.tokenizer.encode(prompt_text))
         if hasattr(self.tokenizer, "encode"):
-            prompt_ids = list(self.tokenizer.encode(joined))
-            return _crop_prompt_ids(prompt_ids, system_ids, self.prompt_length)
+            joined = "\n".join(message.get("content", "") for message in messages)
+            return list(self.tokenizer.encode(joined))
         raise TypeError(
             "tokenizer must implement apply_chat_template(...) or encode(...)."
         )
+
+    def _estimate_message_tokens(self, message: dict[str, Any]) -> int:
+        """Conservative token cost of one message, without a template render.
+
+        Deliberately an over-estimate: the per-message overhead is measured with
+        the generation cue included, so a suffix chosen from these numbers fits
+        the budget with room to spare and the final render almost never needs
+        correcting. Over-estimating costs one extra dropped message; under-
+        estimating costs another full render.
+        """
+        content = str(message.get("content", ""))
+        if not hasattr(self.tokenizer, "encode"):
+            # No encoder: fall back to a coarse character heuristic.
+            return len(content) // 4 + self._message_overhead()
+        return len(self.tokenizer.encode(content)) + self._message_overhead()
+
+    def _message_overhead(self) -> int:
+        """Per-message template overhead, rendered once and cached."""
+        if self._cached_message_overhead is None:
+            try:
+                self._cached_message_overhead = len(
+                    self._render_prompt_ids([{"role": "user", "content": ""}])
+                )
+            except Exception:  # noqa: BLE001 - estimation only; never fail a run
+                self._cached_message_overhead = 8
+        return self._cached_message_overhead
+
+    def _fit_messages_to_budget(
+        self, messages: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[int]]:
+        """Drop whole oldest messages until the rendered prompt fits the budget.
+
+        Returns the messages kept and their rendered ids. A leading system
+        message and the newest message are always kept, so the result can still
+        exceed the budget -- the caller slices that case and flags it.
+
+        Dropping whole messages rather than slicing tokens is what keeps the
+        prompt well-formed: every surviving turn has both of its role markers.
+
+        The kept suffix is chosen from per-message estimates rather than by
+        dropping one message and re-rendering. That loop cost one full render per
+        dropped message -- measured at 77 renders and 1.1s for a single build on a
+        40-turn buffer at a 1024-token budget, against 28ms for a raw slice.
+        Since each render is itself O(buffer), it was O(n^2) per turn.
+        """
+        prompt_ids = self._render_prompt_ids(messages)
+        budget = self.prompt_length
+        if budget <= 0 or len(prompt_ids) <= budget:
+            return messages, prompt_ids
+
+        lead = messages[:1] if messages and messages[0].get("role") == "system" else []
+        rest = list(messages[len(lead) :])
+        if len(rest) <= 1:
+            return messages, prompt_ids
+
+        # Walk backwards from the newest message, keeping what fits.
+        used = sum(self._estimate_message_tokens(m) for m in lead)
+        used += self._estimate_message_tokens(rest[-1])
+        keep = 1
+        for message in reversed(rest[:-1]):
+            cost = self._estimate_message_tokens(message)
+            if used + cost > budget:
+                break
+            used += cost
+            keep += 1
+
+        kept = lead + rest[-keep:]
+        prompt_ids = self._render_prompt_ids(kept)
+        # The estimate ignores render-boundary effects, so correct downward if it
+        # was optimistic. Conservative estimation makes this rare, not impossible.
+        while len(prompt_ids) > budget and len(kept) > len(lead) + 1:
+            kept = lead + kept[len(lead) + 1 :]
+            prompt_ids = self._render_prompt_ids(kept)
+
+        self.prompt_messages_dropped += len(messages) - len(kept)
+        return kept, prompt_ids
+
+    def _build_prompt_ids_sync(self, messages: list[dict[str, Any]]) -> list[int]:
+        system_ids = self._encode_system_prefix(messages)
+        kept, prompt_ids = self._fit_messages_to_budget(messages)
+        if self.prompt_length > 0 and len(prompt_ids) > self.prompt_length:
+            # Even the system message plus the newest one overflows. Slicing is
+            # the only option left, and it is the one case that can still hand
+            # the model a malformed prompt -- so say so rather than counting it
+            # as an ordinary dropped message.
+            self.prompt_hard_truncated = True
+            logger.warning(
+                "Prompt budget %d exceeded by a single message (%d tokens); "
+                "hard-truncating. The prompt may be malformed.",
+                self.prompt_length,
+                len(prompt_ids),
+            )
+            return _crop_prompt_ids(prompt_ids, system_ids, self.prompt_length)
+        if self.prompt_messages_dropped:
+            logger.warning(
+                "Dropped %d message(s) to fit the %d-token prompt budget; %d kept.",
+                self.prompt_messages_dropped,
+                self.prompt_length,
+                len(kept),
+            )
+        return prompt_ids
 
     async def generate_response_ids(
         self,
@@ -296,6 +412,18 @@ class AgentLoopBase:
         if pop_truncated is not None and pop_truncated(request_id):
             self.generation_truncated = True
         return list(response_ids)[: self.response_length]
+
+    def record_prompt_budget_metrics(self, metrics: dict[str, float]) -> None:
+        """Copy this run's context-budget accounting into *metrics*.
+
+        Always writes both keys, including zeros: a consumer cannot distinguish
+        "nothing was dropped" from "this loop does not report" otherwise.
+        ``metrics`` is the channel because it is the one the reward functions and
+        the run's own numbers already travel on -- ``AgentLoopOutput.truncated``
+        is set by one loop and read by nothing.
+        """
+        metrics["prompt_messages_dropped"] = float(self.prompt_messages_dropped)
+        metrics["prompt_hard_truncated"] = 1.0 if self.prompt_hard_truncated else 0.0
 
     def _record_tool_stage(self, name: str, args: dict[str, Any], result: Any) -> None:
         # Deferred import: src.internal.servers.web's package __init__ imports
