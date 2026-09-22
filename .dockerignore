@@ -13,8 +13,10 @@ build
 node_modules
 web/node_modules
 web/dist
-data
-# ...but the demo stack serves these, and they are tracked in git.
+# data/* not data/: docker does not descend into an excluded directory, so a
+# bare `data` leaves the negations below unreachable and the corpus absent from
+# the image. Verified by build, both ways -- see test_docker_stack_contract.py.
+data/*
 !data/corpus.jsonl
 !data/corpora.json
 indexes

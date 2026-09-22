@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -52,21 +53,62 @@ def _healthcheck_paths(service: dict) -> list[str]:
 def _dockerignore_excludes(rel_path: str) -> bool:
     """Whether *rel_path* is excluded from the build context.
 
-    Implements the subset of .dockerignore semantics these files use: a bare
-    directory or path prefix excludes everything under it, and a leading ``!``
-    re-includes. Last matching rule wins, as Docker specifies.
+    Models the rule that matters here and that a naive "last match wins" reading
+    gets wrong: **docker does not descend into an excluded directory**, so a
+    negation for something inside one is unreachable. A bare ``data`` exclusion
+    followed by ``!data/corpus.jsonl`` keeps the corpus *out*; excluding the
+    contents with ``data/*`` lets the negation apply.
+
+    Both behaviours are established by build, not by reading the docs -- see
+    ``test_dockerignore_semantics_match_observed_docker_behaviour``. The first
+    version of this helper implemented last-match-wins only, passed, and shipped
+    a `.dockerignore` that left the corpus out of the image.
     """
-    excluded = False
+    rules = []
     for raw in DOCKERIGNORE.read_text().splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         negate = line.startswith("!")
-        pattern = line[1:] if negate else line
-        pattern = pattern.rstrip("/")
-        if rel_path == pattern or rel_path.startswith(pattern + "/"):
+        rules.append((negate, (line[1:] if negate else line).rstrip("/")))
+    return _excluded_by(rules, rel_path)
+
+
+def _excluded_by(rules: list[tuple[bool, str]], rel_path: str) -> bool:
+    # An ancestor excluded *as a directory* prunes the walk; nothing under it can
+    # be re-included.
+    parts = rel_path.split("/")
+    for depth in range(1, len(parts)):
+        ancestor = "/".join(parts[:depth])
+        if any(not negate and pattern == ancestor for negate, pattern in rules):
+            return True
+    # Otherwise the last matching rule decides.
+    excluded = False
+    for negate, pattern in rules:
+        if rel_path == pattern or fnmatch(rel_path, pattern):
             excluded = not negate
     return excluded
+
+
+def test_dockerignore_semantics_match_observed_docker_behaviour():
+    """Pin the helper against what `docker build` actually did, both ways.
+
+    Without these, the helper is just a restatement of my assumptions -- which is
+    how the broken `.dockerignore` passed review.
+    """
+    excluding_the_directory = [(False, "data"), (True, "data/corpus.jsonl")]
+    assert _excluded_by(excluding_the_directory, "data/corpus.jsonl") is True, (
+        "a bare `data` exclusion makes the negation unreachable -- observed: "
+        "the corpus was absent from the built image"
+    )
+
+    excluding_the_contents = [(False, "data/*"), (True, "data/corpus.jsonl")]
+    assert _excluded_by(excluding_the_contents, "data/corpus.jsonl") is False, (
+        "`data/*` lets the negation apply -- observed: the corpus was present"
+    )
+    assert _excluded_by(excluding_the_contents, "data/eval/domain_relevance.json") is (
+        True
+    ), "everything else under data/ must still be excluded"
 
 
 # ---------------------------------------------------------------------------
