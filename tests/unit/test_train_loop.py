@@ -17,6 +17,7 @@ pytest.importorskip("torch")
 
 from src.model.post_training.grpo.training import (
     CheckpointNotSupportedError,
+    TrainingStepsFailedError,
     TrainLoopConfig,
     train_loop,
 )
@@ -221,3 +222,108 @@ def test_a_capable_trainer_still_resumes(tmp_path) -> None:
 
     assert resumed.counter >= 4
     assert [h["step"] for h in history] == [4, 5]
+
+
+# ---------------------------------------------------------------------------
+# A run whose steps all fail is not a successful run
+# ---------------------------------------------------------------------------
+
+
+class AlwaysFailingTrainer(FakeTrainer):
+    """Every step raises — a broken rollout server, a bad batch, an OOM."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def step_async(self, prompts, ground_truths, metadata=None):
+        self.attempts += 1
+        raise RuntimeError("rollout server is down")
+
+
+def test_a_run_where_every_step_fails_raises() -> None:
+    """Returning an empty history as a successful run hides a no-op run.
+
+    ``train_loop`` skips a failed step so a transient failure cannot kill a long
+    run. Unbounded, that made a completely broken run indistinguishable from a
+    completed one: history == [] and no exception.
+    """
+    trainer = AlwaysFailingTrainer()
+
+    with pytest.raises(TrainingStepsFailedError) as excinfo:
+        _run(train_loop(trainer, ["p"], ["gt"], TrainLoopConfig(max_steps=10)))
+
+    assert "rollout server is down" in str(excinfo.value)
+
+
+def test_a_broken_run_stops_early_instead_of_burning_the_budget() -> None:
+    """Consecutive failures mean broken, not flaky — stop, don't spend 1000 steps."""
+    trainer = AlwaysFailingTrainer()
+
+    with pytest.raises(TrainingStepsFailedError):
+        _run(train_loop(trainer, ["p"], ["gt"], TrainLoopConfig(max_steps=500)))
+
+    assert trainer.attempts < 10, (
+        f"gave up after {trainer.attempts} attempts; should stop at the threshold"
+    )
+
+
+def test_a_short_run_that_wholly_fails_still_raises() -> None:
+    """Fewer steps than the threshold must not slip past it."""
+    trainer = AlwaysFailingTrainer()
+
+    with pytest.raises(TrainingStepsFailedError):
+        _run(train_loop(trainer, ["p"], ["gt"], TrainLoopConfig(max_steps=1)))
+
+
+def test_isolated_failures_are_still_skipped() -> None:
+    """The tolerance that motivated the skip must survive: one bad step is fine."""
+
+    class OneBadStepTrainer(FakeTrainer):
+        async def step_async(self, prompts, ground_truths, metadata=None):
+            self.counter += 1
+            if self.counter == 2:
+                raise RuntimeError("transient")
+            self.steps_run.append(self.counter)
+            return {"loss": 0.0}
+
+    trainer = OneBadStepTrainer()
+
+    history = _run(train_loop(trainer, ["p"], ["gt"], TrainLoopConfig(max_steps=4)))
+
+    assert [h["step"] for h in history] == [0, 2, 3]
+
+
+def test_the_failure_streak_resets_on_success() -> None:
+    """Failures below the threshold, separated by a success, must not accumulate."""
+
+    class AlternatingTrainer(FakeTrainer):
+        async def step_async(self, prompts, ground_truths, metadata=None):
+            self.counter += 1
+            if self.counter % 2 == 1:
+                raise RuntimeError("every other step")
+            self.steps_run.append(self.counter)
+            return {"loss": 0.0}
+
+    trainer = AlternatingTrainer()
+
+    history = _run(train_loop(trainer, ["p"], ["gt"], TrainLoopConfig(max_steps=6)))
+
+    assert len(history) == 3, "alternating failures should never hit the threshold"
+
+
+def test_the_threshold_can_be_disabled() -> None:
+    """0 restores the previous unbounded-skip behaviour for callers that want it."""
+    trainer = AlwaysFailingTrainer()
+
+    history = _run(
+        train_loop(
+            trainer,
+            ["p"],
+            ["gt"],
+            TrainLoopConfig(max_steps=3, max_consecutive_failures=0),
+        )
+    )
+
+    assert history == []
+    assert trainer.attempts == 3
