@@ -71,6 +71,36 @@ jobs:
       - name: Verify the image build context
         run: docker build -f docker/Dockerfile.contract --progress=plain .
 
+  docker-image:
+    name: Docker image (full build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The image pulls torch, transformers, faiss and pyserini. A local attempt
+      # took host free space from 24Gi to 11Gi and was abandoned, so until this
+      # job ran, nothing had ever established that requirements.txt installs on
+      # linux at all. Runners have more room than the laptop did, but not much:
+      # reclaim the preinstalled toolchains first.
+      - name: Reclaim runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h /
+      - name: Build the application image
+        run: docker build -t agentic-search:ci .
+      # A build proves the layers resolve; it does not prove the app imports.
+      # uvicorn is not started here -- the web app's lifespan loads a model and
+      # wants Postgres/Redis. Importing the ASGI module is the part a build can
+      # honestly check.
+      - name: Import the ASGI app inside the image
+        run: |
+          docker run --rm agentic-search:ci \
+            python -c "import src.internal.servers.web.app as m; print('imported', m.__name__)"
+      - name: Report image size
+        run: docker image ls agentic-search:ci
+
   frontend:
     name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest
