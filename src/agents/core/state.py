@@ -1,9 +1,17 @@
 """Shared runtime state models for agent orchestration.
 
-These containers keep request, routing, planning, retrieval, and tool execution
-state explicit without pulling in training dependencies. They are intentionally
-small, slotted dataclasses because agent loops may create many of them during
-rollout generation.
+These containers keep request, retrieval, and tool execution state explicit
+without pulling in training dependencies. They are intentionally small, slotted
+dataclasses because agent loops may create many of them during rollout
+generation.
+
+Scope note: this module holds only state the loops actually keep. It previously
+also carried a planning/routing vocabulary -- ``Plan``, ``PlanStep``,
+``TaskNode``, ``TaskType``, ``ToolType``, ``RouteDecision``,
+``RetrievedDocument``, ``ToolCall``, ``ToolResult`` -- that no loop ever wrote
+to, reachable only through package re-exports. Routing lives in
+``src/internal/routing/``; planning, where it exists, is the search loop's
+subquestion tracking. Re-adding a type here is a claim that a loop maintains it.
 """
 
 from __future__ import annotations
@@ -17,18 +25,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TaskStatus",
-    "ToolType",
-    "TaskType",
     "UserRequest",
-    "RetrievedDocument",
-    "ToolCall",
-    "ToolResult",
-    "PlanStep",
-    "Plan",
-    "RouteDecision",
     "PerformanceMetrics",
     "ToolExecutionResult",
-    "TaskNode",
     "AgentState",
     "Retriever",
     "Citation",
@@ -36,32 +35,16 @@ __all__ = [
 
 
 class TaskStatus(Enum):
-    """Task execution status."""
+    """Terminal status of one executed tool call.
 
-    PENDING = "pending"
-    RUNNING = "running"
+    Only outcomes, deliberately: nothing in this repo schedules, queues or
+    retries a tool, so there is no PENDING/RUNNING/RETRYING to observe. A tool
+    is invoked inline by ``ToolRegistry.invoke`` and reports how it finished.
+    """
+
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
-    RETRYING = "retrying"
-
-
-class ToolType(Enum):
-    """High-level tool category."""
-
-    DATA_RETRIEVAL = "data_retrieval"
-    ANALYSIS = "analysis"
-    GENERATION = "generation"
-
-
-class TaskType(Enum):
-    """Execution task type kept for orchestration compatibility."""
-
-    RETRIEVAL = "retrieval"
-    ROUTING = "routing"
-    PLANNING = "planning"
-    TOOL_EXECUTION = "tool_execution"
-    RESPONSE_GENERATION = "response_generation"
 
 
 @dataclass(slots=True)
@@ -70,72 +53,6 @@ class UserRequest:
     channel: str
     message: str
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class RetrievedDocument:
-    doc_id: str
-    source: str
-    text: str
-    score: float
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class ToolCall:
-    tool_name: str
-    arguments: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class ToolResult:
-    tool_name: str
-    success: bool
-    output: Any
-    error: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class PlanStep:
-    step_id: str
-    description: str
-    needs_tool: bool = False
-    tool_call: ToolCall | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class Plan:
-    workflow: str
-    steps: list[PlanStep]
-    requires_human_approval: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class RouteDecision:
-    intent: str
-    confidence: float
-    should_retrieve: bool = True
-    should_plan: bool = False
-    should_use_tools: bool = False
-    target_agent: str = "qa"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -168,33 +85,6 @@ class ToolExecutionResult:
     def success(self) -> bool:
         return self.status is TaskStatus.COMPLETED
 
-    def to_tool_result(self) -> ToolResult:
-        return ToolResult(
-            tool_name=self.tool_name,
-            success=self.success,
-            output=self.result,
-            error=self.error_message,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class TaskNode:
-    task_id: str
-    tool_name: str
-    tool_type: ToolType
-    params: dict[str, Any]
-    dependencies: list[str]
-    priority: int
-    max_retries: int
-    timeout: float
-    is_critical: bool
-    task_type: TaskType = TaskType.TOOL_EXECUTION
-    status: TaskStatus = TaskStatus.PENDING
-    result: ToolExecutionResult | None = None
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -220,6 +110,13 @@ class Citation:
 
 @dataclass(slots=True)
 class AgentState:
+    """Retrieval state for one agent run.
+
+    Every field here is written by a loop or a component: ``SearchAgentLoop``
+    constructs it, ``EvidenceJudge`` sets the score, ``SearchTool`` and
+    ``RerankerTool`` record rounds, ``AnswerGenerator`` sets citations.
+    """
+
     request_id: str
     user_request: UserRequest
     question: str = ""
@@ -228,14 +125,6 @@ class AgentState:
     evidence_score: float = 0.0
     search_rounds: int = 0
     citations: list[Citation] = field(default_factory=list)
-    route: RouteDecision | None = None
-    retrieved_user_docs: list[RetrievedDocument] = field(default_factory=list)
-    retrieved_policy_docs: list[RetrievedDocument] = field(default_factory=list)
-    plan: Plan | None = None
-    tool_results: list[ToolResult] = field(default_factory=list)
-    draft_response: str | None = None
-    final_response: str | None = None
-    trace: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.question:
@@ -256,14 +145,6 @@ class AgentState:
 
     def set_citations(self, citations: list[Citation]) -> None:
         self.citations = list(citations)
-
-    def record_trace(self, event: str, **payload: Any) -> None:
-        self.trace.append({"event": event, **payload})
-
-    def add_tool_result(self, result: ToolResult | ToolExecutionResult) -> None:
-        if isinstance(result, ToolExecutionResult):
-            result = result.to_tool_result()
-        self.tool_results.append(result)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

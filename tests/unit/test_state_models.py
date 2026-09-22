@@ -7,14 +7,8 @@ import asyncio
 from src import (
     AgentState,
     FunctionTool,
-    PerformanceMetrics,
-    RouteDecision,
-    TaskStatus,
     ToolAgentLoop,
     ToolAgentLoopConfig,
-    ToolCall,
-    ToolExecutionResult,
-    ToolResult,
     UserRequest,
 )
 from src.internal.tools import ToolEffect
@@ -54,42 +48,20 @@ class _SequencedServer:
         return response
 
 
-def test_agent_state_keeps_runtime_fields_structured_and_slotted():
-    request = UserRequest(user_id="u1", channel="web", message="Find docs")
+def test_agent_state_is_slotted_and_serialisable():
+    """Slotted so rollout generation can create many cheaply; asdict-able for traces.
+
+    The per-field defaults are covered in test_agent_state.py; this pins the two
+    structural properties that module does not.
+    """
     state = AgentState(
         request_id="req-1",
-        user_request=request,
-        route=RouteDecision(intent="qa", confidence=0.91),
+        user_request=UserRequest(user_id="u1", channel="web", message="Find docs"),
     )
-
-    state.add_tool_result(ToolResult("search", True, ["doc-1"]))
-    state.record_trace("route_selected", target_agent="qa")
 
     assert not hasattr(state, "__dict__")
-    assert state.tool_results[0].success is True
-    assert state.question == "Find docs"
-    assert state.previous_queries == []
-    assert state.retrieved_docs == []
-    assert state.evidence_score == 0.0
-    assert state.search_rounds == 0
-    assert state.citations == []
-    assert state.to_dict()["route"]["confidence"] == 0.91
     assert state.to_dict()["question"] == "Find docs"
-    assert state.trace == [{"event": "route_selected", "target_agent": "qa"}]
-
-
-def test_tool_execution_result_converts_to_simple_tool_result():
-    result = ToolExecutionResult(
-        tool_name="search",
-        status=TaskStatus.COMPLETED,
-        result={"hits": 2},
-        performance=PerformanceMetrics(execution_time=0.12),
-    )
-
-    simple = result.to_tool_result()
-
-    assert simple == ToolResult("search", True, {"hits": 2})
-    assert result.to_dict()["status"] is TaskStatus.COMPLETED
+    assert state.to_dict()["request_id"] == "req-1"
 
 
 def test_tool_agent_loop_records_structured_tool_trace():
@@ -120,7 +92,3 @@ def test_tool_agent_loop_records_structured_tool_trace():
     assert output.trajectory_messages[-2] == {"role": "tool", "content": "HELLO"}
     assert output.action_trace is not None
     assert "TaskStatus.COMPLETED" in output.action_trace
-    assert ToolCall("echo", {"text": "hello"}).to_dict() == {
-        "tool_name": "echo",
-        "arguments": {"text": "hello"},
-    }
