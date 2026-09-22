@@ -1,5 +1,3 @@
-version: "3.8"
-
 # Full local stack for Agentic Search.
 #
 # Bring up infrastructure only:
@@ -98,9 +96,12 @@ services:
     restart: unless-stopped
     environment:
       <<: *app-env
+    # The corpus is read from the image, not from the app_data volume: that
+    # volume mounts over /data and would shadow anything baked there. /data
+    # stays for writable state (the sqlite DB below).
     command: >
       python -m src.internal.servers.retrieval.demo
-      --corpus_path /data/corpus.jsonl
+      --corpus_path /app/data/corpus.jsonl
       --host 0.0.0.0
       --port 8000
     volumes:
