@@ -154,6 +154,12 @@ def test_resolver_is_exported_from_public_package():
 
 
 def test_build_prompt_ids_falls_back_to_encode():
+    """Over budget, whole messages are dropped rather than the text sliced.
+
+    This previously asserted ``len(prompt_ids) == 4`` -- the budget filled
+    exactly by slicing "abc\nde" mid-message. Dropping the older message whole
+    leaves 2 tokens: under budget, and a prompt with no severed message in it.
+    """
     loop = ConcreteAgentLoop(
         tokenizer=DummyTokenizerWithEncode(),
         server_manager=DummyServerManager([]),
@@ -164,7 +170,10 @@ def test_build_prompt_ids_falls_back_to_encode():
             [{"role": "user", "content": "abc"}, {"role": "assistant", "content": "de"}]
         )
     )
-    assert len(prompt_ids) == 4
+    assert len(prompt_ids) <= 4
+    assert prompt_ids == [ord("d"), ord("e")]  # the newest message, intact
+    assert loop.prompt_messages_dropped == 1
+    assert loop.prompt_hard_truncated is False
 
 
 def test_build_prompt_ids_sync_with_chat_template_returns_int_list():

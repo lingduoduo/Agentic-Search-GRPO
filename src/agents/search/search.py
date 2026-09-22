@@ -461,6 +461,9 @@ class SearchAgentLoop(AgentLoopBase):
             "plateau_early_stop": 0.0,
             "effective_search_limit": 0.0,
             "adaptive_budget_bonus": 0.0,
+            # Context-budget accounting; filled in by _finalize_run_metrics.
+            "prompt_messages_dropped": 0.0,
+            "prompt_hard_truncated": 0.0,
         }
 
     @staticmethod
@@ -1969,6 +1972,7 @@ class SearchAgentLoop(AgentLoopBase):
                 details={"citation_count": len(answer_result.citations)},
             )
 
+        self.record_prompt_budget_metrics(metrics)
         self._finalize_run_metrics(
             metrics,
             rounds_used=state.search_rounds,
