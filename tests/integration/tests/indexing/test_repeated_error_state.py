@@ -13,7 +13,6 @@ import httpx  # noqa: E402
 # celery docprocessing utils removed
 from tests.integration.common_utils.types import DocumentSource  # noqa: E402
 
-# MockConnectorCheckpoint removed
 from tests.integration.common_utils.types import InputType  # noqa: E402
 
 # get_connector_credential_pair_from_id removed
@@ -45,7 +44,7 @@ def test_repeated_error_state_detection_and_recovery(
     # First, set up the mock server to consistently fail
     error_response = {
         "documents": [],
-        "checkpoint": MockConnectorCheckpoint(has_more=False).model_dump(mode="json"),
+        "checkpoint": {"has_more": False},
         "failures": [],
         "unhandled_exception": "Simulated unhandled error for testing repeated errors",
     }
@@ -144,7 +143,7 @@ def test_repeated_error_state_detection_and_recovery(
     # Now set up the mock server to succeed
     success_response = {
         "documents": [test_doc.model_dump(mode="json")],
-        "checkpoint": MockConnectorCheckpoint(has_more=False).model_dump(mode="json"),
+        "checkpoint": {"has_more": False},
         "failures": [],
     }
 

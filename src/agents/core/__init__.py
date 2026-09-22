@@ -1,12 +1,8 @@
 """Framework primitives shared by every agent loop.
 
-These modules are *not* agent loops — they are the base class, state
-dataclasses, graph scaffolding, and control-flow tracing that the
+These modules are *not* agent loops — they are the base class, the state
+dataclasses, and the control-flow tracing that the
 ``generation``/``search``/``tool`` loop packages are built from.
-
-``graph_base`` is intentionally left as a submodule (import it via
-``src.agents.core.graph_base``): its ``AgentState`` TypedDict collides with
-``state.AgentState``, so re-exporting both here would be ambiguous.
 """
 
 from .base import AgentLoopBase as AgentLoopBase

@@ -38,7 +38,6 @@ from .agents.core.state import ToolExecutionResult as ToolExecutionResult
 from .agents.core.state import UserRequest as UserRequest
 from .agents.tool import ToolAgentLoop as ToolAgentLoop
 from .agents.tool import ToolAgentLoopConfig as ToolAgentLoopConfig
-from .internal.connectors import ConnectorCheckpoint as ConnectorCheckpoint
 from .internal.connectors import ConnectorFailure as ConnectorFailure
 from .internal.connectors import Document as Document
 from .internal.connectors import HierarchyNode as HierarchyNode
