@@ -122,3 +122,69 @@ def test_search_agent_state_is_not_exported() -> None:
 
     assert not hasattr(state_module, "SearchAgentState")
     assert "SearchAgentState" not in state_module.__all__
+
+
+def test_orchestration_vocabulary_stays_removed() -> None:
+    """These types described a planning/routing layer no loop ever maintained.
+
+    Each was reachable only through package re-exports, so nothing failed when
+    they drifted from reality. Re-adding one is a claim that a loop writes it.
+    """
+    import src
+    import src.agents.core.state as state_module
+
+    removed = [
+        "Plan",
+        "PlanStep",
+        "RetrievedDocument",
+        "RouteDecision",
+        "TaskNode",
+        "TaskType",
+        "ToolCall",
+        "ToolResult",
+        "ToolType",
+    ]
+    for name in removed:
+        assert not hasattr(state_module, name), f"{name} came back to state.py"
+        assert name not in state_module.__all__
+        assert not hasattr(src, name), f"{name} is exported from src again"
+
+
+def test_route_decision_cannot_resolve_to_the_unused_class() -> None:
+    """`from src import RouteDecision` used to return the dead state.py class.
+
+    The live one is src.internal.routing.route.RouteDecision. Two classes shared
+    the name and the package-level export resolved to the one nothing wrote to.
+    """
+    import src
+    from src.internal.routing.route import RouteDecision as LiveRouteDecision
+
+    assert not hasattr(src, "RouteDecision")
+    assert LiveRouteDecision.__module__ == "src.internal.routing.route"
+
+
+def test_task_status_has_only_terminal_outcomes() -> None:
+    """PENDING/RUNNING/RETRYING implied a scheduler and a retry path; neither exists."""
+    from src.agents.core.state import TaskStatus
+
+    assert {s.name for s in TaskStatus} == {"COMPLETED", "FAILED", "SKIPPED"}
+
+
+def test_agent_state_has_no_unwritten_fields() -> None:
+    """Every field must be one a loop or component actually writes."""
+    import dataclasses
+
+    from src.agents.core.state import AgentState
+
+    assert {f.name for f in dataclasses.fields(AgentState)} == {
+        "request_id",
+        "user_request",
+        "question",
+        "previous_queries",
+        "retrieved_docs",
+        "evidence_score",
+        "search_rounds",
+        "citations",
+    }
+    for gone in ("record_trace", "add_tool_result"):
+        assert not hasattr(AgentState, gone), f"{gone} was test-only; it stays removed"
