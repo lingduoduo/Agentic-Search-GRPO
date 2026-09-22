@@ -1313,12 +1313,33 @@ class CheckpointNotSupportedError(RuntimeError):
     """
 
 
+class TrainingStepsFailedError(RuntimeError):
+    """A training run produced no successful step.
+
+    ``train_loop`` skips a failed step so one bad rollout cannot kill a long
+    run. Unbounded, that made a wholly broken run indistinguishable from a
+    completed one: the loop logged a warning per step, returned an empty
+    history, and raised nothing. A caller that checks only for an exception --
+    every caller -- recorded a successful run that trained on nothing.
+
+    Raised when ``max_consecutive_failures`` steps fail in a row, or when the
+    loop finishes having never completed a step. Set
+    ``TrainLoopConfig.max_consecutive_failures = 0`` to restore the old
+    unbounded-skip behaviour.
+    """
+
+
 @dataclass
 class TrainLoopConfig:
     max_steps: int
     ckpt_dir: str | None = None
     ckpt_every: int = 0  # 0 disables periodic checkpointing
     step_timeout_s: float | None = None  # None disables the per-step timeout
+    # Consecutive failed steps that end the run. Consecutive rather than total:
+    # isolated failures are the transient case the skip exists for, while a
+    # streak means the trainer is broken and further steps only waste compute.
+    # 0 disables the guard.
+    max_consecutive_failures: int = 3
 
 
 def _require_checkpoint_hook(trainer: Any, hook: str) -> Callable[[str], Any]:
@@ -1380,6 +1401,8 @@ async def train_loop(
 
     start_step = load_checkpoint(trainer, resume_from) if resume_from else 0
     history: list[dict] = []
+    consecutive_failures = 0
+    last_failure: Exception | None = None
 
     for step in range(start_step, config.max_steps):
         try:
@@ -1392,8 +1415,19 @@ async def train_loop(
             logger.warning(
                 "Training step %d failed or timed out (%s); skipping.", step, exc
             )
+            consecutive_failures += 1
+            last_failure = exc
+            if (
+                config.max_consecutive_failures
+                and consecutive_failures >= config.max_consecutive_failures
+            ):
+                raise TrainingStepsFailedError(
+                    f"{consecutive_failures} consecutive training steps failed "
+                    f"(through step {step}); last error: {exc}"
+                ) from exc
             continue
 
+        consecutive_failures = 0
         record = {**metrics, "step": step}
         history.append(record)
         if on_metrics is not None:
@@ -1408,6 +1442,19 @@ async def train_loop(
             save_checkpoint(
                 trainer, str(Path(config.ckpt_dir) / f"step_{step + 1}"), step + 1
             )
+
+    # A run that never completed a step is not a finished run, however few steps
+    # it was asked for. Without this, a max_steps below the threshold still
+    # returned an empty history and no error.
+    if (
+        not history
+        and config.max_steps > start_step
+        and config.max_consecutive_failures
+    ):
+        raise TrainingStepsFailedError(
+            f"no training step completed across {config.max_steps - start_step} "
+            f"attempt(s); last error: {last_failure}"
+        ) from last_failure
 
     return history
 
