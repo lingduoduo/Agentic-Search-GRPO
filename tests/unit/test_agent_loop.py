@@ -1,6 +1,7 @@
 """Unit tests for src.agent_loop."""
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -24,6 +25,7 @@ from src import (
     list_registered_agent_loops,
     register,
 )
+from src.agents.components.loop_controller import LoopController
 from src.agents.core.base import (
     AgentLoopOutput,
     resolve_agent_name,
@@ -771,6 +773,64 @@ def test_loop_early_stops_zero_by_default():
 
     assert output.metrics["search_rounds"] == 2.0
     assert output.metrics["early_stops"] == 0.0
+
+
+def _two_round_loop_at_budget(max_search_limit):
+    """The plateau harness, but with the round-2 search budget configurable.
+
+    Round 2 has zero marginal evidence gain, so the plateau condition holds. With
+    ``max_search_limit=2`` round 2 is also *at* the budget, which is the case the
+    two stop reasons overlap on.
+    """
+    loop = _two_round_plateau_loop(evidence_plateau_min_gain=0.05)
+    loop.search_config = dataclasses.replace(
+        loop.search_config, max_search_limit=max_search_limit
+    )
+    loop._loop_controller = LoopController(loop.search_config)
+    return loop
+
+
+def _information_blocks(output):
+    return [
+        m["content"]
+        for m in output.trajectory_messages
+        if m["role"] == "user" and "<information>" in m["content"]
+    ]
+
+
+def test_the_final_round_within_budget_still_reaches_the_model():
+    """A round at the search budget must still have its evidence injected.
+
+    LoopController checks the budget before the plateau, and SearchAgentLoop acts
+    only on PLATEAU -- so at the budget the round proceeds normally and its
+    <information> is appended. That ordering is load-bearing: drop the budget arm
+    and this round instead early-stops on the plateau, and the last round's
+    evidence never reaches the model that has to answer from it.
+    """
+    loop = _two_round_loop_at_budget(max_search_limit=2)
+
+    output = asyncio.run(
+        loop.run([{"role": "user", "content": "research this"}], {"temperature": 0.0})
+    )
+
+    assert output.metrics["search_rounds"] == 2.0
+    blocks = _information_blocks(output)
+    assert any("Beta body" in block for block in blocks), (
+        f"round 2's evidence never reached the model; information blocks seen: {blocks}"
+    )
+    assert output.metrics["plateau_early_stop"] == 0.0
+
+
+def test_a_plateau_below_budget_does_early_stop():
+    """The contrast case: with budget to spare, the same plateau stops the search."""
+    loop = _two_round_loop_at_budget(max_search_limit=6)
+
+    output = asyncio.run(
+        loop.run([{"role": "user", "content": "research this"}], {"temperature": 0.0})
+    )
+
+    assert output.metrics["plateau_early_stop"] == 1.0
+    assert not any("Beta body" in block for block in _information_blocks(output))
 
 
 def test_search_agent_loop_injects_search_evaluation_feedback():
