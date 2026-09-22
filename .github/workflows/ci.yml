@@ -57,6 +57,20 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit/ -q --tb=short
 
+  docker-context:
+    name: Docker build context
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Builds docker/Dockerfile.contract, which asserts the two things about
+      # the image that unit tests cannot: that .dockerignore lets the corpus
+      # through, and that the editable install registers the package rather
+      # than relying on the working directory. Both of those shipped broken
+      # (#622, #623) because nothing here ran a build. Skips requirements.txt,
+      # so this is seconds rather than the minutes a full image costs.
+      - name: Verify the image build context
+        run: docker build -f docker/Dockerfile.contract --progress=plain .
+
   frontend:
     name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest

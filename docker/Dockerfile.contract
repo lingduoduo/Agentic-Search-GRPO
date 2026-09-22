@@ -1,0 +1,83 @@
+# Build-context contract for the application image. Not a deployable image.
+#
+# Two things about the image cannot be observed without running a build, and both
+# were got wrong without one:
+#
+#   #622  `pip install -e .` ran before `COPY . .`, so setuptools discovered no
+#         packages and wrote an editable finder with an empty MAPPING. The
+#         container booted only because WORKDIR put the cwd on sys.path.
+#   #623  claimed `.dockerignore` negations under an excluded directory are
+#         unreachable, and "fixed" a file that already worked. Measured: `data`
+#         with no negations keeps the corpus out; `data` *with* negations and
+#         `data/*` with negations both let it in. The one broken form is the
+#         pre-#622 one, and this file is what distinguishes them.
+#
+# A unit test cannot settle either question, because it models the tool and then
+# agrees with whatever the author assumed -- which is how both mistakes shipped.
+# This runs the tool.
+#
+# Deliberately skips `requirements.txt`: torch, transformers, faiss and pyserini
+# are minutes and gigabytes, and neither defect involves them. What it does
+# exercise is real -- docker applies the repo's own .dockerignore to the build
+# context whichever Dockerfile is passed with -f.
+#
+#   docker build -f docker/Dockerfile.contract .
+
+FROM python:3.11-slim
+WORKDIR /app
+
+COPY . .
+
+# --- the build context carries what the stack is pointed at --------------------
+RUN test -f /app/data/corpus.jsonl \
+      || (echo "FAIL: data/corpus.jsonl is not in the image." \
+          && echo "      data/ is excluded with no negation re-including the" \
+          && echo "      corpus. Add !data/corpus.jsonl (buildkit honours it)." && exit 1) \
+    && echo "OK: corpus present ($(wc -c < /app/data/corpus.jsonl) bytes)"
+
+RUN test -f /app/data/corpora.json \
+      || (echo "FAIL: data/corpora.json is not in the image." && exit 1) \
+    && echo "OK: corpus registry present"
+
+# ...and nothing else from data/, which holds eval outputs and local indexes.
+RUN entries="$(ls /app/data)" \
+    && echo "$entries" | tr '\n' ' ' | grep -qv . 2>/dev/null; \
+    unexpected="$(ls /app/data | grep -v -e '^corpus.jsonl$' -e '^corpora.json$' || true)"; \
+    if [ -n "$unexpected" ]; then \
+      echo "FAIL: unexpected entries under data/: $unexpected"; exit 1; \
+    fi; \
+    echo "OK: data/ carries only the two files the demo stack needs"
+
+# --- the editable install registers the package, not just the cwd --------------
+RUN pip install --no-cache-dir --no-deps -e . > /dev/null 2>&1 \
+    && python - <<'PY'
+import glob, pathlib, sys
+
+finders = glob.glob("/usr/local/lib/python*/site-packages/__editable___*_finder.py")
+if not finders:
+    sys.exit("FAIL: no editable finder was written")
+mapping = next(
+    line
+    for line in pathlib.Path(finders[0]).read_text().splitlines()
+    if line.startswith("MAPPING")
+)
+if "'src'" not in mapping:
+    sys.exit(
+        f"FAIL: the editable install registered no packages ({mapping}).\n"
+        "      `pip install -e .` must come after `COPY . .`, or setuptools\n"
+        "      discovers nothing and `import src` works only from WORKDIR."
+    )
+print(f"OK: {mapping}")
+PY
+
+# `find_spec` rather than `import src`: resolution is what is under test, and
+# importing would pull torch, which this image deliberately does not install.
+RUN cd / && python - <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.find_spec("src")
+if spec is None or not spec.origin:
+    sys.exit("FAIL: `src` does not resolve from a working directory other than /app")
+print(f"OK: src resolves from / -> {spec.origin}")
+PY
