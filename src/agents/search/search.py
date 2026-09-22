@@ -1281,7 +1281,6 @@ class SearchAgentLoop(AgentLoopBase):
             prev_evidence_score=metrics["evidence_score_final"],
             curr_evidence_score=metrics["evidence_score_final"],
             consecutive_rejections=consecutive_rejections,
-            model_emitted_answer=True,
         )
         decision = self._loop_controller.final_answer_decision(snapshot)
         if decision.verb is AnswerVerb.ACCEPT:
@@ -1578,7 +1577,6 @@ class SearchAgentLoop(AgentLoopBase):
             prev_evidence_score=prev_evidence_for_round,
             curr_evidence_score=state.evidence_score,
             consecutive_rejections=consecutive_rejections,
-            model_emitted_answer=False,
         )
         plateau_stop = self._loop_controller.should_continue_searching(plateau_snapshot)
         if plateau_stop.reason is StopReason.PLATEAU:

@@ -19,7 +19,6 @@ def _snap(**over):
         prev_evidence_score=0.5,
         curr_evidence_score=0.9,
         consecutive_rejections=0,
-        model_emitted_answer=False,
     )
     base.update(over)
     return LoopSnapshot(**base)
@@ -123,3 +122,42 @@ def test_effective_limit_falls_back_to_max_turns_when_limit_none():
     """With max_search_limit=None, effective_search_limit falls back to max_turns."""
     ctl = _ctl(max_search_limit=None, max_turns=3, max_search_limit_cap=10)
     assert ctl.effective_search_limit(1) == 3
+
+
+def test_snapshot_carries_no_field_the_controller_cannot_read() -> None:
+    """``model_emitted_answer`` was structurally redundant, not merely unread.
+
+    It was set True immediately before every ``final_answer_decision`` call and
+    False immediately before every ``should_continue_searching`` call. Each method
+    is reachable from exactly one of those sites, so each only ever saw one
+    possible value: the flag could not disambiguate anything, and a "Phase 2
+    state machine" reading it would be reading which method it already is.
+
+    A field on a snapshot is a claim that a decision depends on it.
+    """
+    import dataclasses
+
+    fields = {f.name for f in dataclasses.fields(LoopSnapshot)}
+    assert "model_emitted_answer" not in fields
+    assert fields == {
+        "rounds_used",
+        "num_subquestions",
+        "evidence_sufficient",
+        "prev_evidence_score",
+        "curr_evidence_score",
+        "consecutive_rejections",
+    }
+
+
+def test_both_controller_decisions_still_work_without_it() -> None:
+    ctl = _ctl(max_search_limit=5, max_answer_rejections=3)
+
+    assert (
+        ctl.should_continue_searching(
+            _snap(prev_evidence_score=0.2, curr_evidence_score=0.9)
+        ).reason
+        is StopReason.CONTINUE
+    )
+    assert ctl.final_answer_decision(_snap(evidence_sufficient=True)).verb is (
+        AnswerVerb.ACCEPT
+    )
