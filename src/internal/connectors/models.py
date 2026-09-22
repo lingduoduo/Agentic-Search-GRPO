@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -51,37 +50,6 @@ class ConnectorFailure:
     message: str
     exception_type: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ConnectorCheckpoint:
-    """Small checkpoint object for incremental connectors."""
-
-    has_more: bool = False
-    cursor: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable checkpoint dictionary."""
-        return asdict(self)
-
-    def to_json(self) -> str:
-        """Serialize the checkpoint for persistence."""
-        return json.dumps(self.to_dict(), sort_keys=True)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ConnectorCheckpoint":
-        """Build a checkpoint, ignoring unknown keys for forward compatibility."""
-        field_names = {f.name for f in fields(cls)}
-        return cls(**{key: value for key, value in data.items() if key in field_names})
-
-    @classmethod
-    def from_json(cls, checkpoint_json: str) -> "ConnectorCheckpoint":
-        """Deserialize a checkpoint from a JSON object string."""
-        data = json.loads(checkpoint_json)
-        if not isinstance(data, dict):
-            raise ValueError("Checkpoint JSON must be an object.")
-        return cls.from_dict(data)
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,6 @@ from tests.integration.common_utils.types import DocumentSource  # noqa: E402
 
 # EXTERNAL_USER_EMAILS removed
 # EXTERNAL_USER_GROUP_IDS removed
-# MockConnectorCheckpoint removed
 # Document model not used — replaced with dict
 from tests.integration.common_utils.types import InputType  # noqa: E402
 
@@ -53,9 +52,7 @@ def _setup_mock_connector(
         json=[
             {
                 "documents": [test_doc.model_dump(mode="json")],
-                "checkpoint": MockConnectorCheckpoint(has_more=False).model_dump(
-                    mode="json"
-                ),
+                "checkpoint": {"has_more": False},
                 "failures": [],
             }
         ],
