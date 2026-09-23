@@ -102,6 +102,16 @@ jobs:
             exit 1
           fi
           echo "OK: no nvidia/cuda/triton packages in the image"
+      # Guards the USER directive: a later Dockerfile edit reinstating root would
+      # otherwise pass every other check silently.
+      - name: Assert the image does not run as root
+        run: |
+          uid="$(docker run --rm agentic-search:ci id -u)"
+          if [ "$uid" = "0" ]; then
+            echo "FAIL: the image runs as root (see the USER directive)"
+            exit 1
+          fi
+          echo "OK: runs as uid $uid"
       - name: Report image size
         run: docker image ls agentic-search:ci
 
@@ -137,6 +147,14 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"queries":["vector search"],"topk":2}'
           echo
+      # The non-root user has to be able to write AGENTIC_SEARCH_WEB_DB_PATH on
+      # the app_data volume. A healthy web service already implies it -- the
+      # store is opened during create_web_app() -- but assert the file to make
+      # the reason a failure would appear here explicit.
+      - name: The app owns its database on the volume
+        run: |
+          docker compose -f docker/docker-compose.yml exec -T web \
+            sh -c 'id -u && ls -ln /data/agentic_search.db'
       - name: Stack state
         if: always()
         run: docker compose -f docker/docker-compose.yml ps
