@@ -19,6 +19,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Dependencies first, so editing source does not reinstall them.
 COPY requirements.txt ./
+
+# CPU-only torch before requirements.txt. The default linux torch wheel drags in
+# 33 GPU packages -- nvidia-cublas, nvidia-cudnn-cu13, nvidia-nccl-cu13,
+# cuda-toolkit, triton and the rest -- and nothing this image runs can use them:
+# every serving device default is "cpu" (document_index/embedding.py,
+# document_index/retrieval.py, memory/service.py), the one cuda selection is the
+# offline index-build CLI which degrades through torch.cuda.is_available(), and
+# the compose stack maps no GPU device. Installing the CPU wheel first leaves
+# torch>=2.3.0 already satisfied, so the line below does not reach for it.
+# The CI job asserts no nvidia/cuda/triton package survives in the image.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
