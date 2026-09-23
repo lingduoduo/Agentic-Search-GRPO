@@ -45,6 +45,29 @@ COPY --from=frontend-builder /app/web/dist ./web/dist
 # dependency, PyJWT included, is already pinned in requirements.txt.
 RUN pip install --no-cache-dir --no-deps -e .
 
+# Run as a non-root user. The order matters twice over: the pip installs above
+# need root to write site-packages, and /data must be created *in the image*
+# owned by this user, because docker seeds a fresh named volume with the
+# ownership of the directory it mounts over. AgenticSearchStore opens
+# AGENTIC_SEARCH_WEB_DB_PATH during create_web_app(), so a /data the app cannot
+# write crashes startup rather than failing later -- which is why the compose
+# healthcheck catches it.
+#
+# An EXISTING volume keeps whatever ownership it already had. A stack that ran
+# as root before this change needs `docker compose down -v`, or a one-off
+# `docker run --rm -v docker_app_data:/data alpine chown -R 10001:10001 /data`.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
+    && mkdir -p /data \
+    && chown app:app /data
+
+# HOME must be writable: sentence-transformers and transformers cache model
+# downloads under it, which the flag-gated memory encoder does when
+# AGENTIC_SEARCH_MEMORY_SEMANTIC is set.
+ENV HOME=/home/app \
+    HF_HOME=/home/app/.cache/huggingface
+
+USER app
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 7860
 
