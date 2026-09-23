@@ -105,6 +105,48 @@ jobs:
       - name: Report image size
         run: docker image ls agentic-search:ci
 
+  docker-compose:
+    name: Docker compose stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The last unvalidated part of the packaging story. `Docker image (full
+      # build)` proves the image builds and the ASGI module imports; nothing so
+      # far has started the stack. Three claims about this file were wrong
+      # before anyone ran it (#622-#624), so it gets run.
+      #
+      # --wait blocks on the healthchecks compose already declares, so a service
+      # that starts and then dies fails here rather than passing silently.
+      - name: Bring the stack up
+        run: |
+          docker compose -f docker/docker-compose.yml up -d --build \
+            --wait --wait-timeout 420
+      # Asserted separately from --wait: a healthcheck runs inside the container
+      # and says nothing about the published port actually serving.
+      - name: Probe both services on their published ports
+        run: |
+          curl -fsS --retry 5 --retry-delay 3 http://localhost:7860/health
+          echo
+          curl -fsS --retry 5 --retry-delay 3 http://localhost:8000/health
+          echo
+      # The corpus is what #622/#623 were about; prove the retrieval service can
+      # actually answer from it, not merely report itself healthy.
+      - name: Retrieve from the corpus
+        run: |
+          curl -fsS -X POST http://localhost:8000/retrieve \
+            -H 'content-type: application/json' \
+            -d '{"queries":["vector search"],"topk":2}'
+          echo
+      - name: Stack state
+        if: always()
+        run: docker compose -f docker/docker-compose.yml ps
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.yml logs --tail=120
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
+
   frontend:
     name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest
