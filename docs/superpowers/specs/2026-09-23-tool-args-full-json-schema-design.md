@@ -35,16 +35,29 @@ in-code clamps in the public-data tools stay as defence in depth.
 - Other errors: `Argument 'path.to.field': <jsonschema message>`, where the path is
   the error's `absolute_path` joined with `.`; root-level errors (e.g. unexpected
   keys) read `Arguments: <message>`.
-- Errors are reported in a stable order (sorted by path, then message) so the
-  string the model sees is deterministic.
+- Errors are deduplicated and sorted as whole strings, so `Argument …` lines are
+  ordered by path and the string the model sees is deterministic.
 - **Malformed schema** (`SchemaError` from `check_schema`, or an unresolvable
   `$ref` — OpenAPI parameter schemas are copied without resolving references):
   log a warning and fall back to the current shallow check. A broken remote schema
   must not make every call to that tool fail, and it must not silently skip all
   validation either.
+- A `$ref` cycle with no base case raises `RecursionError` inside jsonschema; it
+  takes the same fallback as a malformed schema.
 - Type semantics follow JSON Schema: `3.0` is a valid `integer`, `True` is not.
-  The shallow check rejected `3.0`; the tools `int()` their counts, so accepting it
-  is harmless.
+  The shallow check rejected `3.0`. The public-data tools `int()` their counts, but
+  the `DomainSearch` entry points (`search_domain`, `extract_page`) still reject a
+  float themselves, so there `3.0` now fails one step later with the executor's
+  message instead of the validator's. Same outcome, different message; not changed
+  here.
+- **Leniency the executors had is now unreachable where the schema forbids it.**
+  `web_search`/`search_domain` declare a lowercase `domain` enum, while
+  `normalize_search_domain` accepts `"Finance"` or `"social-media"`; through
+  `invoke` those are now rejected, and the error lists the allowed values so the
+  model retries. Likewise `web_search` no longer drops `null` query items. This is
+  the reject-not-clamp decision applied as written: normalising before validating
+  would be the leniency this change removes. The normalisers stay for direct
+  (non-`invoke`) callers.
 
 ## Dependency
 

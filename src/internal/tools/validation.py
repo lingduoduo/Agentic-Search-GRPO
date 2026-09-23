@@ -65,8 +65,8 @@ def validate_arguments(
     items, nested objects, closed objects -- so an invalid call is rejected
     with a message the model can act on, rather than clamped or dropped.
 
-    A schema jsonschema cannot use (malformed, or holding a ``$ref`` it cannot
-    resolve, as OpenAPI parameter schemas can) falls back to checking required
+    A schema jsonschema cannot use (malformed, holding a ``$ref`` it cannot
+    resolve, as OpenAPI parameter schemas can, or a ``$ref`` cycle) falls back to checking required
     keys and top-level types: one broken remote schema must neither fail every
     call to its tool nor skip validation entirely.
     """
@@ -75,7 +75,9 @@ def validate_arguments(
     try:
         Draft202012Validator.check_schema(parameters)
         found = list(Draft202012Validator(parameters).iter_errors(arguments))
-    except (SchemaError, Unresolvable) as exc:
+    # RecursionError: a $ref cycle with no base case (e.g. a:{$ref:a}) recurses
+    # forever; legitimately recursive schemas terminate and never reach here.
+    except (SchemaError, Unresolvable, RecursionError) as exc:
         logger.warning(
             "Tool schema unusable (%s); falling back to shallow check",
             getattr(exc, "message", exc),

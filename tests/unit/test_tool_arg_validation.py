@@ -179,3 +179,14 @@ async def test_registry_invoke_rejects_out_of_range_without_executing():
     registry.register(bounded)
     _, _, errors = await registry.invoke("bounded", {"max_length": 0})
     assert errors and executions == []
+
+
+def test_self_referencing_schema_falls_back_instead_of_raising():
+    params = {
+        "$defs": {"a": {"$ref": "#/$defs/a"}},
+        "type": "object",
+        "properties": {"x": {"$ref": "#/$defs/a"}},
+        "required": ["x"],
+    }
+    assert validate_arguments(params, {"x": 1}) == []
+    assert validate_arguments(params, {}) == ["Missing required argument: 'x'"]
