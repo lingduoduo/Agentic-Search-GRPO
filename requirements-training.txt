@@ -1,0 +1,9 @@
+# Post-training and evaluation dependencies. Not used by any serving path.
+#
+# `datasets` is imported by three scripts under examples/ and by nothing in
+# src/. `pyarrow` is a datasets dependency, declared here for its floor rather
+# than because anything imports it.
+#
+#   pip install -r requirements.txt -r requirements-training.txt
+datasets==5.0.0
+pyarrow>=14
