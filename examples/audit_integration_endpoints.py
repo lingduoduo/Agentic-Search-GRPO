@@ -64,18 +64,69 @@ def _template_from_joinedstr(node: ast.JoinedStr) -> str:
     return "".join(out)
 
 
-def _paths_in(tree: ast.AST) -> set[str]:
-    """Endpoint paths this module builds against a server URL."""
+def _url_prefix_constants(tree: ast.AST) -> dict[str, str]:
+    """Module-level names assigned a server URL plus a path prefix.
+
+    Managers do this rather than inlining the full path:
+
+        DISCORD_BOT_API_URL = f"{API_SERVER_URL}/manage/admin/discord-bot"
+        ... f"{DISCORD_BOT_API_URL}/config"
+
+    Without following the constant, the second f-string looks like it builds
+    `/config` -- or, if the prefix is the whole value, like it builds nothing at
+    all. That is what left 19 files with no attributable endpoint.
+    """
+    prefixes: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        value = node.value
+        if isinstance(value, ast.JoinedStr) and _references_server_url(value):
+            text = _template_from_joinedstr(value)
+            tail = text[text.index("{}") + 2 :] if "{}" in text else ""
+            prefixes[target.id] = tail
+        elif (
+            isinstance(value, ast.BinOp)
+            and isinstance(value.op, ast.Add)
+            and _references_server_url(value.left)
+            and isinstance(value.right, ast.Constant)
+            and isinstance(value.right.value, str)
+        ):
+            prefixes[target.id] = value.right.value
+    return prefixes
+
+
+def _paths_in(tree: ast.AST, prefixes: dict[str, str] | None = None) -> set[str]:
+    """Endpoint paths this module builds against a server URL or a derived name."""
     found: set[str] = set()
+    prefixes = prefixes or {}
 
     for node in ast.walk(tree):
         # f"{API_SERVER_URL}/manage/admin/cc-pair/{id}/status"
-        if isinstance(node, ast.JoinedStr) and _references_server_url(node):
+        if isinstance(node, ast.JoinedStr):
+            base = ""
+            if _references_server_url(node):
+                pass  # the server URL is the first interpolation
+            else:
+                named = next(
+                    (
+                        prefixes[sub.id]
+                        for sub in ast.walk(node)
+                        if isinstance(sub, ast.Name) and sub.id in prefixes
+                    ),
+                    None,
+                )
+                if named is None:
+                    continue
+                base = named
             text = _template_from_joinedstr(node)
-            # the server URL itself is the first interpolation; keep what follows
             tail = text[text.index("{}") + 2 :] if "{}" in text else text
-            if tail.startswith("/"):
-                found.add(tail)
+            endpoint = base + tail
+            if endpoint.startswith("/"):
+                found.add(endpoint)
         # API_SERVER_URL + "/manage/admin/deletion-attempt"
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             if _references_server_url(node.left) and isinstance(
@@ -86,6 +137,55 @@ def _paths_in(tree: ast.AST) -> set[str]:
                 ):
                     found.add(node.right.value)
     return found
+
+
+def endpoints_by_callable(tree: ast.AST) -> dict[str, set[str]]:
+    """Endpoints built inside each callable, keyed "Class.method" or "function".
+
+    Managers are classes whose methods each hit specific endpoints --
+    ``CCPairManager.pause_cc_pair`` builds ``/manage/admin/cc-pair/{}/status``
+    and nothing else. Resolving to the method rather than the module is what
+    turns "this test imports a manager that touches dead endpoints" into "this
+    test calls a method that does".
+    """
+    out: dict[str, set[str]] = defaultdict(set)
+
+    prefixes = _url_prefix_constants(tree)
+
+    def _record(qualname: str, node: ast.AST) -> None:
+        for endpoint in _paths_in(node, prefixes):
+            out[qualname].add(endpoint)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    _record(f"{node.name}.{item.name}", item)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # module-level helper; skip methods, already handled above
+            if not any(
+                item is node
+                for cls in ast.walk(tree)
+                if isinstance(cls, ast.ClassDef)
+                for item in cls.body
+            ):
+                _record(node.name, node)
+    return out
+
+
+def callables_invoked(tree: ast.AST) -> set[str]:
+    """Names this module calls, as "Class.method" and bare "function"."""
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            called.add(f"{func.value.id}.{func.attr}")
+            called.add(func.attr)
+        elif isinstance(func, ast.Name):
+            called.add(func.id)
+    return called
 
 
 def _imported_helper_modules(tree: ast.AST) -> set[str]:
@@ -116,7 +216,7 @@ def collect() -> dict[str, set[str]]:
         except SyntaxError:
             continue
         rel = path.relative_to(REPO).as_posix()
-        for endpoint in _paths_in(tree):
+        for endpoint in _paths_in(tree, _url_prefix_constants(tree)):
             if _PATH_RE.match(endpoint.split("?", 1)[0]):
                 by_endpoint[endpoint].add(rel)
     return by_endpoint
@@ -139,11 +239,10 @@ def main() -> None:
         "--direct-only",
         action="store_true",
         help=(
-            "Attribute only endpoints a file builds itself, ignoring those its "
-            "common_utils helpers build. Neither view is exact: direct-only "
-            "under-counts, because most tests call a manager rather than a URL; "
-            "the default over-counts 'mixed', because importing a manager does "
-            "not mean calling every method on it. Together they bracket it."
+            "Attribute only endpoints a file builds itself. This is the floor: "
+            "most tests call a manager method rather than constructing a URL, so "
+            "it under-counts. The default resolves those calls to the method and "
+            "is the precise view."
         ),
     )
     parser.add_argument("--format", choices=("text", "json"), default="text")
@@ -152,13 +251,15 @@ def main() -> None:
     by_endpoint = collect()
     served = app_routes()
 
-    # endpoints each common_utils module builds, keyed by its dotted name
-    helper_endpoints: dict[str, set[str]] = defaultdict(set)
-    for endpoint, files in by_endpoint.items():
-        for f in files:
-            if "common_utils" in f:
-                dotted = f.removesuffix(".py").replace("/", ".").removeprefix("tests.")
-                helper_endpoints[dotted].add(endpoint)
+    # endpoints each helper CALLABLE builds -- "CCPairManager.delete" etc.
+    helper_callables: dict[str, set[str]] = defaultdict(set)
+    for path in sorted((INTEGRATION / "common_utils").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:
+            continue
+        for qualname, endpoints in endpoints_by_callable(tree).items():
+            helper_callables[qualname] |= endpoints
     gone = {e: f for e, f in by_endpoint.items() if _normalise(e) not in served}
     alive = {e for e in by_endpoint if _normalise(e) in served}
 
@@ -178,17 +279,15 @@ def main() -> None:
         for f in files & test_files:
             per_file[f][_bucket(endpoint)].add(endpoint)
 
-    # Fold in the endpoints each test reaches through a common_utils helper.
+    # Fold in the endpoints each test reaches through the helper methods it calls.
     for f in test_files if not args.direct_only else []:
         try:
             tree = ast.parse((REPO / f).read_text())
         except SyntaxError:
             continue
-        for module in _imported_helper_modules(tree):
-            for dotted, endpoints in helper_endpoints.items():
-                if dotted.endswith(module) or module.endswith(dotted):
-                    for endpoint in endpoints:
-                        per_file[f][_bucket(endpoint)].add(endpoint)
+        for name in callables_invoked(tree):
+            for endpoint in helper_callables.get(name, ()):
+                per_file[f][_bucket(endpoint)].add(endpoint)
 
     wholly_dead = sorted(
         f for f, b in per_file.items() if b["gone"] and not b["served"]
@@ -219,7 +318,11 @@ def main() -> None:
         )
         return
 
-    mode = "direct references only" if args.direct_only else "including helper imports"
+    mode = (
+        "direct references only"
+        if args.direct_only
+        else "resolved through called helper methods"
+    )
     print(f"attribution          : {mode}")
     print(f"endpoints referenced : {len(by_endpoint)}")
     print(f"  served by the app  : {len(alive)}")
