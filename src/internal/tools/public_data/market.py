@@ -55,10 +55,12 @@ _STOCK_PARAMS = {
     "properties": {
         "symbol": {
             "type": "string",
+            "minLength": 1,
             "description": "Ticker symbol, e.g. AAPL or TSLA.",
         },
     },
     "required": ["symbol"],
+    "additionalProperties": False,
 }
 
 
@@ -109,15 +111,18 @@ _CRYPTO_PARAMS = {
     "properties": {
         "symbol": {
             "type": "string",
+            "minLength": 1,
             "description": "Coin ticker or CoinGecko id, e.g. btc or bitcoin.",
         },
         "vs_currency": {
             "type": "string",
+            "pattern": "^[A-Za-z]{2,10}$",
             "description": "Currency to price in, e.g. usd or eur.",
             "default": "usd",
         },
     },
     "required": ["symbol"],
+    "additionalProperties": False,
 }
 
 
@@ -176,17 +181,26 @@ def build_crypto_price_tool() -> FunctionTool:
 _CURRENCY_PARAMS = {
     "type": "object",
     "properties": {
-        "amount": {"type": "number", "description": "How much to convert."},
+        "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "How much to convert.",
+        },
         "from_currency": {
             "type": "string",
+            "pattern": "^[A-Za-z]{3}$",
+            "minLength": 3,
             "description": "Three-letter source currency code, e.g. USD.",
         },
         "to_currency": {
             "type": "string",
+            "pattern": "^[A-Za-z]{3}$",
+            "minLength": 3,
             "description": "Three-letter target currency code, e.g. EUR.",
         },
     },
     "required": ["amount", "from_currency", "to_currency"],
+    "additionalProperties": False,
 }
 
 

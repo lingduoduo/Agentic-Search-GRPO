@@ -735,12 +735,16 @@ class MultiQueryWebSearchTool(Tool):
                 "properties": {
                     "queries": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "minLength": 1},
+                        # Each query is a paid provider call; 5 matches batch_search.
+                        "minItems": 1,
+                        "maxItems": 5,
                         "description": "One or more search queries to run in parallel.",
                     },
                     "domain": search_domain_parameter(),
                 },
                 "required": ["queries"],
+                "additionalProperties": False,
             },
         )
 
@@ -1158,6 +1162,7 @@ def _search_properties() -> dict:
     return {
         "query": {
             "type": "string",
+            "minLength": 1,
             "description": "Search text or the query format described by get_sub_domains.",
         },
         "domain": {
@@ -1195,6 +1200,7 @@ def build_domain_search_tools(
         "type": "object",
         "properties": _search_properties(),
         "required": ["query"],
+        "additionalProperties": False,
     }
     batch_properties = _search_properties()
     batch_properties.pop("query")
@@ -1227,6 +1233,7 @@ def build_domain_search_tools(
                     }
                 },
                 "required": ["domains"],
+                "additionalProperties": False,
             },
             False,
         ),
@@ -1237,10 +1244,17 @@ def build_domain_search_tools(
             {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string"},
+                    "url": {
+                        "type": "string",
+                        # The extractor rejects anything but HTTP(S); portable
+                        # regex, so no inline case-insensitivity flag.
+                        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://",
+                        "minLength": 1,
+                    },
                     "max_length": {"type": "integer", "minimum": 1, "maximum": 50000},
                 },
                 "required": ["url"],
+                "additionalProperties": False,
             },
             True,
         ),
@@ -1248,7 +1262,12 @@ def build_domain_search_tools(
             "batch_search",
             batch,
             "Run one to five domain searches concurrently. Shared options are defaults; each item may override them. Returns ordered per-query results or errors.",
-            {"type": "object", "properties": batch_properties, "required": ["queries"]},
+            {
+                "type": "object",
+                "properties": batch_properties,
+                "required": ["queries"],
+                "additionalProperties": False,
+            },
             False,
         ),
     ]

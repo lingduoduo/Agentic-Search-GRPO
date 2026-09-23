@@ -59,18 +59,24 @@ _WEATHER_PARAMS = {
     "properties": {
         "location": {
             "type": "string",
+            "minLength": 1,
             "description": "City or place name, e.g. 'Berlin'.",
         },
         "latitude": {
             "type": "number",
+            "minimum": -90,
+            "maximum": 90,
             "description": "Latitude; skips the place-name lookup when given.",
         },
         "longitude": {
             "type": "number",
+            "minimum": -180,
+            "maximum": 180,
             "description": "Longitude; skips the place-name lookup when given.",
         },
     },
     "required": ["location"],
+    "additionalProperties": False,
 }
 
 
@@ -149,19 +155,24 @@ _LOCATION_PARAMS = {
     "properties": {
         "query": {
             "type": "string",
+            "minLength": 1,
             "description": "Place, address, or landmark to find.",
         },
         "limit": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
             "description": "How many matches to return (1-20).",
             "default": 5,
         },
         "country_code": {
             "type": "string",
+            "pattern": "^[A-Za-z]{2}$",
             "description": "Two-letter country filter, e.g. 'fr'.",
         },
     },
     "required": ["query"],
+    "additionalProperties": False,
 }
 
 
@@ -218,22 +229,38 @@ _PLACES_PARAMS = {
     "properties": {
         "query": {
             "type": "string",
+            "minLength": 1,
             "description": "Place type, e.g. 'cafe', 'pharmacy', 'hotel'.",
         },
-        "latitude": {"type": "number", "description": "Centre latitude."},
-        "longitude": {"type": "number", "description": "Centre longitude."},
+        "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Centre latitude.",
+        },
+        "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "Centre longitude.",
+        },
         "radius_meters": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
             "description": "Search radius in metres (max 10000).",
             "default": 1000,
         },
         "limit": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
             "description": "How many places to return (1-50).",
             "default": 10,
         },
     },
     "required": ["query", "latitude", "longitude"],
+    "additionalProperties": False,
 }
 
 
