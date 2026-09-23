@@ -102,6 +102,16 @@ jobs:
             exit 1
           fi
           echo "OK: no nvidia/cuda/triton packages in the image"
+      # Guards the USER directive: a later Dockerfile edit reinstating root would
+      # otherwise pass every other check silently.
+      - name: Assert the image does not run as root
+        run: |
+          uid="$(docker run --rm agentic-search:ci id -u)"
+          if [ "$uid" = "0" ]; then
+            echo "FAIL: the image runs as root (see the USER directive)"
+            exit 1
+          fi
+          echo "OK: runs as uid $uid"
       - name: Report image size
         run: docker image ls agentic-search:ci
 
