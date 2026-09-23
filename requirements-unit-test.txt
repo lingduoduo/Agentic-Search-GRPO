@@ -22,6 +22,7 @@ redis>=6.2.0
 python-dotenv
 mcp>=1.0.0
 fastmcp>=2.0.0
+jsonschema>=4.18,<5
 pytest-asyncio>=0.23.0
 # Keep all optional document parsers in clean unit-test installs so PDF,
 # DOCX, and PPTX behavior cannot silently disappear behind import skips.

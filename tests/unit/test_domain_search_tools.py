@@ -13,6 +13,8 @@ from src.internal.tools.search import SearchPage
 @pytest.mark.asyncio
 async def test_tool_registry_supports_all_four_features():
     async def web(query, **kwargs):
+        if query.startswith("boom"):
+            raise RuntimeError("provider down")
         return [SearchPage(title="Page", summary=query, url="https://example.test")]
 
     async def fetch(url, **kwargs):
@@ -37,8 +39,14 @@ async def test_tool_registry_supports_all_four_features():
     )
     assert not errors
     assert json.loads(result)[0]["content"] == "Full text"
-    result, _, errors = await registry.invoke(
+    # A malformed item is rejected by the schema before anything runs...
+    _, _, errors = await registry.invoke(
         "batch_search", {"queries": [{"query": "one"}, {}]}
+    )
+    assert errors == ["Missing required argument: 'queries.1.query'"]
+    # ...while a runtime failure stays a per-item error beside the other results.
+    result, _, errors = await registry.invoke(
+        "batch_search", {"queries": [{"query": "one"}, {"query": "boom"}]}
     )
     assert not errors
     items = json.loads(result)["queries"]

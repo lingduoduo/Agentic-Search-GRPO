@@ -52,6 +52,7 @@ google-api-python-client
 # MCP server support.
 mcp>=1.0.0
 fastmcp>=2.0.0
+jsonschema>=4.18,<5
 
 # Test dependencies. Kept in the baseline because CLAUDE.md documents
 # `pip install -r requirements.txt` followed by `pytest`, and the plugin is
