@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,28 @@ DEFAULT_TOPK = 5
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 PLAYWRIGHT_CMD = "playwright-cli"
+
+
+class BrowserSearchUnavailableError(RuntimeError):
+    """The playwright-cli binary this server is built around is not present.
+
+    Distinct from a search that failed. `_search_and_process` degrades every
+    failure to an empty result list, which is right for a target that returned
+    garbage and wrong for a missing tool: `web_search` cascades serpapi ->
+    browser, so an empty list reads as "the query found nothing" rather than
+    "this provider cannot run".
+
+    Nothing declares the binary. The `playwright` pip wheel does not provide it
+    and the container image installs no such tool, so this provider is host-only
+    until one of those changes.
+    """
+
+
+def playwright_cli_available() -> bool:
+    """Whether PLAYWRIGHT_CMD resolves on PATH, without running a search."""
+    return shutil.which(PLAYWRIGHT_CMD) is not None
+
+
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q={query}&num={topk}&hl=en"
 YAHOO_SEARCH_URL = "https://search.yahoo.com/search?p={query}"
 WIKIPEDIA_SEARCH_URL = "https://en.wikipedia.org/w/index.php?search={query}"
@@ -113,13 +136,23 @@ class BrowserSearchEngine:
         cmd.extend(args)
         env = os.environ.copy()
         env.setdefault("TMPDIR", "/tmp")
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout if timeout is not None else self.config.subprocess_timeout,
-            env=env,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+                if timeout is not None
+                else self.config.subprocess_timeout,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise BrowserSearchUnavailableError(
+                f"{PLAYWRIGHT_CMD!r} is not installed or not on PATH, so the "
+                f"browser search provider cannot run. It is a separate binary: "
+                f"the `playwright` pip wheel does not provide it, and the "
+                f"container image does not install it."
+            ) from exc
         if proc.returncode != 0:
             stderr = getattr(proc, "stderr", "") or ""
             raise RuntimeError(f"{' '.join(cmd)} failed: {stderr.strip()}")
@@ -193,6 +226,10 @@ class BrowserSearchEngine:
                         content = fetched
                 results.append(format_document(h.get("title"), content, url or None))
             return results
+        except BrowserSearchUnavailableError:
+            # Not a failed search -- the provider cannot run at all. Swallowing
+            # this is what made a missing binary look like an empty result set.
+            raise
         except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as exc:
             logger.warning("browser search failed for %r: %s", query, exc)
             return []
@@ -233,6 +270,18 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     load_environment()
     args = parse_args()
+    if not playwright_cli_available():
+        # Checked here rather than in create_app so tests can still build the
+        # app. A server whose every request shells out to a missing binary would
+        # start, report healthy, and answer every query with no results.
+        raise SystemExit(
+            f"{PLAYWRIGHT_CMD!r} is not installed or not on PATH.\n"
+            f"This server is a thin wrapper around that binary, so refusing to "
+            f"start beats serving empty results. It is not a pip package: the "
+            f"`playwright` wheel provides `playwright`, not {PLAYWRIGHT_CMD!r}, "
+            f"and the container image does not install it -- run this on a host "
+            f"that has it, and point AGENTIC_SEARCH_BROWSER_SEARCH_URL there."
+        )
     config = BrowserSearchConfig(topk=args.topk, batch_workers=args.workers)
     app = create_app(config)
     run_uvicorn_app(app, host=args.host, port=args.port)

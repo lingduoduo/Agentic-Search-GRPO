@@ -128,6 +128,10 @@ python3 -m src.internal.servers.retrieval.rerank --port 8002
 # and falls back to this; without it, an expired or rate-limited SERP_API_KEY
 # leaves web_search with no usable provider. No API key needed, but slow
 # (~30-50s/query) and lower quality than SerpAPI.
+# HOST ONLY: this wraps a `playwright-cli` binary, which is not a pip package
+# (the `playwright` wheel provides `playwright`) and is not in the container
+# image. The server refuses to start when it is absent rather than serving empty
+# results, so the browser provider is unavailable under docker compose.
 python3 -m src.internal.servers.web_search.browser --port 8003
 # web backend env: AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve
 # Port 8003, not its 8000 default: 8000/8001 are the retrieval servers and 8002
