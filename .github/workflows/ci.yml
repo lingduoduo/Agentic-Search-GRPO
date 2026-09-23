@@ -91,6 +91,17 @@ jobs:
         run: |
           docker run --rm agentic-search:ci \
             python -c "import src.internal.servers.web.app as m; print('imported', m.__name__)"
+      # Guards the CPU-only torch install in the Dockerfile: if a later
+      # dependency change pulls the default linux wheel, the CUDA stack returns
+      # and the image doubles. Cheap to assert, invisible otherwise.
+      - name: Assert the image carries no CUDA wheels
+        run: |
+          if docker run --rm agentic-search:ci pip list --format=freeze \
+               | grep -iE '^(nvidia|cuda-|triton)'; then
+            echo "FAIL: CUDA packages in a CPU-only serving image (see Dockerfile)"
+            exit 1
+          fi
+          echo "OK: no nvidia/cuda/triton packages in the image"
       - name: Report image size
         run: docker image ls agentic-search:ci
 
