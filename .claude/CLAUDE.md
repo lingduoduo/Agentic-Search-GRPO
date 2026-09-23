@@ -91,8 +91,22 @@ diff review or verification-before-completion.
 
 ```bash
 pip install -e .          # one-time; makes src importable as a package
-pip install -r requirements.txt
+pip install -r requirements.txt          # serving baseline (what the image installs)
 ```
+
+`requirements.txt` is the serving baseline. Three companion files carry what a
+serving deployment does not need — install them additively:
+
+```bash
+pip install -r requirements-retrieval-heavy.txt   # faiss-cpu + pyserini backends
+pip install -r requirements-training.txt          # datasets/pyarrow for examples/
+pip install -r requirements-unit-test.txt         # the CI unit-test install
+```
+
+`requirements-retrieval-heavy.txt` is only needed for `servers/retrieval/server.py`
+with `RETRIEVAL_BACKEND` set to a FAISS or BM25 backend; `demo.py` and `hybrid.py`
+do not use it. pyserini additionally needs a JVM. Both imports are deferred, so
+their absence degrades those backends rather than breaking startup.
 
 ### Running the 3-process local stack
 

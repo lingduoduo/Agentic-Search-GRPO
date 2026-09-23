@@ -1,0 +1,20 @@
+# Retrieval backends that the serving baseline deliberately omits.
+#
+# servers/retrieval/server.py selects a backend through RETRIEVAL_BACKEND. The
+# demo and hybrid servers -- what docker compose runs -- need neither of these:
+# demo is scikit-learn TF-IDF and hybrid fuses sentence-transformers with TF-IDF.
+# Both imports below are deferred (document_index/_common.py::_require_faiss and
+# a function-local import in document_index/retrieval.py), so the code degrades
+# rather than failing at startup when they are absent.
+#
+#   pip install -r requirements.txt -r requirements-retrieval-heavy.txt
+#
+# faiss-cpu on macOS: install via conda to avoid an OpenMP conflict with PyTorch
+#   conda install -c conda-forge faiss-cpu
+# pip install faiss-cpu works on Linux but segfaults on macOS Apple Silicon.
+faiss-cpu==1.13.2
+
+# pyserini additionally needs a JVM, which the container image does not install.
+# It also pins torch>=2.9, so installing it raises the torch floor for whatever
+# environment it lands in.
+pyserini
