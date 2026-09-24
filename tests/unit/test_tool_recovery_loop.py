@@ -290,13 +290,54 @@ def test_callback_that_raises_or_hangs_is_unresolved():
     async def boom(request):
         raise RuntimeError("socket gone")
 
-    assert _run(tool, [SEND, "x"], boom).tool_recovery["needs_user"] is True
+    boom_output = _run(tool, [SEND, "x"], boom)
+    assert boom_output.tool_recovery["needs_user"] is True
+    # Pinned to exactly one escalation so a raise -> RETRY mutant (which would
+    # keep retrying until the per-run cap kicks in) fails here rather than
+    # being masked by the cap forcing the same needs_user=True outcome later.
+    assert len(boom_output.tool_recovery["escalations"]) == 1
+    assert boom_output.tool_recovery["escalations"][0]["decision"] == "expired"
 
     async def hang(request):
         await asyncio.sleep(10)
 
     output = _run(tool, [SEND, "x"], hang, escalation_timeout_seconds=0.05)
     assert output.tool_recovery["needs_user"] is True
+    assert len(output.tool_recovery["escalations"]) == 1
+    assert output.tool_recovery["escalations"][0]["decision"] == "expired"
+
+
+def test_bad_callback_return_value_is_treated_as_expired():
+    tool, _ = _writer(99)
+
+    async def bad(request):
+        return None
+
+    output = _run(tool, [SEND, "x"], bad)
+    assert output.tool_recovery["needs_user"] is True
+    assert len(output.tool_recovery["escalations"]) == 1
+    assert output.tool_recovery["escalations"][0]["decision"] == "expired"
+
+
+def test_concurrent_retry_is_blocked_once_another_call_cancels():
+    tool, calls = _writer(99)
+    cancelled = asyncio.Event()
+
+    async def on_escalation(request):
+        # Whichever concurrent call's escalation resolves first wins CANCEL;
+        # the other must see the stopped run and not replay its side effect.
+        if not cancelled.is_set():
+            cancelled.set()
+            return EscalationDecision.CANCEL
+        return EscalationDecision.RETRY
+
+    output = _run(tool, [f"[{SEND},{SEND}]", "never generated"], on_escalation)
+    assert len(calls) == 2  # one execution per call, no post-cancel retry
+    assert (
+        output.final_answer
+        == "Stopped: send failed (unknown); nothing further was attempted."
+    )
+    assert output.tool_recovery["outcome"] == "cancelled"
 
 
 def test_escalations_are_capped_per_run():

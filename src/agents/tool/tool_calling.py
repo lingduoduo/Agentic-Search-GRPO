@@ -395,6 +395,18 @@ class ToolAgentLoop(AgentLoopBase):
                     retries,
                 )
             # Action.ESCALATE
+            if state.stop_answer is not None:
+                # A concurrent call in this batch already stopped the run;
+                # don't ask again or replay the side effect.
+                return self._result(
+                    name,
+                    args,
+                    TaskStatus.FAILED,
+                    start,
+                    error_code=failure.category.value,
+                    error_message=failure.message,
+                    retry_count=retries,
+                )
             decision_value = await self._escalate(
                 name, args, failure, retries, state, on_escalation
             )
@@ -406,7 +418,10 @@ class ToolAgentLoop(AgentLoopBase):
                     "decision": decision_value,
                 }
             )
-            if decision_value == EscalationDecision.RETRY.value:
+            if (
+                decision_value == EscalationDecision.RETRY.value
+                and state.stop_answer is None
+            ):
                 retries += 1  # user-authorised: does not draw on the retry budget
                 continue
             if decision_value == EscalationDecision.SKIP.value:
@@ -463,14 +478,17 @@ class ToolAgentLoop(AgentLoopBase):
         )
         try:
             decision = await asyncio.wait_for(on_escalation(request), timeout=timeout)
+            return EscalationDecision(decision).value
         except asyncio.TimeoutError:
             return EscalationDecision.EXPIRED.value
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Covers both a raising callback and a bad return value (the
+            # ValueError from EscalationDecision(decision) above): either way
+            # the run cannot trust the answer, so treat it as expired.
             logger.exception("Escalation callback failed for tool %r", name)
             return EscalationDecision.EXPIRED.value
-        return EscalationDecision(decision).value
 
     def _result(
         self,
