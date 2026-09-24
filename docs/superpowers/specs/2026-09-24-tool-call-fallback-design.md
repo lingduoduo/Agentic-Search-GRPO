@@ -53,10 +53,15 @@ Adapter classification — nothing ever searches text for "error":
 
 - **Public-data `guarded`.** `PublicDataError` gains optional `status`,
   `attempts` and `retry_after` attributes (its message constructor stays
-  compatible; `_fetch` sets them). 429/502/503/504, timeouts and transport
-  errors → `transient`; other 4xx/5xx → `permanent`; any other exception →
-  `unknown`. `provider_attempts` = the attempts `_fetch` made (3 for a GET that
-  exhausted its retries, 1 for a POST).
+  compatible; `_fetch` sets them), plus an `upstream` flag that `_fetch` sets on
+  every error it raises. 429/502/503/504, timeouts and transport errors →
+  `transient`; HTTP 400/404/422 and tool-authored `PublicDataError`s (no
+  `upstream` flag — an unknown ticker, a place that does not geocode) →
+  `invalid_input`, fed back to the model; other upstream errors (other 4xx/5xx,
+  a non-JSON body, a malformed feed marked `upstream=True`) → `permanent`; any
+  other exception → `unknown`. `provider_attempts` = the attempts `_fetch` made
+  (3 for a GET that exhausted its retries, 1 for a POST). `extract_page` bad-URL
+  and per-URL fetch failures are `invalid_input`.
 - **MCP `_result_text`.** `isError` → `unknown` (the protocol does not say why).
 
 **`FunctionTool.execute`** returns `{"failure": result.failure}` as its metadata
@@ -111,7 +116,9 @@ provider-already-retried rule makes the loop the single retry owner above
 `_fetch`: attempts never multiply.
 
 `FEED_BACK` keeps today's behaviour: the failure goes back to the model so it can
-correct its arguments or tool name.
+correct its arguments or tool name. For an adapter failure the model receives the
+adapter's own error text (e.g. `{"error": "invalid ticker symbol 'APPL'"}`);
+schema and not-found failures keep their validation text.
 
 ## 3. Retry and degrade in the loop
 
