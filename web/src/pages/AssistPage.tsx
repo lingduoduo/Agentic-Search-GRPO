@@ -6,6 +6,7 @@ import {
   fetchSearchDomains,
   streamAgent,
   submitToolApproval,
+  submitToolEscalation,
 } from "../api";
 import { AnswerPanel } from "../components/AnswerPanel";
 import { ClarificationPrompt } from "../components/ClarificationPrompt";
@@ -15,6 +16,7 @@ import { SessionTimeline } from "../components/SessionTimeline";
 import { SourceGrid } from "../components/SourceGrid";
 import { ToolApprovalCard } from "../components/ToolApprovalCard";
 import { ToolCallTracePanel } from "../components/ToolCallTracePanel";
+import { ToolEscalationCard } from "../components/ToolEscalationCard";
 import type {
   AgentExperienceRequest,
   ChatMessageView,
@@ -26,6 +28,7 @@ import type {
   SourceDocumentView,
   ToolApprovalView,
   ToolCallTraceView,
+  ToolEscalationView,
 } from "../types";
 
 const DEFAULT_SEARCH_URL = "http://localhost:8001/retrieve";
@@ -76,6 +79,7 @@ export function AssistPage() {
   const [controlFlowTrace, setControlFlowTrace] = useState<ControlFlowEventView[]>([]);
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ToolApprovalView[]>([]);
+  const [pendingEscalations, setPendingEscalations] = useState<ToolEscalationView[]>([]);
   const [showConsole, setShowConsole] = useState(false);
   // Dev-only observability console; gated at build time, never on in prod.
   const debugPanels = import.meta.env.VITE_DEBUG_PANELS === "1";
@@ -146,6 +150,7 @@ export function AssistPage() {
     setCompletedSteps([]);
     setControlFlowTrace([]);
     setPendingApprovals([]);
+    setPendingEscalations([]);
     try {
       const activeSessionId = await ensureSession(controller.signal);
       // Append the user turn to the local timeline. Done after ensureSession so
@@ -177,6 +182,11 @@ export function AssistPage() {
           setPendingApprovals((current) => [
             ...current.filter((approval) => approval.id !== event.approval.id),
             event.approval,
+          ]);
+        } else if (event.type === "escalation_required") {
+          setPendingEscalations((current) => [
+            ...current.filter((escalation) => escalation.id !== event.escalation.id),
+            event.escalation,
           ]);
         } else if (event.type === "claim") {
           accumulatedAnswer = accumulatedAnswer
@@ -216,6 +226,7 @@ export function AssistPage() {
           setCompletedSteps(liveSteps);
           setProgressSteps([]);
           setPendingApprovals([]);
+          setPendingEscalations([]);
           setLastRequestId(event.request_id ?? null);
         } else if (event.type === "error") {
           throw new Error(event.detail);
@@ -224,6 +235,7 @@ export function AssistPage() {
     } catch (caught) {
       if (requestRef.current !== controller) return;
       setPendingApprovals([]);
+      setPendingEscalations([]);
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "Search failed");
       setAnswer("");
@@ -248,9 +260,21 @@ export function AssistPage() {
     );
   }, []);
 
+  const handleEscalationDecision = useCallback(async (
+    escalationId: string,
+    decision: "retry" | "skip" | "cancel",
+  ) => {
+    const signal = requestRef.current?.signal;
+    await submitToolEscalation(escalationId, decision, { signal });
+    setPendingEscalations((current) =>
+      current.filter((escalation) => escalation.id !== escalationId),
+    );
+  }, []);
+
   const handleNewSession = useCallback(async () => {
     requestRef.current?.abort();
     setPendingApprovals([]);
+    setPendingEscalations([]);
     const session = await createSession({ title: "Search session" });
     setSessionId(session.id);
     setAnswer("");
@@ -383,6 +407,13 @@ export function AssistPage() {
               key={approval.id}
               approval={approval}
               onDecision={(decision) => handleApprovalDecision(approval.id, decision)}
+            />
+          ))}
+          {pendingEscalations.map((escalation) => (
+            <ToolEscalationCard
+              key={escalation.id}
+              escalation={escalation}
+              onDecision={(decision) => handleEscalationDecision(escalation.id, decision)}
             />
           ))}
           {intent === "tool" && <ToolCallTracePanel calls={toolCalls} />}

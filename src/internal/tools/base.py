@@ -22,6 +22,43 @@ class ToolEffect(str, Enum):
     UNSPECIFIED = "unspecified"
 
 
+class FailureCategory(str, Enum):
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
+    INVALID_INPUT = "invalid_input"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolFailure:
+    """Why a tool call failed, in a form the recovery policy can act on.
+
+    ``message`` is a short fixed-vocabulary description safe to show a user;
+    raw exception text and provider bodies stay in the logs.
+    """
+
+    category: FailureCategory
+    message: str
+    retry_after: float | None = None
+    provider_attempts: int = 0
+
+
+class ToolErrorText(str):
+    """Error text a tool returns, carrying the typed failure behind it.
+
+    A ``str``, so every caller that only reads text sees exactly what it did
+    before; the agent loop reads ``.failure``.
+    """
+
+    failure: ToolFailure
+
+    def __new__(cls, text: str, failure: ToolFailure) -> "ToolErrorText":
+        obj = super().__new__(cls, text)
+        obj.failure = failure
+        return obj
+
+
 @dataclass(slots=True)
 class ToolSchema:
     """JSON Schema description of one generic function-calling tool."""
@@ -165,7 +202,8 @@ class FunctionTool(Tool):
                 response = json.dumps(result, ensure_ascii=False, default=str)
             except (TypeError, ValueError):
                 response = str(result)
-        return response, result, {}
+        meta = {"failure": result.failure} if isinstance(result, ToolErrorText) else {}
+        return response, result, meta
 
     @classmethod
     def from_fn(

@@ -187,6 +187,9 @@ class AgentLoopOutput:
     # True when a generation was cut short by the wall-clock stop rather than
     # finishing. The answer is a fragment; callers should say so.
     truncated: bool = False
+    # Retry/degrade/escalate summary (RecoveryState.summary()); None when no
+    # tool call needed recovery.
+    tool_recovery: dict[str, Any] | None = None
 
 
 @contextmanager

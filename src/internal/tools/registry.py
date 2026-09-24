@@ -25,6 +25,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ from typing import (
 from uuid import UUID
 
 from .api import ApiToolRegistry, ApiToolNotFoundError
-from .base import FunctionTool, Tool, ToolEffect
+from .base import FailureCategory, FunctionTool, Tool, ToolEffect, ToolFailure
 from .validation import validate_arguments
 
 if TYPE_CHECKING:
@@ -112,6 +113,26 @@ class ToolEntry:
     # when a user is present; with none, an anonymous write would land in a
     # shared bucket and pool unrelated people's data.
     user_scoped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ToolInvocation:
+    response: str
+    raw: Any
+    errors: list[str]
+    failure: ToolFailure | None
+
+
+def _failure_from_exception(exc: Exception) -> ToolFailure:
+    transient = isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError))
+    try:
+        import aiohttp
+
+        transient = transient or isinstance(exc, aiohttp.ClientError)
+    except ImportError:  # pragma: no cover - aiohttp is a declared dependency
+        pass
+    category = FailureCategory.TRANSIENT if transient else FailureCategory.UNKNOWN
+    return ToolFailure(category, type(exc).__name__)
 
 
 class ToolRegistry:
@@ -286,6 +307,18 @@ class ToolRegistry:
             if e.agent_callable and (user_present or not e.user_scoped)
         ]
 
+    def _resolve(
+        self, name: str, arguments: dict[str, Any], validate: bool
+    ) -> tuple[Tool | None, list[str]]:
+        entry = self._entries.get(name)
+        if entry is None:
+            return None, [f"Tool {name!r} not found."]
+        if validate and entry.tool.schema.parameters:
+            return entry.tool, validate_arguments(
+                entry.tool.schema.parameters, arguments
+            )
+        return entry.tool, []
+
     async def invoke(
         self,
         name: str,
@@ -299,16 +332,9 @@ class ToolRegistry:
         *validate=True* (default) checks arguments against the declared schema
         and returns errors without executing if invalid.
         """
-        entry = self._entries.get(name)
-        if entry is None:
-            return "", None, [f"Tool {name!r} not found."]
-
-        tool = entry.tool
-        errors: list[str] = []
-        if validate and tool.schema.parameters:
-            errors = validate_arguments(tool.schema.parameters, arguments)
-            if errors:
-                return "", None, errors
+        tool, errors = self._resolve(name, arguments, validate)
+        if tool is None or errors:
+            return "", None, errors
 
         instance_id = await tool.create()
         try:
@@ -317,6 +343,36 @@ class ToolRegistry:
             await tool.release(instance_id)
 
         return response, raw, []
+
+    async def invoke_detailed(
+        self, name: str, arguments: dict[str, Any], *, validate: bool = True
+    ) -> ToolInvocation:
+        """Like ``invoke``, but every failure comes back typed instead of raised."""
+        tool, errors = self._resolve(name, arguments, validate)
+        if tool is None:
+            return ToolInvocation(
+                "", None, errors, ToolFailure(FailureCategory.NOT_FOUND, errors[0])
+            )
+        if errors:
+            return ToolInvocation(
+                "",
+                None,
+                errors,
+                ToolFailure(FailureCategory.INVALID_INPUT, "; ".join(errors)),
+            )
+        instance_id = await tool.create()
+        try:
+            try:
+                response, raw, meta = await tool.execute(instance_id, arguments)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("tool %r raised", name, exc_info=True)
+                return ToolInvocation("", None, [], _failure_from_exception(exc))
+        finally:
+            await tool.release(instance_id)
+        failure = meta.get("failure") if isinstance(meta, dict) else None
+        return ToolInvocation(response, raw, [], failure)
 
     # ------------------------------------------------------------------
     # Summary for the REST API
@@ -375,6 +431,7 @@ def tool(
 __all__ = [
     "ToolRegistry",
     "ToolEntry",
+    "ToolInvocation",
     "tool_registry",
     "tool",
 ]

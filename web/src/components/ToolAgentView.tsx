@@ -5,6 +5,7 @@ import {
   listTools,
   sendToolMessage,
   submitToolApproval,
+  submitToolEscalation,
 } from "../api";
 import { groupToolsByServer } from "../toolCatalog";
 import type {
@@ -12,9 +13,11 @@ import type {
   ConversationTurn,
   ToolApprovalView,
   ToolDiscoverResult,
+  ToolEscalationView,
 } from "../types";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { ToolCatalog } from "./ToolCatalog";
+import { ToolEscalationCard } from "./ToolEscalationCard";
 import { Transcript } from "./Transcript";
 
 export function ToolAgentView() {
@@ -22,6 +25,7 @@ export function ToolAgentView() {
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<ToolApprovalView[]>([]);
+  const [pendingEscalations, setPendingEscalations] = useState<ToolEscalationView[]>([]);
   const [noModel, setNoModel] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -79,6 +83,7 @@ export function ToolAgentView() {
     setNoModel(false);
     setTruncated(false);
     setPendingApprovals([]);
+    setPendingEscalations([]);
     setTurns((prev) => [
       ...prev,
       { role: "user", content: text },
@@ -94,14 +99,21 @@ export function ToolAgentView() {
           patchLastAssistant((t) => ({ ...t, content: e.text }));
         else if (e.type === "approval_required")
           setPendingApprovals((a) => [...a, e.approval]);
+        else if (e.type === "escalation_required")
+          setPendingEscalations((a) => [
+            ...a.filter((escalation) => escalation.id !== e.escalation.id),
+            e.escalation,
+          ]);
         else if (e.type === "done") {
           setSessionId(e.session_id);
           setTruncated(Boolean(e.truncated));
           setPendingApprovals([]);
+          setPendingEscalations([]);
           patchLastAssistant((t) => ({ ...t, pending: false }));
         } else if (e.type === "error") {
           setError(e.detail);
           setPendingApprovals([]);
+          setPendingEscalations([]);
           patchLastAssistant((t) => ({ ...t, pending: false }));
         }
       }
@@ -109,6 +121,7 @@ export function ToolAgentView() {
     } catch (err) {
       patchLastAssistant((t) => ({ ...t, pending: false }));
       setPendingApprovals([]);
+      setPendingEscalations([]);
       if (err instanceof Error && err.message === "NO_LOCAL_MODEL") setNoModel(true);
       else setError(err instanceof Error ? err.message : "Tool agent failed");
     } finally {
@@ -139,6 +152,17 @@ export function ToolAgentView() {
           onDecision={(decision) =>
             submitToolApproval(approval.id, decision).finally(() =>
               setPendingApprovals((a) => a.filter((p) => p.id !== approval.id)),
+            )
+          }
+        />
+      ))}
+      {pendingEscalations.map((escalation) => (
+        <ToolEscalationCard
+          key={escalation.id}
+          escalation={escalation}
+          onDecision={(decision) =>
+            submitToolEscalation(escalation.id, decision).finally(() =>
+              setPendingEscalations((a) => a.filter((p) => p.id !== escalation.id)),
             )
           }
         />

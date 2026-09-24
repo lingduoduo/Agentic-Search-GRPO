@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from src.internal.tools import FailureCategory
 from src.internal.tools.public_data import _http
 from src.internal.tools.public_data._http import (
     PublicDataError,
@@ -16,9 +17,10 @@ from src.internal.tools.public_data._http import (
 
 
 class _FakeResponse:
-    def __init__(self, *, status=200, body="{}"):
+    def __init__(self, *, status=200, body="{}", headers=None):
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -35,10 +37,11 @@ class _FakeSession:
 
     calls: list[dict] = []
 
-    def __init__(self, *, status=200, body="{}", raises=None):
+    def __init__(self, *, status=200, body="{}", raises=None, headers=None):
         self._status = status
         self._body = body
         self._raises = raises
+        self._headers = headers
 
     async def __aenter__(self):
         return self
@@ -50,7 +53,9 @@ class _FakeSession:
         if self._raises is not None:
             raise self._raises
         _FakeSession.calls.append({"method": method, "url": url, **kwargs})
-        return _FakeResponse(status=self._status, body=self._body)
+        return _FakeResponse(
+            status=self._status, body=self._body, headers=self._headers
+        )
 
 
 def _install(monkeypatch, **kwargs):
@@ -260,3 +265,101 @@ def test_no_retry_once_the_elapsed_budget_is_spent(monkeypatch):
         asyncio.run(get_json("https://example.org/x"))
 
     assert len(_SequencedSession.calls) == 1
+
+
+def test_fetch_stamps_status_and_attempts_on_exhausted_retries(monkeypatch):
+    _install_sequence(monkeypatch, [503, 503, 503])
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.status == 503
+    assert excinfo.value.attempts == 3
+
+
+def test_fetch_stamps_status_and_attempts_on_non_retryable_status(monkeypatch):
+    _install_sequence(monkeypatch, [404])
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.status == 404
+    assert excinfo.value.attempts == 1
+
+
+def test_fetch_stamps_retry_after_from_header(monkeypatch):
+    monkeypatch.setattr(_http.asyncio, "sleep", _no_sleep)
+    _install(monkeypatch, status=429, headers={"Retry-After": "2"})
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.retry_after == 2.0
+
+
+def test_fetch_stamps_transport_and_attempts(monkeypatch):
+    _install_sequence(
+        monkeypatch,
+        [OSError("reset"), OSError("reset"), OSError("reset")],
+    )
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.transport is True
+    assert excinfo.value.attempts == 3
+
+
+def _classified(monkeypatch, outcomes=None, **install):
+    """Run a real _fetch failure through guarded and return its category."""
+    if outcomes is not None:
+        _install_sequence(monkeypatch, outcomes)
+    else:
+        _install(monkeypatch, **install)
+
+    @guarded
+    async def tool():
+        return await get_json("https://example.org/x")
+
+    return asyncio.run(tool()).failure.category
+
+
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_input_rejecting_statuses_feed_back_as_invalid_input(monkeypatch, status):
+    """A 400/404/422 is usually the model's argument, not a broken upstream."""
+    category = _classified(monkeypatch, [status])
+    assert category is FailureCategory.INVALID_INPUT
+
+
+def test_a_non_json_body_stays_permanent(monkeypatch):
+    category = _classified(monkeypatch, body="<html>nope</html>")
+    assert category is FailureCategory.PERMANENT
+
+
+def test_a_503_stays_transient(monkeypatch):
+    category = _classified(monkeypatch, [503, 503, 503])
+    assert category is FailureCategory.TRANSIENT
+
+
+def test_a_tool_authored_error_is_invalid_input_with_its_own_text():
+    """``invalid ticker symbol 'APPL'`` must reach the model so it can fix it."""
+
+    @guarded
+    async def tool():
+        raise PublicDataError("invalid ticker symbol 'APPL'")
+
+    text = asyncio.run(tool())
+    assert text.failure.category is FailureCategory.INVALID_INPUT
+    assert json.loads(text) == {"error": "invalid ticker symbol 'APPL'"}
+
+
+def test_a_malformed_arxiv_feed_stays_permanent(monkeypatch):
+    """A tool-raised error about the provider's reply is not the model's input."""
+    from src.internal.tools.public_data import knowledge
+
+    async def garbage(*args, **kwargs):
+        return "<feed"
+
+    monkeypatch.setattr(knowledge, "get_text", garbage)
+    text = asyncio.run(guarded(knowledge._search_arxiv)(query="x"))
+    assert text.failure.category is FailureCategory.PERMANENT

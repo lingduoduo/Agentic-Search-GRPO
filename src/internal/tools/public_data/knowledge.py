@@ -164,7 +164,9 @@ async def _search_arxiv(
     try:
         root = ElementTree.fromstring(body)
     except ElementTree.ParseError as exc:
-        raise PublicDataError("arxiv returned a malformed Atom feed") from exc
+        raise PublicDataError(
+            "arxiv returned a malformed Atom feed", upstream=True
+        ) from exc
 
     results = []
     for entry in root.findall(f"{_ATOM}entry"):

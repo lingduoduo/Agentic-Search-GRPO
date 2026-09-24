@@ -110,7 +110,7 @@ def create_tool_router(
             auto_curate=memory_auto_curate,
         )
 
-        async def _run(on_turn=None, on_approval=None):
+        async def _run(on_turn=None, on_approval=None, on_escalation=None):
             answer, _citations, documents, _intent, extra = await _run_tool_agent(
                 body.message,
                 manager=manager,
@@ -120,6 +120,7 @@ def create_tool_router(
                 resolved=resolved,
                 on_turn=on_turn,
                 on_approval=on_approval,
+                on_escalation=on_escalation,
                 with_search_tool=body.run_search_tool,
                 user_present=capabilities.user_present,
                 filters=SearchFilters(access_acl=capabilities.access_acl),
@@ -131,11 +132,12 @@ def create_tool_router(
                 tool_calls,
                 extra.get("num_turns", 0),
                 bool(extra.get("truncated", False)),
+                extra.get("tool_recovery"),
             )
 
         if not body.stream:
             try:
-                answer, tool_calls, num_turns, truncated = await _run()
+                answer, tool_calls, num_turns, truncated, tool_recovery = await _run()
                 store.add_chat_message(session_id, role="assistant", content=answer)
                 return ToolAgentMessageResponse(
                     session_id=session_id,
@@ -143,6 +145,7 @@ def create_tool_router(
                     tool_calls=[tc.model_dump() for tc in tool_calls],
                     num_turns=num_turns,
                     truncated=truncated,
+                    tool_recovery=tool_recovery,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Tool agent failed for: %r", body.message)
@@ -171,7 +174,29 @@ def create_tool_router(
                         broker, user.id, approval_request, queue
                     )
 
-            task = asyncio.create_task(_run(on_turn=on_turn, on_approval=on_approval))
+            escalation_broker = getattr(
+                http_request.app.state, "tool_escalation_broker", None
+            )
+            on_escalation = None
+            if (
+                user is not None
+                and not user.is_anonymous
+                and escalation_broker is not None
+            ):
+                from src.internal.servers.web.app import _request_tool_escalation
+
+                async def on_escalation(escalation_request):
+                    return await _request_tool_escalation(
+                        escalation_broker, user.id, escalation_request, queue
+                    )
+
+            task = asyncio.create_task(
+                _run(
+                    on_turn=on_turn,
+                    on_approval=on_approval,
+                    on_escalation=on_escalation,
+                )
+            )
             try:
                 while not task.done():
                     try:
@@ -182,7 +207,7 @@ def create_tool_router(
                 while not queue.empty():
                     yield sse_frame(queue.get_nowait())
 
-                answer, tool_calls, num_turns, truncated = task.result()
+                answer, tool_calls, num_turns, truncated, tool_recovery = task.result()
                 store.add_chat_message(session_id, role="assistant", content=answer)
                 for tc in tool_calls:
                     yield sse_frame({"type": "tool_call", **tc.model_dump()})
@@ -194,6 +219,7 @@ def create_tool_router(
                         "tool_calls": [tc.model_dump() for tc in tool_calls],
                         "num_turns": num_turns,
                         "truncated": truncated,
+                        "tool_recovery": tool_recovery,
                     }
                 )
             except Exception as exc:  # noqa: BLE001

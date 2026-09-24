@@ -13,11 +13,11 @@ import asyncio
 import functools
 import json
 import logging
-import re
 import time
 from typing import Any, Callable
 
 from src.context.retrieval.client import aiohttp
+from src.internal.tools.base import FailureCategory, ToolErrorText, ToolFailure
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +55,38 @@ MAX_CONTENT_CHARS = 400
 
 
 class PublicDataError(Exception):
-    """An upstream call failed. ``guarded`` turns this into {"error": ...}."""
+    """A public-data call failed. ``guarded`` turns this into {"error": ...}.
+
+    ``upstream`` marks a fault on the provider's side (``_fetch`` sets it).
+    Without it the error is one a tool raised about its own arguments -- an
+    unknown ticker, a place that does not geocode -- which the model can fix.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        attempts: int = 1,
+        retry_after: float | None = None,
+        transport: bool = False,
+        upstream: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.attempts = attempts
+        self.retry_after = retry_after
+        self.transport = transport
+        self.upstream = upstream
 
 
-def _status_of(error: PublicDataError) -> int | None:
-    """Recover the HTTP status from the message, or None for a network error."""
-    match = re.search(r"returned HTTP (\d{3})", str(error))
-    return int(match.group(1)) if match else None
+def _retry_after(value: str | None) -> float | None:
+    """Delta-seconds only; an HTTP-date or garbage is ignored."""
+    try:
+        seconds = float(value) if value is not None else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
 
 
 async def _fetch(
@@ -92,17 +117,26 @@ async def _fetch(
                     method, url, params=params, data=data, headers=merged
                 ) as response:
                     if response.status >= 400:
-                        raise PublicDataError(f"{url} returned HTTP {response.status}")
+                        raise PublicDataError(
+                            f"{url} returned HTTP {response.status}",
+                            status=response.status,
+                            upstream=True,
+                            retry_after=_retry_after(
+                                response.headers.get("Retry-After")
+                            ),
+                        )
                     body = await response.text()
             break
         except PublicDataError as exc:
-            status = _status_of(exc)
-            if status is not None and status not in _RETRYABLE_STATUSES:
+            if exc.status is not None and exc.status not in _RETRYABLE_STATUSES:
+                exc.attempts = attempt + 1
                 raise
             last_error = exc
         except Exception as exc:
             logger.debug("public data request to %s failed", url, exc_info=True)
-            last_error = PublicDataError(f"request to {url} failed: {exc}")
+            last_error = PublicDataError(
+                f"request to {url} failed: {exc}", transport=True, upstream=True
+            )
 
         if attempt + 1 >= attempts:
             break
@@ -111,7 +145,9 @@ async def _fetch(
         await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
 
     if body is None:
-        raise last_error or PublicDataError(f"request to {url} failed")
+        if last_error is not None:
+            last_error.attempts = attempt + 1
+        raise last_error or PublicDataError(f"request to {url} failed", upstream=True)
 
     if not as_json:
         return body
@@ -120,7 +156,7 @@ async def _fetch(
     try:
         return json.loads(body)
     except ValueError as exc:
-        raise PublicDataError(f"{url} returned a non-JSON body") from exc
+        raise PublicDataError(f"{url} returned a non-JSON body", upstream=True) from exc
 
 
 async def get_json(
@@ -177,6 +213,31 @@ async def post_json(
     )
 
 
+# Statuses that usually mean "your argument was wrong" (a bad symbol in the
+# path, a malformed query), so the model is told and may correct the call.
+_INPUT_STATUSES = frozenset({400, 404, 422})
+
+_TRANSIENT_MESSAGE = "upstream temporarily unavailable"
+_INVALID_INPUT_MESSAGE = "upstream rejected the request's arguments"
+_PERMANENT_MESSAGE = "upstream refused or could not answer the request"
+_UNKNOWN_MESSAGE = "tool failed unexpectedly"
+
+
+def _classify(exc: PublicDataError) -> ToolFailure:
+    if exc.transport or exc.status in _RETRYABLE_STATUSES:
+        category, message = FailureCategory.TRANSIENT, _TRANSIENT_MESSAGE
+    elif not exc.upstream or exc.status in _INPUT_STATUSES:
+        category, message = FailureCategory.INVALID_INPUT, _INVALID_INPUT_MESSAGE
+    else:
+        category, message = FailureCategory.PERMANENT, _PERMANENT_MESSAGE
+    return ToolFailure(
+        category,
+        message,
+        retry_after=exc.retry_after,
+        provider_attempts=exc.attempts,
+    )
+
+
 def guarded(fn: Callable) -> Callable:
     """Adapt a tool coroutine to the tool return contract.
 
@@ -190,9 +251,12 @@ def guarded(fn: Callable) -> Callable:
         try:
             return json.dumps(await fn(**kwargs))
         except PublicDataError as exc:
-            return json.dumps({"error": str(exc)})
+            return ToolErrorText(json.dumps({"error": str(exc)}), _classify(exc))
         except Exception as exc:  # noqa: BLE001 - a tool must never raise
             logger.debug("tool %s failed", getattr(fn, "__name__", "?"), exc_info=True)
-            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+            return ToolErrorText(
+                json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
+                ToolFailure(FailureCategory.UNKNOWN, _UNKNOWN_MESSAGE),
+            )
 
     return _wrapped

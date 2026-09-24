@@ -237,6 +237,18 @@ export function submitToolApproval(
   });
 }
 
+export function submitToolEscalation(
+  escalationId: string,
+  decision: "retry" | "skip" | "cancel",
+  init?: Pick<RequestInit, "signal">,
+): Promise<unknown> {
+  return requestJson<unknown>(`/api/agent/escalations/${escalationId}`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
+    signal: init?.signal,
+  });
+}
+
 /**
  * Decode an SSE byte stream into typed events.
  *

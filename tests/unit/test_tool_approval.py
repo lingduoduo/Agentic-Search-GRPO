@@ -278,10 +278,12 @@ async def test_failed_tool_feeds_error_back_and_continues():
 
     loop, manager = _loop([broken], ['{"name":"broken","arguments":{}}', "recovered"])
     output = await loop.run([{"role": "user", "content": "go"}], {})
-    # Failure is recorded...
+    # Failure is recorded; an unclassified exception on a read-only tool is not
+    # retried (only FailureCategory.TRANSIENT is) and degrades the tool...
     assert _trace(output)[0]["status"] == str(TaskStatus.FAILED)
-    # ...fed back into the next prompt...
-    assert "nope" in manager.prompts[-1]
+    assert _trace(output)[0]["error_code"] == "tool_unavailable"
+    # ...fed back into the next prompt as an unavailable notice...
+    assert '"status": "unavailable"' in manager.prompts[-1]
     # ...the loop continued (prompted again) and produced the recovery answer.
     assert len(manager.prompts) == 2
     assert output.final_answer == "recovered"

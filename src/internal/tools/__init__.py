@@ -9,6 +9,9 @@ from .base import FunctionTool as FunctionTool
 from .base import Tool as Tool
 from .base import ToolSchema as ToolSchema
 from .base import ToolEffect as ToolEffect
+from .base import FailureCategory as FailureCategory
+from .base import ToolFailure as ToolFailure
+from .base import ToolErrorText as ToolErrorText
 from .parsers import FunctionCall as FunctionCall
 from .parsers import HermesToolParser as HermesToolParser
 from .parsers import JSONToolParser as JSONToolParser
@@ -30,6 +33,7 @@ from .search import MultiQueryWebSearchTool as MultiQueryWebSearchTool
 from .search import serper_dev_search as serper_dev_search
 from .registry import ToolEntry as ToolEntry
 from .registry import ToolRegistry as ToolRegistry
+from .registry import ToolInvocation as ToolInvocation
 from .registry import tool as tool
 from .registry import tool_registry as tool_registry
 from .openapi_schema import OpenAPISchema as OpenAPISchema

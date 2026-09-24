@@ -18,5 +18,8 @@ from .core.state import UserRequest as UserRequest
 from .tool import ToolAgentLoop as ToolAgentLoop
 from .tool import ToolAgentLoopConfig as ToolAgentLoopConfig
 from .tool import ApprovalDecision as ApprovalDecision
+from .tool import EscalationDecision as EscalationDecision
 from .tool import ToolApprovalCallback as ToolApprovalCallback
 from .tool import ToolApprovalRequest as ToolApprovalRequest
+from .tool import ToolEscalationCallback as ToolEscalationCallback
+from .tool import ToolEscalationRequest as ToolEscalationRequest
