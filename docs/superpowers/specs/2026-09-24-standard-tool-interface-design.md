@@ -88,7 +88,9 @@ is missing inside the result.
 | `httpx.TransportError` (only if httpx is importable) | `transient` |
 | anything else | `unknown` |
 
-`InvalidToolInput(message)` is what any tool raises for a bad argument; its
+`InvalidToolInput(message)` subclasses `ValueError` (so existing
+`except ValueError` handlers, e.g. the MCP server's, keep working) and is what
+any tool raises for a bad argument; its
 failure message is the exception's message (it describes the caller's own
 input, and it goes back to the model, never to a user card).
 
@@ -102,8 +104,16 @@ for reporting.
 
 ### Enforcement
 
-`ToolRegistry.register(tool, *, source=..., ...)` raises
-`ValueError("tool <name>: <rule>")` when:
+Enforcement is per registry: `ToolRegistry(strict=True)` checks every
+registration; the default `ToolRegistry()` does not. The global `tool_registry`
+and the memory tools' registry are strict — together they cover every production
+registration path (seeding, OpenAPI, schema, MCP, memory). `ToolAgentLoop`'s
+private per-run registry stays non-strict: it only receives tools that already
+passed the global registry plus the request-bound corpus search, which the
+conformance test checks directly, and tests keep building ad-hoc loop tools.
+`validate_tool_contract(tool, *, source) -> list[str]` (in `registry.py`)
+returns the violations; a strict `register(tool, *, source=..., ...)` raises
+`ValueError("tool <name>: <rule>; ...")` when it returns any:
 
 - `result_kind` is `None`;
 - `effect is UNSPECIFIED` and `source != "mcp"`;
@@ -121,7 +131,7 @@ shorthand) forwards `effect`, `result_kind`, `citeable` and `retries_internally`
 | corpus `search` (`routing_tools.build_search_routing_tool`) | `DOCUMENTS`, `retries_internally=True`. When no page succeeds and at least one errored, return `ToolErrorText(json.dumps({"error": <first error>}), ToolFailure(transient, "search backend unavailable", provider_attempts=<client max_retries>))`. |
 | `rag_routing_tool` | Stop catching exceptions (the registry classifies them); `JSON`. |
 | 9 public-data tools | Declare `result_kind` (`search_wikipedia`, `search_arxiv`, `search_wayback`: `DOCUMENTS`; the rest `JSON`). `retries_internally=True` for the eight GET-based tools (`_fetch` retries GETs 3×); `search_nearby_places` POSTs to Overpass, which `_fetch` never retries, so it declares `False`. |
-| domain tools (`search_domain`, `get_sub_domains`, `extract_page`, `batch_search`) | `DomainSearch` raises `InvalidToolInput` instead of `ValueError` for bad arguments; `guarded` maps `InvalidToolInput` to `invalid_input` with the same `{"error": ...}` text; the `extract_page` wrapper is removed. `batch_search` keeps per-query errors inside a successful result. `result_kind`: `extract_page` `DOCUMENTS`; the others `JSON`. `retries_internally=False`. |
+| domain tools (`search_domain`, `get_sub_domains`, `extract_page`, `batch_search`) | `DomainSearch` raises `InvalidToolInput` instead of `ValueError` for bad arguments (including `normalize_search_domain` and a `[fetch error]` page in `extract`); when a wrapped capability tool fails, `DomainSearch.search` re-raises `InvalidToolInput` if the capability's `ToolErrorText` failure is `invalid_input`, else a plain `ValueError` (`unknown`, degrade). `guarded` maps `InvalidToolInput` to `invalid_input` with the same `{"error": ...}` text; the `extract_page` wrapper is removed. `batch_search` keeps per-query errors inside a successful result. `result_kind`: `extract_page` `DOCUMENTS`; the others `JSON`. `search_domain` becomes non-citeable (its results are document lists or fact objects depending on the capability, and it is not agent-callable, so no source cards are lost). `retries_internally=False`. |
 | OpenAPI tools (`ApiRequestTool`) | Keep raising; classification above fixes categories. `result_kind=JSON`, `retries_internally=False`; effect by method unchanged. |
 | MCP client tools | Stay `UNSPECIFIED` (allowed for `source="mcp"`); `result_kind=TEXT`; `retries_internally=False`. |
 | memory tools | "not found" and "empty" become `ToolErrorText` `invalid_input` (the model corrects); `result_kind=TEXT`; `retries_internally=False`. |
@@ -144,8 +154,9 @@ shorthand) forwards `effect`, `result_kind`, `citeable` and `retries_internally`
   on its first line for every call. Delete `_get_tool_class` and
   `maybe_emit_argument_delta`, and in `chat/llm_step.py` remove its import, the
   `arg_parsers` dict and the `yield from maybe_emit_argument_delta(...)` block.
-  Keep the module's `Parser` export if `llm_step` still needs it for anything
-  else; otherwise remove that import too.
+  `llm_step` also imports `Parser` from that module only for the `arg_parsers`
+  dict, so both go, and `chat/tool_call_args_streaming.py` — left with nothing
+  anyone imports — is deleted.
 - **`built_in_tools`**: delete `CITEABLE_TOOLS_NAMES`, `STOPPING_TOOLS_NAMES`
   and `TOOL_NAME_TO_CLASS` (the module is left empty and deleted if nothing else
   remains). `observability/admin_surface` counts citeable tools from
