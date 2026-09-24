@@ -29,6 +29,7 @@ from src.internal.configs import load_app_settings
 from src.internal.llm.interfaces import LLMConfig
 from src.internal.llm.providers import OpenAICompatibleLLM
 from src.internal.utils.embedding_gate import (
+    follow_up_cos_min,
     gate_embedder,
     make_cosine_fn,
     search_direct_cos_min,
@@ -63,6 +64,7 @@ from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
 from src.internal.search.models import RankedEvidence
+from src.internal.search.context import resolve_follow_up
 from src.internal.search.pipeline import SearchPipeline
 from src.internal.search.ranking import DefaultRankingStage
 from src.internal.search.stages import RerankHTTPRankingStage
@@ -188,6 +190,10 @@ class SearchExperienceSettings:
     # signed-in user's long-term memories. Off by default; inert unless
     # memory_compression is on; anonymous sessions are never curated.
     memory_auto_curate: bool = False
+    # Resolve follow-up turns into standalone retrieval queries (the answer
+    # prompt still gets the raw message). Off by default until the multi-turn
+    # eval's success criteria hold.
+    follow_up_resolution: bool = False
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
@@ -213,6 +219,7 @@ class SearchExperienceSettings:
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
             memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
+            follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
@@ -608,6 +615,7 @@ async def _auto_search_pipeline(
     source_provider: str,
     extra: dict,
     domain: str = "general",
+    retrieval_query: str | None = None,
 ) -> tuple:
     """Run the shared stage composer as the grounded degraded fallback."""
     pipeline = SearchPipeline(
@@ -622,7 +630,14 @@ async def _auto_search_pipeline(
         _WebEvidenceStage(),
         _WebSearchAnswerStage(source_provider),
     )
-    result = await pipeline.run(query, history, filters, top_k, source_provider)
+    result = await pipeline.run(
+        query,
+        history,
+        filters,
+        top_k,
+        source_provider,
+        retrieval_query=retrieval_query,
+    )
     result[4].update(extra)
     return result
 
@@ -755,6 +770,7 @@ async def _run_agentic_rag(
     history: list,
     user_memory: str | None = None,
     on_claim=None,
+    retrieval_query: str | None = None,
 ) -> tuple:
     """Run the AgenticRAGLoop (decompose + HyDE). Assumes an LLM is configured."""
     rag_loop = AgenticRAGLoop(
@@ -771,6 +787,7 @@ async def _run_agentic_rag(
     recorder = ControlFlowRecorder(uuid4().hex)
     rag = await rag_loop.run(
         query,
+        retrieval_query=retrieval_query,
         chat_history=history,
         recorder=recorder,
         user_memory=user_memory,
@@ -964,6 +981,7 @@ async def _run_search_direct_or_escalate(
     source_provider: str,
     domain: str = "general",
     on_turn=None,
+    retrieval_query: str | None = None,
 ) -> tuple:
     """Direct retrieval first; return docs when the query matches, else escalate.
 
@@ -973,6 +991,11 @@ async def _run_search_direct_or_escalate(
     non-LLM summary (no agent loop). Otherwise escalate to the SearchAgentLoop
     (local model) or the degraded pipeline, preserving today's behavior.
     """
+
+    # What retrieval searches for: the resolved standalone query when follow-up
+    # resolution is on. The escalated agent loop still gets the raw message and
+    # history, and writes its own queries.
+    search_query = retrieval_query or query
 
     # Signing in narrows results; it does not change which route runs. Filters
     # used to divert the whole query to `_auto_search_pipeline` because the
@@ -1029,6 +1052,7 @@ async def _run_search_direct_or_escalate(
             source_provider=source_provider,
             extra=escalate_extra,
             domain=domain,
+            retrieval_query=retrieval_query,
         )
 
     # Explicit non-default source: honor it via the existing escalation path
@@ -1039,7 +1063,7 @@ async def _run_search_direct_or_escalate(
     internal_unreachable = False
     try:
         documents = await _run_direct_search(
-            query,
+            search_query,
             source_provider="retrieval",
             search_url=search_url,
             rerank_url=rerank_url,
@@ -1055,7 +1079,7 @@ async def _run_search_direct_or_escalate(
         internal_unreachable = True
     is_strong, tier, top_score, cosine = await asyncio.to_thread(
         _direct_gate_decision,
-        query,
+        search_query,
         real,
         cos_min=search_direct_cos_min(),
         cosine_fn=make_cosine_fn(gate_embedder()),
@@ -1064,7 +1088,7 @@ async def _run_search_direct_or_escalate(
         "search",
         "direct_retrieval",
         {
-            "query": query,
+            "query": search_query,
             "top_k": top_k,
             "top_score": top_score,
             "documents": [
@@ -1083,7 +1107,7 @@ async def _run_search_direct_or_escalate(
         )
         answer = _search_only_answer(
             "Direct retrieval",
-            queries=[query],
+            queries=[search_query],
             documents=real,
             source_provider="retrieval",
         )
@@ -1097,7 +1121,7 @@ async def _run_search_direct_or_escalate(
                 "tier": tier,
                 "top_score": top_score,
                 "source_provider": "retrieval",
-                "retrieval_query": query,
+                "retrieval_query": search_query,
                 "ranking": ranking,
                 "inference": {"mode": "deterministic", "model": None},
             },
@@ -1120,7 +1144,7 @@ async def _run_search_direct_or_escalate(
             providers_attempted += 1
             try:
                 external_documents = await _run_direct_search(
-                    query,
+                    search_query,
                     source_provider=provider,
                     search_url=search_url,
                     browser_search_url=(
@@ -1149,7 +1173,7 @@ async def _run_search_direct_or_escalate(
                 )
                 answer = _search_only_answer(
                     "External search",
-                    queries=[query],
+                    queries=[search_query],
                     documents=external_real,
                     source_provider=provider,
                 )
@@ -1162,7 +1186,7 @@ async def _run_search_direct_or_escalate(
                         "search_mode": "external_fallback",
                         "external_provider": provider,
                         "source_provider": provider,
-                        "retrieval_query": query,
+                        "retrieval_query": search_query,
                         "top_score": top_score,
                         "ranking": _ranking_metadata(
                             external_documents,
@@ -1218,6 +1242,7 @@ async def _run_auto_routed(
     user_memory: str | None = None,
     user_present: bool = False,
     forced_route: RouteStrategy | None = None,
+    retrieval_query: str | None = None,
 ) -> tuple:
     """3-way agentic routing. Returns (answer, citations, documents, intent, extra).
 
@@ -1314,6 +1339,7 @@ async def _run_auto_routed(
             source_provider=source_provider,
             domain=domain,
             on_turn=on_turn,
+            retrieval_query=retrieval_query,
         )
         extra.update(run_extra)
         return answer, citations, documents, intent, extra
@@ -1332,6 +1358,7 @@ async def _run_auto_routed(
                 history=history,
                 user_memory=user_memory,
                 on_claim=on_claim,
+                retrieval_query=retrieval_query,
             )
             extra.update(run_extra)
             return answer, citations, documents, intent, extra
@@ -1348,6 +1375,7 @@ async def _run_auto_routed(
             source_provider=source_provider,
             extra=extra,
             domain=domain,
+            retrieval_query=retrieval_query,
         )
 
 
@@ -1690,6 +1718,26 @@ def create_web_app(
             cache=get_cache_backend() if settings.memory_compression else None,
         )
         history = working.messages
+        # Resolved once, for retrieval only: routing and the answer prompt keep
+        # the message as typed.
+        follow_up_meta: dict = {}
+        retrieval_query: str | None = None
+        if settings.follow_up_resolution:
+            resolution = await asyncio.to_thread(
+                resolve_follow_up,
+                query,
+                history,
+                cosine=make_cosine_fn(gate_embedder()),
+                tau=follow_up_cos_min(),
+            )
+            retrieval_query = resolution.query
+            follow_up_meta = {
+                "follow_up": {
+                    "continuation": resolution.continuation,
+                    "reason": resolution.reason,
+                    "query": resolution.query,
+                }
+            }
         db.add_chat_message(session_id, role="user", content=query)
 
         # Resolve the retrieval URL server-side. A client-supplied search_url is
@@ -1753,7 +1801,9 @@ def create_web_app(
                         user_memory=user_memory,
                         user_present=capabilities.user_present,
                         forced_route=forced_route,
+                        retrieval_query=retrieval_query,
                     )
+                    extra.update(follow_up_meta)
                     _cap = _capture.active()
                     if _cap is not None:
                         _cap.route = extra.get("route")
@@ -1878,7 +1928,9 @@ def create_web_app(
                         history=history,
                         user_memory=user_memory,
                         on_claim=on_claim,
+                        retrieval_query=retrieval_query,
                     )
+                    extra.update(follow_up_meta)
                     return _finalize_response(
                         db,
                         session_id,
@@ -1982,6 +2034,7 @@ def create_web_app(
                     top_k=top_k,
                     filters=filters,
                     user_memory=user_memory,
+                    retrieval_query=retrieval_query,
                 )
             except HTTPException:
                 raise
@@ -2012,7 +2065,7 @@ def create_web_app(
                 documents=documents,
                 intent="chat",
                 hook_metadata=hook_metadata,
-                extra={},
+                extra=dict(follow_up_meta),
                 mode=mode,
             )
         finally:

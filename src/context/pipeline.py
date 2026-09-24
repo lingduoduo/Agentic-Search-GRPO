@@ -435,6 +435,7 @@ async def answer_with_retrieval(
     grounded_generation: GroundedGenerationConfig | None = None,
     evidence_sufficiency: float | None = None,
     user_memory: str | None = None,
+    retrieval_query: str | None = None,
 ) -> AnswerGenerationResult:
     from .safety import evidence_from_context
     from .tool_evidence import collect_tool_evidence
@@ -445,7 +446,7 @@ async def answer_with_retrieval(
     with tracer.span("rag.query", top_k=top_k):
         with tracer.span("rag.retrieve"):
             context = await retrieve_context(
-                question,
+                retrieval_query or question,
                 search_url=search_url,
                 top_k=top_k,
                 filters=filters,
