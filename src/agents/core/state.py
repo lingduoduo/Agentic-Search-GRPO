@@ -37,9 +37,10 @@ __all__ = [
 class TaskStatus(Enum):
     """Terminal status of one executed tool call.
 
-    Only outcomes, deliberately: nothing in this repo schedules, queues or
-    retries a tool, so there is no PENDING/RUNNING/RETRYING to observe. A tool
-    is invoked inline by ``ToolRegistry.invoke`` and reports how it finished.
+    Only outcomes, deliberately: a tool may be retried inside one call; the
+    status is the final outcome, so there is no PENDING/RUNNING/RETRYING to
+    observe. A tool is invoked inline by ``ToolRegistry.invoke`` and reports
+    how it finished.
     """
 
     COMPLETED = "completed"
