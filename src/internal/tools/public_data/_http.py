@@ -13,11 +13,11 @@ import asyncio
 import functools
 import json
 import logging
-import re
 import time
 from typing import Any, Callable
 
 from src.context.retrieval.client import aiohttp
+from src.internal.tools.base import FailureCategory, ToolErrorText, ToolFailure
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +57,29 @@ MAX_CONTENT_CHARS = 400
 class PublicDataError(Exception):
     """An upstream call failed. ``guarded`` turns this into {"error": ...}."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        attempts: int = 1,
+        retry_after: float | None = None,
+        transport: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.attempts = attempts
+        self.retry_after = retry_after
+        self.transport = transport
 
-def _status_of(error: PublicDataError) -> int | None:
-    """Recover the HTTP status from the message, or None for a network error."""
-    match = re.search(r"returned HTTP (\d{3})", str(error))
-    return int(match.group(1)) if match else None
+
+def _retry_after(value: str | None) -> float | None:
+    """Delta-seconds only; an HTTP-date or garbage is ignored."""
+    try:
+        seconds = float(value) if value is not None else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
 
 
 async def _fetch(
@@ -92,17 +110,25 @@ async def _fetch(
                     method, url, params=params, data=data, headers=merged
                 ) as response:
                     if response.status >= 400:
-                        raise PublicDataError(f"{url} returned HTTP {response.status}")
+                        raise PublicDataError(
+                            f"{url} returned HTTP {response.status}",
+                            status=response.status,
+                            retry_after=_retry_after(
+                                response.headers.get("Retry-After")
+                            ),
+                        )
                     body = await response.text()
             break
         except PublicDataError as exc:
-            status = _status_of(exc)
-            if status is not None and status not in _RETRYABLE_STATUSES:
+            if exc.status is not None and exc.status not in _RETRYABLE_STATUSES:
+                exc.attempts = attempt + 1
                 raise
             last_error = exc
         except Exception as exc:
             logger.debug("public data request to %s failed", url, exc_info=True)
-            last_error = PublicDataError(f"request to {url} failed: {exc}")
+            last_error = PublicDataError(
+                f"request to {url} failed: {exc}", transport=True
+            )
 
         if attempt + 1 >= attempts:
             break
@@ -111,6 +137,8 @@ async def _fetch(
         await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
 
     if body is None:
+        if last_error is not None:
+            last_error.attempts = attempt + 1
         raise last_error or PublicDataError(f"request to {url} failed")
 
     if not as_json:
@@ -177,6 +205,21 @@ async def post_json(
     )
 
 
+_TRANSIENT_MESSAGE = "upstream temporarily unavailable"
+_PERMANENT_MESSAGE = "upstream refused or could not answer the request"
+_UNKNOWN_MESSAGE = "tool failed unexpectedly"
+
+
+def _classify(exc: PublicDataError) -> ToolFailure:
+    transient = exc.transport or exc.status in _RETRYABLE_STATUSES
+    return ToolFailure(
+        FailureCategory.TRANSIENT if transient else FailureCategory.PERMANENT,
+        _TRANSIENT_MESSAGE if transient else _PERMANENT_MESSAGE,
+        retry_after=exc.retry_after,
+        provider_attempts=exc.attempts,
+    )
+
+
 def guarded(fn: Callable) -> Callable:
     """Adapt a tool coroutine to the tool return contract.
 
@@ -190,9 +233,12 @@ def guarded(fn: Callable) -> Callable:
         try:
             return json.dumps(await fn(**kwargs))
         except PublicDataError as exc:
-            return json.dumps({"error": str(exc)})
+            return ToolErrorText(json.dumps({"error": str(exc)}), _classify(exc))
         except Exception as exc:  # noqa: BLE001 - a tool must never raise
             logger.debug("tool %s failed", getattr(fn, "__name__", "?"), exc_info=True)
-            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+            return ToolErrorText(
+                json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
+                ToolFailure(FailureCategory.UNKNOWN, _UNKNOWN_MESSAGE),
+            )
 
     return _wrapped

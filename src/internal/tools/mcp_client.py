@@ -33,7 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from .base import FunctionTool, Tool
+from .base import FailureCategory, FunctionTool, Tool, ToolErrorText, ToolFailure
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,11 @@ def _result_text(result: Any) -> str:
     ]
     text = "\n".join(parts)
     if getattr(result, "isError", False):
-        return f"Error: {text}" if text else "Error: tool call failed."
+        message = f"Error: {text}" if text else "Error: tool call failed."
+        return ToolErrorText(
+            message,
+            ToolFailure(FailureCategory.UNKNOWN, "remote tool reported an error"),
+        )
     return text
 
 

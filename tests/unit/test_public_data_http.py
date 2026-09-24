@@ -16,9 +16,10 @@ from src.internal.tools.public_data._http import (
 
 
 class _FakeResponse:
-    def __init__(self, *, status=200, body="{}"):
+    def __init__(self, *, status=200, body="{}", headers=None):
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -35,10 +36,11 @@ class _FakeSession:
 
     calls: list[dict] = []
 
-    def __init__(self, *, status=200, body="{}", raises=None):
+    def __init__(self, *, status=200, body="{}", raises=None, headers=None):
         self._status = status
         self._body = body
         self._raises = raises
+        self._headers = headers
 
     async def __aenter__(self):
         return self
@@ -50,7 +52,9 @@ class _FakeSession:
         if self._raises is not None:
             raise self._raises
         _FakeSession.calls.append({"method": method, "url": url, **kwargs})
-        return _FakeResponse(status=self._status, body=self._body)
+        return _FakeResponse(
+            status=self._status, body=self._body, headers=self._headers
+        )
 
 
 def _install(monkeypatch, **kwargs):
@@ -260,3 +264,46 @@ def test_no_retry_once_the_elapsed_budget_is_spent(monkeypatch):
         asyncio.run(get_json("https://example.org/x"))
 
     assert len(_SequencedSession.calls) == 1
+
+
+def test_fetch_stamps_status_and_attempts_on_exhausted_retries(monkeypatch):
+    _install_sequence(monkeypatch, [503, 503, 503])
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.status == 503
+    assert excinfo.value.attempts == 3
+
+
+def test_fetch_stamps_status_and_attempts_on_non_retryable_status(monkeypatch):
+    _install_sequence(monkeypatch, [404])
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.status == 404
+    assert excinfo.value.attempts == 1
+
+
+def test_fetch_stamps_retry_after_from_header(monkeypatch):
+    monkeypatch.setattr(_http.asyncio, "sleep", _no_sleep)
+    _install(monkeypatch, status=429, headers={"Retry-After": "2"})
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.retry_after == 2.0
+
+
+def test_fetch_stamps_transport_and_attempts(monkeypatch):
+    _install_sequence(
+        monkeypatch,
+        [OSError("reset"), OSError("reset"), OSError("reset")],
+    )
+
+    with pytest.raises(PublicDataError) as excinfo:
+        asyncio.run(get_json("https://example.org/x"))
+
+    assert excinfo.value.transport is True
+    assert excinfo.value.attempts == 3

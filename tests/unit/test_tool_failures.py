@@ -1,4 +1,6 @@
 import asyncio
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +11,8 @@ from src.internal.tools import (
     ToolFailure,
     ToolRegistry,
 )
+from src.internal.tools.mcp_client import _result_text
+from src.internal.tools.public_data._http import PublicDataError, guarded
 
 
 def _failure(category=FailureCategory.TRANSIENT):
@@ -97,3 +101,82 @@ def test_invoke_detailed_propagates_cancellation():
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(_registry(t).invoke_detailed("t", {}))
+
+
+def _guarded_failure(exc):
+    @guarded
+    async def tool():
+        raise exc
+
+    return asyncio.run(tool())
+
+
+@pytest.mark.parametrize(
+    ("exc", "category", "attempts"),
+    [
+        (
+            PublicDataError("x returned HTTP 503", status=503, attempts=3),
+            FailureCategory.TRANSIENT,
+            3,
+        ),
+        (
+            PublicDataError("request to x failed: reset", transport=True, attempts=3),
+            FailureCategory.TRANSIENT,
+            3,
+        ),
+        (
+            PublicDataError("x returned HTTP 404", status=404, attempts=1),
+            FailureCategory.PERMANENT,
+            1,
+        ),
+        (
+            PublicDataError("x returned a non-JSON body", attempts=1),
+            FailureCategory.PERMANENT,
+            1,
+        ),
+        (RuntimeError("surprise"), FailureCategory.UNKNOWN, 0),
+    ],
+)
+def test_guarded_classifies_and_keeps_its_json_text(exc, category, attempts):
+    text = _guarded_failure(exc)
+    assert isinstance(text, ToolErrorText)
+    assert text.failure.category is category
+    assert text.failure.provider_attempts == attempts
+    assert "error" in json.loads(text)  # same body shape as before
+
+
+def test_guarded_passes_retry_after_through():
+    text = _guarded_failure(
+        PublicDataError("x returned HTTP 429", status=429, attempts=3, retry_after=2.0)
+    )
+    assert text.failure.retry_after == 2.0
+
+
+def test_guarded_success_is_plain_text():
+    @guarded
+    async def tool():
+        return {"ok": 1}
+
+    text = asyncio.run(tool())
+    assert not isinstance(text, ToolErrorText) and json.loads(text) == {"ok": 1}
+
+
+def test_public_data_error_message_constructor_still_works():
+    exc = PublicDataError("x returned HTTP 500")
+    assert (
+        str(exc) == "x returned HTTP 500" and exc.status is None and exc.attempts == 1
+    )
+
+
+def test_mcp_is_error_is_an_unknown_failure_with_the_same_text():
+    result = SimpleNamespace(
+        content=[SimpleNamespace(text="quota exceeded")], isError=True
+    )
+    text = _result_text(result)
+    assert text == "Error: quota exceeded"
+    assert text.failure.category is FailureCategory.UNKNOWN
+
+
+def test_mcp_success_is_plain_text():
+    result = SimpleNamespace(content=[SimpleNamespace(text="fine")], isError=False)
+    assert not isinstance(_result_text(result), ToolErrorText)
