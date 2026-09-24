@@ -94,6 +94,30 @@ class ToolApprovalRequest:
 
 ToolApprovalCallback = Callable[[ToolApprovalRequest], Awaitable[ApprovalDecision]]
 
+
+class EscalationDecision(str, Enum):
+    RETRY = "retry"
+    SKIP = "skip"
+    CANCEL = "cancel"
+    EXPIRED = "expired"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolEscalationRequest:
+    escalation_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    category: str
+    message: str
+    attempts: int
+    created_at: datetime
+    expires_at: datetime
+
+
+ToolEscalationCallback = Callable[
+    [ToolEscalationRequest], Awaitable[EscalationDecision]
+]
+
 UNAVAILABLE_NOTE = (
     "This tool is unavailable for the rest of this turn. Answer from what you "
     "have and say what is missing."
@@ -202,6 +226,8 @@ class ToolAgentLoopConfig(AgentLoopConfig):
     tool_response_truncate_side: str = "left"
     tool_parser_format: str = "json"
     approval_timeout_seconds: float = 60.0
+    escalation_timeout_seconds: float = 120.0
+    max_escalations: int = 3
 
 
 @register("tool_agent")
@@ -304,7 +330,7 @@ class ToolAgentLoop(AgentLoopBase):
         self,
         tool_call: FunctionCall,
         state: RecoveryState | None = None,
-        on_escalation: Any | None = None,
+        on_escalation: ToolEscalationCallback | None = None,
     ) -> ToolExecutionResult:
         """Execute one call with retry → degrade → escalate recovery.
 
@@ -368,11 +394,42 @@ class ToolAgentLoop(AgentLoopBase):
                     start,
                     retries,
                 )
-            # Action.ESCALATE is handled in Task 5; until then escalate as unresolved.
-            state.stop(
-                "unresolved",
-                f"{name} failed and was not retried; the action may not have completed.",
+            # Action.ESCALATE
+            decision_value = await self._escalate(
+                name, args, failure, retries, state, on_escalation
             )
+            state.escalations.append(
+                {
+                    "tool": name,
+                    "category": failure.category.value,
+                    "attempts": retries + 1,
+                    "decision": decision_value,
+                }
+            )
+            if decision_value == EscalationDecision.RETRY.value:
+                retries += 1  # user-authorised: does not draw on the retry budget
+                continue
+            if decision_value == EscalationDecision.SKIP.value:
+                state.mark_unavailable(name)
+                return self._unavailable_result(
+                    name,
+                    args,
+                    TaskStatus.FAILED,
+                    failure.category.value,
+                    start,
+                    retries,
+                )
+            if decision_value == EscalationDecision.CANCEL.value:
+                state.stop(
+                    "cancelled",
+                    f"Stopped: {name} failed ({failure.category.value}); "
+                    "nothing further was attempted.",
+                )
+            else:  # expired, no_callback, cap
+                state.stop(
+                    "unresolved",
+                    f"{name} failed and was not retried; the action may not have completed.",
+                )
             return self._result(
                 name,
                 args,
@@ -382,6 +439,38 @@ class ToolAgentLoop(AgentLoopBase):
                 error_message=failure.message,
                 retry_count=retries,
             )
+
+    async def _escalate(
+        self, name, args, failure, retries, state, on_escalation
+    ) -> str:
+        """Ask the user; return a decision value, or "no_callback" / "cap"."""
+        if on_escalation is None:
+            return "no_callback"
+        if state.escalation_count >= self.tool_config.max_escalations:
+            return "cap"
+        state.escalation_count += 1  # counted before awaiting: concurrent calls see it
+        created_at = datetime.now(timezone.utc)
+        timeout = self.tool_config.escalation_timeout_seconds
+        request = ToolEscalationRequest(
+            escalation_id=uuid4().hex,
+            tool_name=name,
+            arguments=args,
+            category=failure.category.value,
+            message=failure.message,
+            attempts=retries + 1,
+            created_at=created_at,
+            expires_at=created_at + timedelta(seconds=timeout),
+        )
+        try:
+            decision = await asyncio.wait_for(on_escalation(request), timeout=timeout)
+        except asyncio.TimeoutError:
+            return EscalationDecision.EXPIRED.value
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Escalation callback failed for tool %r", name)
+            return EscalationDecision.EXPIRED.value
+        return EscalationDecision(decision).value
 
     def _result(
         self,
@@ -521,7 +610,7 @@ class ToolAgentLoop(AgentLoopBase):
         *,
         on_turn: "OnTurnCallback | None" = None,
         on_approval: ToolApprovalCallback | None = None,
-        on_escalation: Any | None = None,
+        on_escalation: ToolEscalationCallback | None = None,
     ) -> AgentLoopOutput:
         metrics: dict[str, float] = {
             "tool_approvals_requested": 0,

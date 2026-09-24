@@ -1,7 +1,12 @@
 import asyncio
 import json
 
-from src.agents import ToolAgentLoop, ToolAgentLoopConfig
+from src.agents import (
+    ApprovalDecision,
+    EscalationDecision,
+    ToolAgentLoop,
+    ToolAgentLoopConfig,
+)
 from src.agents.core.state import TaskStatus
 from src.agents.tool.recovery import RecoveryPolicy
 from src.internal.tools import (
@@ -167,3 +172,161 @@ def test_no_failures_means_no_recovery_summary():
     loop, _ = _loop([tool], [CALL, "done"])
     output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
     assert output.tool_recovery is None
+
+
+def _writer(fail_times):
+    calls = []
+
+    @FunctionTool.from_fn(name="send", effect=ToolEffect.SIDE_EFFECTING)
+    async def send():
+        calls.append(1)
+        if len(calls) <= fail_times:
+            return ToolErrorText(
+                "Error: boom",
+                ToolFailure(FailureCategory.UNKNOWN, "remote tool reported an error"),
+            )
+        return "sent"
+
+    return send, calls
+
+
+SEND = '{"name":"send","arguments":{}}'
+
+
+async def _approve(request):
+    return ApprovalDecision.APPROVE
+
+
+def _run(tool, responses, on_escalation, **config):
+    tokenizer = _Tokenizer()
+    manager = _Manager(tokenizer, responses)
+    loop = ToolAgentLoop(
+        tokenizer,
+        manager,
+        [tool],
+        ToolAgentLoopConfig(response_length=8192, **config),
+        recovery_policy=FAST,
+    )
+    return asyncio.run(
+        loop.run(
+            [{"role": "user", "content": "go"}],
+            {},
+            on_approval=_approve,
+            on_escalation=on_escalation,
+        )
+    )
+
+
+def _answering(*decisions):
+    seen = []
+    queue = list(decisions)
+
+    async def on_escalation(request):
+        seen.append(request)
+        return queue.pop(0)
+
+    return on_escalation, seen
+
+
+def test_side_effecting_failure_escalates_and_retry_runs_it_again():
+    tool, calls = _writer(1)
+    on_escalation, seen = _answering(EscalationDecision.RETRY)
+    output = _run(tool, [SEND, "done"], on_escalation)
+    assert len(calls) == 2 and len(seen) == 1
+    assert (
+        seen[0].tool_name == "send"
+        and seen[0].category == "unknown"
+        and seen[0].attempts == 1
+    )
+    assert _trace(output)[0]["status"] == str(TaskStatus.COMPLETED)
+    assert output.tool_recovery["escalations"] == [
+        {"tool": "send", "category": "unknown", "attempts": 1, "decision": "retry"}
+    ]
+
+
+def test_skip_degrades_and_the_run_continues():
+    tool, calls = _writer(99)
+    on_escalation, _ = _answering(EscalationDecision.SKIP)
+    output = _run(tool, [SEND, "carried on"], on_escalation)
+    assert len(calls) == 1
+    assert output.final_answer == "carried on"
+    assert output.tool_recovery["degraded"] == ["send"]
+
+
+def test_cancel_stops_with_the_fixed_answer():
+    tool, _ = _writer(99)
+    on_escalation, _ = _answering(EscalationDecision.CANCEL)
+    output = _run(tool, [SEND, "never generated"], on_escalation)
+    assert (
+        output.final_answer
+        == "Stopped: send failed (unknown); nothing further was attempted."
+    )
+    assert output.tool_recovery["outcome"] == "cancelled"
+    assert output.tool_recovery["needs_user"] is False
+
+
+def test_expired_stops_unresolved():
+    tool, _ = _writer(99)
+    on_escalation, _ = _answering(EscalationDecision.EXPIRED)
+    output = _run(tool, [SEND, "never generated"], on_escalation)
+    assert (
+        output.final_answer
+        == "send failed and was not retried; the action may not have completed."
+    )
+    assert output.tool_recovery["needs_user"] is True
+
+
+def test_no_callback_stops_unresolved_without_asking():
+    tool, calls = _writer(99)
+    output = _run(tool, [SEND, "never generated"], None)
+    assert len(calls) == 1
+    assert output.tool_recovery["outcome"] == "unresolved"
+    assert output.tool_recovery["escalations"][0]["decision"] == "no_callback"
+
+
+def test_callback_that_raises_or_hangs_is_unresolved():
+    tool, _ = _writer(99)
+
+    async def boom(request):
+        raise RuntimeError("socket gone")
+
+    assert _run(tool, [SEND, "x"], boom).tool_recovery["needs_user"] is True
+
+    async def hang(request):
+        await asyncio.sleep(10)
+
+    output = _run(tool, [SEND, "x"], hang, escalation_timeout_seconds=0.05)
+    assert output.tool_recovery["needs_user"] is True
+
+
+def test_escalations_are_capped_per_run():
+    tool, calls = _writer(99)
+    on_escalation, seen = _answering(*[EscalationDecision.RETRY] * 10)
+    output = _run(tool, [SEND, "x"], on_escalation, max_escalations=3)
+    assert len(seen) == 3
+    assert len(calls) == 4  # first attempt + 3 user-authorised retries
+    assert output.tool_recovery["outcome"] == "unresolved"
+    assert output.tool_recovery["escalations"][-1]["decision"] == "cap"
+
+
+def test_denied_approval_is_never_escalated():
+    tool, calls = _writer(99)
+    on_escalation, seen = _answering(EscalationDecision.RETRY)
+    tokenizer = _Tokenizer()
+    manager = _Manager(tokenizer, [SEND, "done"])
+    loop = ToolAgentLoop(
+        tokenizer, manager, [tool], ToolAgentLoopConfig(response_length=8192)
+    )
+
+    async def deny(request):
+        return ApprovalDecision.DENY
+
+    asyncio.run(
+        loop.run(
+            [{"role": "user", "content": "go"}],
+            {},
+            on_approval=deny,
+            on_escalation=on_escalation,
+        )
+    )
+    assert calls == [] and seen == []
