@@ -335,6 +335,10 @@ def make_router(name: str, index_dir: Path = INTENT_INDEX_DIR) -> Router:
     )
     if name == "knn" and similarity.load_intent_index(settings) is None:
         raise SystemExit(f"knn router: intent index did not load from {index_dir}")
+    # The index loads from numpy alone; the encoder is only touched per query and
+    # predict_route turns its failure into None, which would route like `rules`.
+    if name == "knn" and similarity.predict_route("probe", settings=settings) is None:
+        raise SystemExit("knn router: the intent encoder could not predict a route")
 
     def route(query: str) -> str:
         decision = recognize_intent(

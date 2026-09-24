@@ -469,3 +469,15 @@ def test_scifact_gold_labels_match_beir_qrels():
                 assert turn.beir_query_id, f"{conv.id}: scifact turn lacks beir id"
                 assert turn.gold_rewrite == queries[turn.beir_query_id], conv.id
                 assert set(turn.relevant_doc_ids) == qrels[turn.beir_query_id], conv.id
+
+
+def test_knn_router_refuses_to_run_when_the_encoder_cannot_predict(monkeypatch):
+    # The index loads from numpy alone; the encoder is only touched per query,
+    # and predict_route swallows its failure and returns None — which would make
+    # `knn` route exactly like `rules`.
+    from src.internal.servers.web.intent import similarity
+
+    monkeypatch.setattr(similarity, "load_intent_index", lambda settings: object())
+    monkeypatch.setattr(similarity, "predict_route", lambda query, settings=None: None)
+    with pytest.raises(SystemExit, match="could not predict"):
+        make_router("knn")
