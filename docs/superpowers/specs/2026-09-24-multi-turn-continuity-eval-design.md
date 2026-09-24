@@ -37,6 +37,7 @@ Per turn:
 | `kind` | follow-ups only: `pronoun`, `ellipsis`, `comparison`, `elaboration` |
 | `gold_rewrite` | the standalone query a perfect resolver would produce (for openings and switches, equal to `text`) |
 | `corpus`, `relevant_doc_ids` | search turns only |
+| `beir_query_id` | optional; SciFact turns only, the BEIR query the gold labels come from |
 
 Composition rules, so the set does not flatter any condition:
 
@@ -50,7 +51,16 @@ Composition rules, so the set does not flatter any condition:
 - Conversations store user turns only. The harness interleaves a fixed
   placeholder assistant message, since no condition reads assistant text.
 
-The dataset is committed before any condition is run.
+SciFact gold labels are not hand-judged. Each SciFact turn's `gold_rewrite` is a
+BEIR SciFact query verbatim (`data/beir/scifact/queries.jsonl`), recorded in an
+optional `beir_query_id` field, and its `relevant_doc_ids` are that query's qrels.
+A follow-up is authored by pairing two BEIR queries about the same entity and
+replacing the entity in the second with a reference.
+
+The dataset is committed before any condition is run. The harness rejects a
+`relevant_doc_ids` entry absent from its corpus, and exits with an error naming
+the file when a corpus is missing (`corpus_scifact.jsonl` is not tracked) rather
+than scoring fewer turns.
 
 ## Conditions
 
@@ -74,9 +84,13 @@ a hard one.
 ## Metrics
 
 - **Route accuracy**, every turn: `recognize_intent(query, llm=None,
-  explicit_source=False)` — the production cascade (regex → kNN → heuristic) with
-  the LLM classifier absent, so the run is deterministic. A clarify decision
-  counts as a miss. Broken down by `relation` and by `kind`.
+  explicit_source=False)` — the production cascade with the LLM classifier
+  absent, so the run is deterministic. A clarify decision counts as a miss.
+  Broken down by `relation` and by `kind`. Two routers, because the kNN stage is
+  off unless `AGENTIC_SEARCH_INTENT_INDEX_PATH` is set:
+  - `rules`: regex → heuristic, the default deployment;
+  - `knn`: regex → kNN over `data/intent_index` → heuristic. The run fails if the
+    index does not load, so `knn` can never silently equal `rules`.
 - **Retrieval Hit@5 and MRR@10**, search turns, for both retrievers the default
   search path can be pointed at:
   - `tfidf`: `TfidfRetriever` (`servers/retrieval/demo.py`);
@@ -94,12 +108,13 @@ the unseen-user eval's `cluster_bootstrap_ci`
 
 ## Harness — `examples/measure_multi_turn_continuity.py`
 
-- Arguments: `--data`, `--retrievers tfidf hybrid`, `--out`, `--seed`.
+- Arguments: `--data`, `--routers rules knn`, `--retrievers tfidf hybrid`,
+  `--device`, `--resamples`, `--seed`, `--out`.
 - Loads each needed corpus once via the corpus registry (`resolve_corpus_docs`).
 - Prints one table per metric and writes `data/eval/multi_turn_continuity.json`
   with per-turn rows plus the aggregates, so any number can be traced to turns.
-- No LLM. Needs sentence-transformers for kNN routing and the `hybrid` retriever;
-  `--retrievers tfidf` still needs it for routing.
+- No LLM. Needs sentence-transformers only for the `knn` router and the `hybrid`
+  retriever; `--routers rules --retrievers tfidf` runs without it.
 
 ## Testing
 
