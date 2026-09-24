@@ -29,7 +29,13 @@ logger = logging.getLogger(__name__)
 WS_CLOSE_UNAUTHENTICATED = 1008
 
 CLIENT_EVENTS = frozenset(
-    {"session.start", "approval.submit", "session.cancel", "ping"}
+    {
+        "session.start",
+        "approval.submit",
+        "escalation.submit",
+        "session.cancel",
+        "ping",
+    }
 )
 
 # Every event this transport can send. Kept here, and pinned by a test against
@@ -46,6 +52,7 @@ SERVER_EVENTS = frozenset(
         "claim",
         "trace",
         "approval_required",
+        "escalation_required",
         "answer",
         "error",
         "done",
@@ -111,6 +118,7 @@ async def serve(
     user_id: str,
     start_run: Callable[[WsSession, dict], Awaitable[None]],
     submit_approval: Callable[[WsSession, dict], Awaitable[None]],
+    submit_escalation: Callable[[WsSession, dict], Awaitable[None]] | None = None,
 ) -> None:
     """Dispatch client events on an already-authenticated socket.
 
@@ -151,6 +159,8 @@ async def serve(
                 await start_run(session, message)
             elif event_type == "approval.submit":
                 await submit_approval(session, message)
+            elif event_type == "escalation.submit" and submit_escalation is not None:
+                await submit_escalation(session, message)
             elif event_type == "session.cancel":
                 await _cancel(session)
     except WebSocketDisconnect:

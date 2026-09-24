@@ -174,7 +174,29 @@ def create_tool_router(
                         broker, user.id, approval_request, queue
                     )
 
-            task = asyncio.create_task(_run(on_turn=on_turn, on_approval=on_approval))
+            escalation_broker = getattr(
+                http_request.app.state, "tool_escalation_broker", None
+            )
+            on_escalation = None
+            if (
+                user is not None
+                and not user.is_anonymous
+                and escalation_broker is not None
+            ):
+                from src.internal.servers.web.app import _request_tool_escalation
+
+                async def on_escalation(escalation_request):
+                    return await _request_tool_escalation(
+                        escalation_broker, user.id, escalation_request, queue
+                    )
+
+            task = asyncio.create_task(
+                _run(
+                    on_turn=on_turn,
+                    on_approval=on_approval,
+                    on_escalation=on_escalation,
+                )
+            )
             try:
                 while not task.done():
                     try:

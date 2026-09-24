@@ -120,6 +120,7 @@ from src.internal.servers.web.tool_approval import (
     ApprovalForbidden,
     ApprovalNotFound,
     ToolApprovalBroker,
+    ToolEscalationBroker,
 )
 from src.internal.servers.settings.api import create_settings_router
 from src.internal.servers.tenants.api import router as tenants_router
@@ -238,6 +239,15 @@ class ToolApprovalDecisionResponse(BaseModel):
     decision: str
 
 
+class ToolEscalationDecisionRequest(BaseModel):
+    decision: Literal["retry", "skip", "cancel"]
+
+
+class ToolEscalationDecisionResponse(BaseModel):
+    id: str
+    decision: str
+
+
 class ChatMessageView(BaseModel):
     role: str
     content: str
@@ -345,18 +355,51 @@ async def _request_tool_approval(
     approval_request,
     queue: asyncio.Queue[dict],
 ):
+    return await _request_human_decision(
+        broker,
+        owner_user_id,
+        approval_request,
+        queue,
+        event=lambda view: {"type": "approval_required", "approval": asdict(view)},
+    )
+
+
+async def _request_tool_escalation(
+    broker: ToolEscalationBroker,
+    owner_user_id: str,
+    escalation_request,
+    queue: asyncio.Queue[dict],
+):
+    return await _request_human_decision(
+        broker,
+        owner_user_id,
+        escalation_request,
+        queue,
+        event=lambda view: {"type": "escalation_required", "escalation": asdict(view)},
+    )
+
+
+async def _request_human_decision(
+    broker,
+    owner_user_id: str,
+    request,
+    queue: asyncio.Queue[dict],
+    *,
+    event: Callable[[object], dict],
+):
+    # `event` builds the whole payload, rather than taking a type string, so
+    # each event's literal "type" stays greppable -- the WebSocket vocabulary
+    # test pins SERVER_EVENTS against exactly those literals.
     registered = asyncio.Event()
     publish_task: asyncio.Task[None] | None = None
 
     def publish(view) -> None:
         nonlocal publish_task
-        publish_task = asyncio.create_task(
-            queue.put({"type": "approval_required", "approval": asdict(view)})
-        )
+        publish_task = asyncio.create_task(queue.put(event(view)))
         registered.set()
 
     request_task = asyncio.create_task(
-        broker.request(owner_user_id, approval_request, on_registered=publish)
+        broker.request(owner_user_id, request, on_registered=publish)
     )
     registration_task = asyncio.create_task(registered.wait())
     try:
@@ -1533,6 +1576,7 @@ def create_web_app(
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
+    app.state.tool_escalation_broker = ToolEscalationBroker()
     import os as _os
     from src.internal.servers.web.request_capture_store import RequestCaptureStore
 
@@ -2133,6 +2177,38 @@ def create_web_app(
             raise HTTPException(status_code=410, detail="Approval expired") from exc
         return ToolApprovalDecisionResponse(id=approval_id, decision=request.decision)
 
+    @app.post(
+        "/api/agent/escalations/{escalation_id}",
+        response_model=ToolEscalationDecisionResponse,
+    )
+    async def decide_tool_escalation(
+        escalation_id: str,
+        request: ToolEscalationDecisionRequest,
+        http_request: Request,
+    ) -> ToolEscalationDecisionResponse:
+        from src.agents.tool import EscalationDecision
+
+        auth_user = _require_auth(http_request, db)
+        try:
+            await http_request.app.state.tool_escalation_broker.decide(
+                escalation_id,
+                auth_user.id,
+                EscalationDecision(request.decision),
+            )
+        except ApprovalForbidden as exc:
+            raise HTTPException(status_code=403, detail="Escalation forbidden") from exc
+        except ApprovalNotFound as exc:
+            raise HTTPException(status_code=404, detail="Escalation not found") from exc
+        except ApprovalConflict as exc:
+            raise HTTPException(
+                status_code=409, detail="Escalation already decided"
+            ) from exc
+        except ApprovalExpired as exc:
+            raise HTTPException(status_code=410, detail="Escalation expired") from exc
+        return ToolEscalationDecisionResponse(
+            id=escalation_id, decision=request.decision
+        )
+
     @app.websocket("/api/agent/ws")
     async def agent_ws(websocket: WebSocket) -> None:
         """Bidirectional control channel for one agent run.
@@ -2174,6 +2250,14 @@ def create_web_app(
                     driver.queue,
                 )
 
+            async def on_escalation(escalation_request):
+                return await _request_tool_escalation(
+                    websocket.app.state.tool_escalation_broker,
+                    session.user_id,
+                    escalation_request,
+                    driver.queue,
+                )
+
             async def pump() -> None:
                 events = driver.run(
                     _run_agent_impl(
@@ -2183,6 +2267,7 @@ def create_web_app(
                         on_turn=driver.on_turn,
                         on_trace=on_trace,
                         on_approval=on_approval,
+                        on_escalation=on_escalation,
                         on_claim=driver.on_claim,
                         caller=caller,
                     ),
@@ -2223,11 +2308,37 @@ def create_web_app(
             except ApprovalExpired:
                 await session.error("Approval expired", code=410)
 
+        async def submit_escalation(session: WsSession, message: dict) -> None:
+            from src.agents.tool import EscalationDecision
+
+            escalation_id = message.get("escalation_id")
+            decision = message.get("decision")
+            if not escalation_id or not decision:
+                await session.error("escalation_id and decision are required", code=400)
+                return
+            try:
+                await websocket.app.state.tool_escalation_broker.decide(
+                    escalation_id,
+                    session.user_id,
+                    EscalationDecision(decision),
+                )
+            except ValueError:
+                await session.error("Unknown decision", code=400)
+            except ApprovalForbidden:
+                await session.error("Escalation forbidden", code=403)
+            except ApprovalNotFound:
+                await session.error("Escalation not found", code=404)
+            except ApprovalConflict:
+                await session.error("Escalation already decided", code=409)
+            except ApprovalExpired:
+                await session.error("Escalation expired", code=410)
+
         await serve(
             websocket,
             user_id=caller.id,
             start_run=start_run,
             submit_approval=submit_approval,
+            submit_escalation=submit_escalation,
         )
 
     @app.post("/api/agent/ws-token", response_model=WsTokenResponse)
@@ -2281,6 +2392,14 @@ def create_web_app(
                 driver.queue,
             )
 
+        async def on_escalation(escalation_request):
+            return await _request_tool_escalation(
+                http_request.app.state.tool_escalation_broker,
+                auth_user.id,
+                escalation_request,
+                driver.queue,
+            )
+
         async def _generate():
             events = driver.run(
                 _run_agent_impl(
@@ -2290,6 +2409,7 @@ def create_web_app(
                     on_turn=driver.on_turn,
                     on_trace=on_trace,
                     on_approval=on_approval if auth_user is not None else None,
+                    on_escalation=on_escalation if auth_user is not None else None,
                     on_claim=driver.on_claim,
                 ),
                 finalize=lambda result: _terminal_events(driver.run_id, result),
