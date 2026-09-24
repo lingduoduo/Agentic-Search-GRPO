@@ -7,8 +7,13 @@ from examples.measure_multi_turn_continuity import (
     Conversation,
     Turn,
     build_query,
+    check_relevant_ids,
     evaluate,
+    format_table,
+    load_corpora,
     load_conversations,
+    make_retriever,
+    make_router,
     score_retrieval,
     summarize,
 )
@@ -363,3 +368,48 @@ def test_retrieval_metrics_skip_non_search_turns():
     summary = summarize(rows, ["rules"], ["tfidf"], resamples=50, seed=0)
     assert summary["all"]["hit5:tfidf"]["raw"]["n"] == 1
     assert summary["all"]["route_acc:rules"]["raw"]["n"] == 2
+
+
+def test_rules_router_returns_a_route_or_clarify():
+    route = make_router("rules")
+    assert route("hello") == "chat"
+    assert route("tell me a joke") in {"chat", "search", "tool", "clarify"}
+
+
+def test_knn_router_refuses_to_run_without_its_index(tmp_path):
+    with pytest.raises(SystemExit, match="intent index did not load"):
+        make_router("knn", index_dir=tmp_path / "missing")
+
+
+def test_missing_corpus_file_exits_naming_it(monkeypatch, tmp_path):
+    import src.internal.servers.retrieval.corpus_registry as registry
+
+    manifest = {"ghost": {"path": str(tmp_path / "ghost.jsonl")}}
+    monkeypatch.setattr(registry, "load_manifest", lambda: manifest)
+    with pytest.raises(SystemExit, match="ghost"):
+        load_corpora({"ghost"})
+
+
+def test_check_relevant_ids_lists_unknown_ids():
+    conv = Conversation("c", (FAISS, FAISS_TYPES))
+    with pytest.raises(ValueError, match="d2"):
+        check_relevant_ids([conv], {"demo": [{"id": "d1"}]})
+    check_relevant_ids([conv], {"demo": [{"id": "d1"}, {"id": "d2"}]})
+
+
+def test_tfidf_retriever_ranks_the_matching_doc_first():
+    corpora = {
+        "demo": [
+            {"id": "d1", "title": "FAISS", "contents": "vector index library"},
+            {"id": "d2", "title": "BM25", "contents": "sparse keyword ranking"},
+        ]
+    }
+    retrieve = make_retriever("tfidf", corpora, device="cpu")
+    assert retrieve("demo", "sparse keyword ranking")[0] == "d2"
+
+
+def test_format_table_mentions_each_condition():
+    rows = _four_conditions("c1", 1, "search")
+    table = format_table(summarize(rows, ["rules"], [], resamples=20, seed=0))
+    for condition in ("raw", "regex", "concat", "gold_rewrite"):
+        assert condition in table

@@ -25,9 +25,10 @@ Run:
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from src.context import ChatMessage
@@ -317,3 +318,175 @@ def summarize(
                 }
             summary.setdefault(slice_name, {})[metric_name] = per_condition
     return summary
+
+
+def make_router(name: str, index_dir: Path = INTENT_INDEX_DIR) -> Router:
+    from src.internal.configs import load_app_settings
+    from src.internal.servers.web.intent import similarity
+    from src.internal.servers.web.intent.recognizer import recognize_intent
+
+    if name not in ("rules", "knn"):
+        raise ValueError(f"unknown router {name!r}")
+    settings = replace(
+        load_app_settings(),
+        intent_index_path=index_dir if name == "knn" else None,
+        intent_shadow_mode=False,
+        route_clarification=True,
+    )
+    if name == "knn" and similarity.load_intent_index(settings) is None:
+        raise SystemExit(f"knn router: intent index did not load from {index_dir}")
+
+    def route(query: str) -> str:
+        decision = recognize_intent(
+            query, llm=None, explicit_source=False, settings=settings
+        )
+        if decision.clarification is not None:
+            return "clarify"
+        return decision.strategy.value
+
+    return route
+
+
+def load_corpora(names: set[str]) -> dict[str, list[dict]]:
+    from src.internal.servers.retrieval.corpus_registry import (
+        load_manifest,
+        resolve_corpus_docs,
+    )
+
+    manifest = load_manifest()
+    corpora: dict[str, list[dict]] = {}
+    for name in sorted(names):
+        entry = manifest.get(name)
+        if entry is None:
+            raise SystemExit(f"corpus {name!r} is not registered in data/corpora.json")
+        path = Path(entry["path"] if isinstance(entry, dict) else entry)
+        # resolve_corpus_docs only warns and skips a missing file, which would
+        # score fewer turns instead of failing.
+        if not path.exists():
+            raise SystemExit(f"corpus {name!r} missing: {path}")
+        corpora[name] = resolve_corpus_docs(name, manifest)
+    return corpora
+
+
+def check_relevant_ids(
+    conversations: Sequence[Conversation], corpora: dict[str, list[dict]]
+) -> None:
+    known = {name: {str(d.get("id")) for d in docs} for name, docs in corpora.items()}
+    missing = sorted(
+        f"{conv.id} turn {i}: {doc_id}"
+        for conv in conversations
+        for i, turn in enumerate(conv.turns)
+        if turn.corpus
+        for doc_id in turn.relevant_doc_ids
+        if doc_id not in known.get(turn.corpus, set())
+    )
+    if missing:
+        raise ValueError("relevant_doc_ids not in corpus: " + "; ".join(missing))
+
+
+def make_retriever(name: str, corpora: dict[str, list[dict]], device: str) -> Retriever:
+    from src.internal.servers.retrieval.demo import TfidfRetriever
+
+    if name not in ("tfidf", "hybrid"):
+        raise ValueError(f"unknown retriever {name!r}")
+    sparse = {c: TfidfRetriever.from_docs(docs) for c, docs in corpora.items()}
+    dense = {}
+    if name == "hybrid":
+        # Built directly, not via hybrid._build_dense: that one degrades to
+        # TF-IDF on failure, which would make `hybrid` silently equal `tfidf`.
+        from src.internal.servers.retrieval.hybrid import (
+            DenseEmbeddingRetriever,
+            build_e5_encoder,
+        )
+
+        encoder = build_e5_encoder(device=device)
+        dense = {
+            c: DenseEmbeddingRetriever(docs, encoder=encoder)
+            for c, docs in corpora.items()
+        }
+
+    def retrieve(corpus: str, query: str) -> list[str]:
+        if name == "hybrid":
+            from src.internal.servers.retrieval.hybrid import _fuse_rows
+
+            # Mirrors the hybrid server: each leg fetches 2x, RRF keeps MRR_K.
+            fetch_k = MRR_K * 2
+            rows = _fuse_rows(
+                dense[corpus].retrieve([query], topk=fetch_k),
+                sparse[corpus].retrieve([query], topk=fetch_k),
+                MRR_K,
+            )[0]
+        else:
+            rows = sparse[corpus].retrieve([query], topk=MRR_K)[0]
+        return [str(item["document"]["id"]) for item in rows]
+
+    return retrieve
+
+
+def format_table(summary: dict) -> str:
+    lines: list[str] = []
+    for slice_name in ("all", "follow_up", "topic_switch"):
+        for metric_name, per_condition in summary.get(slice_name, {}).items():
+            cells = []
+            for condition in CONDITIONS:
+                entry = per_condition[condition]
+                cell = f"{condition} {entry['mean']:.2f}"
+                delta = entry["delta_vs_raw"]
+                if delta is not None:
+                    cell += (
+                        f" ({delta['point']:+.2f} "
+                        f"[{delta['low']:+.2f},{delta['high']:+.2f}])"
+                    )
+                cells.append(cell)
+            n = per_condition["raw"]["n"]
+            lines.append(
+                f"{slice_name:<13} {metric_name:<16} n={n:<4} " + " | ".join(cells)
+            )
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    parser.add_argument(
+        "--routers", nargs="+", default=["rules", "knn"], choices=["rules", "knn"]
+    )
+    parser.add_argument(
+        "--retrievers",
+        nargs="+",
+        default=["tfidf", "hybrid"],
+        choices=["tfidf", "hybrid"],
+    )
+    parser.add_argument("--device", default="mps")
+    parser.add_argument("--resamples", type=int, default=2000)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    args = parser.parse_args(argv)
+
+    conversations = load_conversations(args.data)
+    corpora = load_corpora(
+        {t.corpus for c in conversations for t in c.turns if t.corpus}
+    )
+    check_relevant_ids(conversations, corpora)
+    routers = {name: make_router(name) for name in args.routers}
+    retrievers = {
+        name: make_retriever(name, corpora, args.device) for name in args.retrievers
+    }
+
+    rows = evaluate(conversations, routers, retrievers)
+    summary = summarize(
+        rows, args.routers, args.retrievers, resamples=args.resamples, seed=args.seed
+    )
+    print(format_table(summary))
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    config = {key: str(value) for key, value in vars(args).items()}
+    config["conversations"] = len(conversations)
+    args.out.write_text(
+        json.dumps({"config": config, "summary": summary, "rows": rows}, indent=2)
+        + "\n"
+    )
+    print(f"wrote {args.out}")
+
+
+if __name__ == "__main__":
+    main()
