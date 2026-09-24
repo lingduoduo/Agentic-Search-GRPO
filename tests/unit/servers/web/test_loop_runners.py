@@ -337,7 +337,13 @@ def _capture_tool_agent_loop(monkeypatch):
             captured["config"] = config
 
         async def run(
-            self, messages, sampling_params, *, on_turn=None, on_approval=None
+            self,
+            messages,
+            sampling_params,
+            *,
+            on_turn=None,
+            on_approval=None,
+            on_escalation=None,
         ):
             captured["messages"] = list(messages)
             captured["sampling_params"] = dict(sampling_params)

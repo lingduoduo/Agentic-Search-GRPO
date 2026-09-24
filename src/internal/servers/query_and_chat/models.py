@@ -199,6 +199,7 @@ class ToolAgentMessageResponse(BaseModel):
     num_turns: int = 0
     # The answer is a fragment: a generation hit the wall-clock stop.
     truncated: bool = False
+    tool_recovery: dict | None = None
     error: str | None = None
 
 

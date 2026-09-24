@@ -159,6 +159,7 @@ async def _run_tool_agent(
     resolved,
     on_turn=None,
     on_approval=None,
+    on_escalation=None,
     with_search_tool: bool,
     user_present: bool = True,
     filters=None,
@@ -234,6 +235,7 @@ async def _run_tool_agent(
         sampling_params={"temperature": 0.0, "max_tokens": max_tokens},
         on_turn=on_turn,
         on_approval=on_approval,
+        on_escalation=on_escalation,
     )
     tool_calls, documents = _extract_tool_calls_and_docs(output, citeable_tool_names)
     fallback = next(
@@ -252,8 +254,22 @@ async def _run_tool_agent(
         "truncated": bool(getattr(output, "truncated", False)),
         "_assistant_fallback": fallback,
     }
+    answer = output.final_answer or ""
+    recovery = getattr(output, "tool_recovery", None)
+    if recovery is not None:
+        extra["tool_recovery"] = recovery
+        if (
+            recovery.get("outcome") == "degraded"
+            and recovery.get("degraded")
+            and answer.strip()
+        ):
+            tools = ", ".join(recovery["degraded"])
+            answer = (
+                f"{answer}\n\nNote: {tools} was unavailable, "
+                "so this answer may be incomplete."
+            )
     return (
-        output.final_answer or "",
+        answer,
         [d.citation for d in documents],
         documents,
         _infer_intent_from_output(output),
