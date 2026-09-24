@@ -165,7 +165,10 @@ JSON `/tool/send-tool-message`, CLI), an escalation immediately stops the run as
 `unresolved`.
 
 **`unresolved` is never success.** Answer: `<tool> failed and was not retried;
-the action may not have completed.` Metadata: `tool_recovery.needs_user: true` and
+the action may not have completed.` when the call was never retried, or `<tool>
+failed after <n> attempts; the action may not have completed.` (n = retries + 1)
+when it was — e.g. the user chose Retry and the run then expired or hit the cap.
+Metadata: `tool_recovery.needs_user: true` and
 the escalation record (tool, sanitized arguments, category, attempts, decision).
 The runner's existing empty-answer and TOOL→CHAT fallbacks must not replace a
 `CANCEL`/`unresolved` answer.

@@ -445,9 +445,14 @@ class ToolAgentLoop(AgentLoopBase):
                     "nothing further was attempted.",
                 )
             else:  # expired, no_callback, cap
+                tried = (
+                    f"failed after {retries + 1} attempts"
+                    if retries
+                    else "failed and was not retried"
+                )
                 state.stop(
                     "unresolved",
-                    f"{name} failed and was not retried; the action may not have completed.",
+                    f"{name} {tried}; the action may not have completed.",
                 )
             return self._result(
                 name,

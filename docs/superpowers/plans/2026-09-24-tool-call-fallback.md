@@ -20,7 +20,7 @@
 - Nothing classifies failure by searching text for "error".
 - `asyncio.CancelledError` always propagates.
 - Error codes: `invalid_input` keeps the existing `error_code="invalid_arguments"`, `not_found` keeps `"tool_not_found"`; degraded calls use `error_code="tool_unavailable"`; other failures use the category (`transient`, `permanent`, `unknown`).
-- Fixed answers, verbatim: cancel → `Stopped: <tool> failed (<category>); nothing further was attempted.`; unresolved → `<tool> failed and was not retried; the action may not have completed.`; degraded note appended to a non-empty answer → `Note: <tools> was unavailable, so this answer may be incomplete.`
+- Fixed answers, verbatim: cancel → `Stopped: <tool> failed (<category>); nothing further was attempted.`; unresolved → `<tool> failed and was not retried; the action may not have completed.` when the call had no retries, else `<tool> failed after <n> attempts; the action may not have completed.` (n = retries + 1); degraded note appended to a non-empty answer → `Note: <tools> was unavailable, so this answer may be incomplete.`
 - Approval behaviour, events, endpoint and counters are unchanged (existing approval tests pass untouched).
 - Unit tests must pass with torch unimportable. Branch `feat/tool-failure-recovery`; never commit to `main`; commit messages end with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`; run `ruff check --fix` and `ruff format` on touched Python files before each commit and confirm with `git log -1` (the pre-commit hook rejects unformatted files silently). Do not add or commit `.planning/` or the untracked `docs/superpowers/{specs,plans}/2026-09-24-tool-failure-recovery*` files.
 

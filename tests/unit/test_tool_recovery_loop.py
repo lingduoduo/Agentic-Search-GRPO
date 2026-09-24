@@ -317,6 +317,17 @@ def test_expired_stops_unresolved():
     assert output.tool_recovery["needs_user"] is True
 
 
+def test_expired_after_a_user_retry_reports_the_attempts():
+    tool, calls = _writer(99)
+    on_escalation, _ = _answering(EscalationDecision.RETRY, EscalationDecision.EXPIRED)
+    output = _run(tool, [SEND, "never generated"], on_escalation)
+    assert len(calls) == 2
+    assert (
+        output.final_answer
+        == "send failed after 2 attempts; the action may not have completed."
+    )
+
+
 def test_no_callback_stops_unresolved_without_asking():
     tool, calls = _writer(99)
     output = _run(tool, [SEND, "never generated"], None)
@@ -389,6 +400,10 @@ def test_escalations_are_capped_per_run():
     assert len(calls) == 4  # first attempt + 3 user-authorised retries
     assert output.tool_recovery["outcome"] == "unresolved"
     assert output.tool_recovery["escalations"][-1]["decision"] == "cap"
+    assert (
+        output.final_answer
+        == "send failed after 4 attempts; the action may not have completed."
+    )
 
 
 def test_denied_approval_is_never_escalated():
