@@ -381,7 +381,11 @@ class ToolAgentLoop(AgentLoopBase):
                     TaskStatus.FAILED,
                     start,
                     error_code=_LEGACY_ERROR_CODES[failure.category],
-                    error_message="; ".join(outcome.errors) or failure.message,
+                    # Schema errors, else the adapter's own text (e.g. an
+                    # unknown ticker) so the model can correct the call.
+                    error_message="; ".join(outcome.errors)
+                    or str(outcome.response)  # plain str: results are deep-copied
+                    or failure.message,
                     retry_count=retries,
                 )
             if decision.action is Action.UNAVAILABLE:

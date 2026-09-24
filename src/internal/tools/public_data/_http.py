@@ -55,7 +55,12 @@ MAX_CONTENT_CHARS = 400
 
 
 class PublicDataError(Exception):
-    """An upstream call failed. ``guarded`` turns this into {"error": ...}."""
+    """A public-data call failed. ``guarded`` turns this into {"error": ...}.
+
+    ``upstream`` marks a fault on the provider's side (``_fetch`` sets it).
+    Without it the error is one a tool raised about its own arguments -- an
+    unknown ticker, a place that does not geocode -- which the model can fix.
+    """
 
     def __init__(
         self,
@@ -65,12 +70,14 @@ class PublicDataError(Exception):
         attempts: int = 1,
         retry_after: float | None = None,
         transport: bool = False,
+        upstream: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.attempts = attempts
         self.retry_after = retry_after
         self.transport = transport
+        self.upstream = upstream
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -113,6 +120,7 @@ async def _fetch(
                         raise PublicDataError(
                             f"{url} returned HTTP {response.status}",
                             status=response.status,
+                            upstream=True,
                             retry_after=_retry_after(
                                 response.headers.get("Retry-After")
                             ),
@@ -127,7 +135,7 @@ async def _fetch(
         except Exception as exc:
             logger.debug("public data request to %s failed", url, exc_info=True)
             last_error = PublicDataError(
-                f"request to {url} failed: {exc}", transport=True
+                f"request to {url} failed: {exc}", transport=True, upstream=True
             )
 
         if attempt + 1 >= attempts:
@@ -139,7 +147,7 @@ async def _fetch(
     if body is None:
         if last_error is not None:
             last_error.attempts = attempt + 1
-        raise last_error or PublicDataError(f"request to {url} failed")
+        raise last_error or PublicDataError(f"request to {url} failed", upstream=True)
 
     if not as_json:
         return body
@@ -148,7 +156,7 @@ async def _fetch(
     try:
         return json.loads(body)
     except ValueError as exc:
-        raise PublicDataError(f"{url} returned a non-JSON body") from exc
+        raise PublicDataError(f"{url} returned a non-JSON body", upstream=True) from exc
 
 
 async def get_json(
@@ -205,16 +213,26 @@ async def post_json(
     )
 
 
+# Statuses that usually mean "your argument was wrong" (a bad symbol in the
+# path, a malformed query), so the model is told and may correct the call.
+_INPUT_STATUSES = frozenset({400, 404, 422})
+
 _TRANSIENT_MESSAGE = "upstream temporarily unavailable"
+_INVALID_INPUT_MESSAGE = "upstream rejected the request's arguments"
 _PERMANENT_MESSAGE = "upstream refused or could not answer the request"
 _UNKNOWN_MESSAGE = "tool failed unexpectedly"
 
 
 def _classify(exc: PublicDataError) -> ToolFailure:
-    transient = exc.transport or exc.status in _RETRYABLE_STATUSES
+    if exc.transport or exc.status in _RETRYABLE_STATUSES:
+        category, message = FailureCategory.TRANSIENT, _TRANSIENT_MESSAGE
+    elif not exc.upstream or exc.status in _INPUT_STATUSES:
+        category, message = FailureCategory.INVALID_INPUT, _INVALID_INPUT_MESSAGE
+    else:
+        category, message = FailureCategory.PERMANENT, _PERMANENT_MESSAGE
     return ToolFailure(
-        FailureCategory.TRANSIENT if transient else FailureCategory.PERMANENT,
-        _TRANSIENT_MESSAGE if transient else _PERMANENT_MESSAGE,
+        category,
+        message,
         retry_after=exc.retry_after,
         provider_attempts=exc.attempts,
     )

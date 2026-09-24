@@ -167,6 +167,47 @@ def test_invalid_arguments_still_go_back_to_the_model():
     assert output.tool_recovery is None
 
 
+def test_a_wrong_argument_feeds_back_the_adapter_text_and_the_fix_runs():
+    calls = []
+
+    @FunctionTool.from_fn(
+        name="quote",
+        effect=ToolEffect.READ_ONLY,
+        parameters={
+            "type": "object",
+            "properties": {"symbol": {"type": "string"}},
+            "required": ["symbol"],
+        },
+    )
+    async def quote(symbol):
+        calls.append(symbol)
+        if symbol == "APPL":
+            return ToolErrorText(
+                json.dumps({"error": "invalid ticker symbol 'APPL'"}),
+                ToolFailure(
+                    FailureCategory.INVALID_INPUT, "upstream rejected the input"
+                ),
+            )
+        return {"symbol": symbol, "price": 1}
+
+    loop, manager = _loop(
+        [quote],
+        [
+            '{"name":"quote","arguments":{"symbol":"APPL"}}',
+            '{"name":"quote","arguments":{"symbol":"AAPL"}}',
+            "done",
+        ],
+    )
+    output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    first, second = _trace(output)
+    assert calls == ["APPL", "AAPL"]  # the corrected call is not skipped
+    assert first["error_code"] == "invalid_arguments"
+    assert second["status"] == str(TaskStatus.COMPLETED)
+    assert "invalid ticker symbol 'APPL'" in manager.prompts[1]
+    assert output.tool_recovery is None
+    assert output.final_answer == "done"
+
+
 def test_no_failures_means_no_recovery_summary():
     tool, _ = _flaky(0)
     loop, _ = _loop([tool], [CALL, "done"])

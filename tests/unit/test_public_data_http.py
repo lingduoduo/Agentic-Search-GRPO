@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from src.internal.tools import FailureCategory
 from src.internal.tools.public_data import _http
 from src.internal.tools.public_data._http import (
     PublicDataError,
@@ -307,3 +308,58 @@ def test_fetch_stamps_transport_and_attempts(monkeypatch):
 
     assert excinfo.value.transport is True
     assert excinfo.value.attempts == 3
+
+
+def _classified(monkeypatch, outcomes=None, **install):
+    """Run a real _fetch failure through guarded and return its category."""
+    if outcomes is not None:
+        _install_sequence(monkeypatch, outcomes)
+    else:
+        _install(monkeypatch, **install)
+
+    @guarded
+    async def tool():
+        return await get_json("https://example.org/x")
+
+    return asyncio.run(tool()).failure.category
+
+
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_input_rejecting_statuses_feed_back_as_invalid_input(monkeypatch, status):
+    """A 400/404/422 is usually the model's argument, not a broken upstream."""
+    category = _classified(monkeypatch, [status])
+    assert category is FailureCategory.INVALID_INPUT
+
+
+def test_a_non_json_body_stays_permanent(monkeypatch):
+    category = _classified(monkeypatch, body="<html>nope</html>")
+    assert category is FailureCategory.PERMANENT
+
+
+def test_a_503_stays_transient(monkeypatch):
+    category = _classified(monkeypatch, [503, 503, 503])
+    assert category is FailureCategory.TRANSIENT
+
+
+def test_a_tool_authored_error_is_invalid_input_with_its_own_text():
+    """``invalid ticker symbol 'APPL'`` must reach the model so it can fix it."""
+
+    @guarded
+    async def tool():
+        raise PublicDataError("invalid ticker symbol 'APPL'")
+
+    text = asyncio.run(tool())
+    assert text.failure.category is FailureCategory.INVALID_INPUT
+    assert json.loads(text) == {"error": "invalid ticker symbol 'APPL'"}
+
+
+def test_a_malformed_arxiv_feed_stays_permanent(monkeypatch):
+    """A tool-raised error about the provider's reply is not the model's input."""
+    from src.internal.tools.public_data import knowledge
+
+    async def garbage(*args, **kwargs):
+        return "<feed"
+
+    monkeypatch.setattr(knowledge, "get_text", garbage)
+    text = asyncio.run(guarded(knowledge._search_arxiv)(query="x"))
+    assert text.failure.category is FailureCategory.PERMANENT

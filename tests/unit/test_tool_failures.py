@@ -126,12 +126,17 @@ def _guarded_failure(exc):
         ),
         (
             PublicDataError("x returned HTTP 404", status=404, attempts=1),
+            FailureCategory.INVALID_INPUT,
+            1,
+        ),
+        (
+            PublicDataError("x returned a non-JSON body", attempts=1, upstream=True),
             FailureCategory.PERMANENT,
             1,
         ),
         (
-            PublicDataError("x returned a non-JSON body", attempts=1),
-            FailureCategory.PERMANENT,
+            PublicDataError("invalid ticker symbol 'APPL'"),
+            FailureCategory.INVALID_INPUT,
             1,
         ),
         (RuntimeError("surprise"), FailureCategory.UNKNOWN, 0),

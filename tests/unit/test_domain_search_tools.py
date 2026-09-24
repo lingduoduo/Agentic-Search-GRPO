@@ -114,3 +114,33 @@ def test_no_capability_target_is_reachable_two_ways_from_the_agent_menu():
     assert FACADE_TOOLS.isdisjoint(offered), (
         "a facade over already-offered tools must not also be on the menu"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "fetched", "error"),
+    [
+        # Passes the schema's scheme pattern but has no host.
+        ("https://", "unused", "ValueError: url must be an HTTP(S) URL"),
+        (
+            "https://dead.test",
+            "[fetch error] timeout",
+            "ValueError: [fetch error] timeout",
+        ),
+    ],
+)
+async def test_extract_page_bad_url_or_dead_link_feeds_back(url, fetched, error):
+    """One bad link is about this argument; it must not disable the tool."""
+    from src.internal.tools import FailureCategory
+
+    async def fetch(url, **kwargs):
+        return fetched
+
+    registry = ToolRegistry()
+    for tool in build_domain_search_tools(
+        service=DomainSearch(fetch_fn=fetch, tools=[])
+    ):
+        registry.register(tool)
+    outcome = await registry.invoke_detailed("extract_page", {"url": url})
+    assert outcome.failure.category is FailureCategory.INVALID_INPUT
+    assert json.loads(outcome.response) == {"error": error}  # same text as before
