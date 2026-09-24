@@ -29,6 +29,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.context import ChatMessage
+from src.internal.search.context import build_retrieval_context
+
 DEFAULT_DATA = Path("data/eval/multi_turn_conversations.jsonl")
 DEFAULT_OUT = Path("data/eval/multi_turn_continuity.json")
 INTENT_INDEX_DIR = Path("data/intent_index")
@@ -136,3 +139,30 @@ def load_conversations(path: Path) -> list[Conversation]:
     if not conversations:
         raise ValueError(f"{path}: no conversations")
     return conversations
+
+
+# No condition reads assistant text; the placeholder only keeps the history
+# shaped like a real session (user/assistant alternating).
+PLACEHOLDER_REPLY = "Here is what I found."
+
+
+def _history(prior_texts: list[str]) -> list[ChatMessage]:
+    history: list[ChatMessage] = []
+    for text in prior_texts:
+        history.append(ChatMessage(role="user", content=text))
+        history.append(ChatMessage(role="assistant", content=PLACEHOLDER_REPLY))
+    return history
+
+
+def build_query(condition: str, conversation: Conversation, index: int) -> str:
+    turn = conversation.turns[index]
+    prior = [t.text for t in conversation.turns[:index]]
+    if condition == "raw":
+        return turn.text
+    if condition == "gold_rewrite":
+        return turn.gold_rewrite
+    if condition == "concat":
+        return f"{prior[-1]}\n{turn.text}" if prior else turn.text
+    if condition == "regex":
+        return build_retrieval_context(turn.text, _history(prior)).retrieval_query
+    raise ValueError(f"unknown condition {condition!r}")

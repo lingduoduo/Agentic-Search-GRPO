@@ -6,6 +6,7 @@ import pytest
 from examples.measure_multi_turn_continuity import (
     Conversation,
     Turn,
+    build_query,
     load_conversations,
 )
 
@@ -147,3 +148,57 @@ def test_rejects_duplicate_ids(tmp_path):
     }
     with pytest.raises(ValueError, match="duplicate id"):
         load_conversations(_write(tmp_path, [conv, conv]))
+
+
+def _conv(*turns: Turn) -> Conversation:
+    return Conversation("c", turns)
+
+
+TOKYO = Turn("weather in Tokyo", "tool", "opening", "weather in Tokyo")
+PARIS = Turn("and in Paris?", "tool", "follow_up", "weather in Paris", kind="ellipsis")
+BERLIN = Turn("and Berlin?", "tool", "follow_up", "weather in Berlin", kind="ellipsis")
+PRICE = Turn(
+    "its price in 2020?",
+    "tool",
+    "follow_up",
+    "Tesla stock price in 2020",
+    kind="pronoun",
+)
+CUE_SWITCH = Turn("also, explain BM25", "chat", "topic_switch", "also, explain BM25")
+
+
+def test_raw_and_gold_rewrite():
+    conv = _conv(TOKYO, PARIS)
+    assert build_query("raw", conv, 1) == "and in Paris?"
+    assert build_query("gold_rewrite", conv, 1) == "weather in Paris"
+
+
+def test_first_turn_is_unchanged_by_every_condition():
+    conv = _conv(TOKYO, PARIS)
+    for condition in ("raw", "regex", "concat", "gold_rewrite"):
+        assert build_query(condition, conv, 0) == "weather in Tokyo"
+
+
+def test_concat_uses_the_immediately_previous_user_turn():
+    conv = _conv(TOKYO, PARIS, BERLIN)
+    assert build_query("concat", conv, 2) == "and in Paris?\nand Berlin?"
+
+
+def test_regex_prepends_the_most_recent_non_follow_up_turn():
+    conv = _conv(TOKYO, PARIS, BERLIN)
+    assert build_query("regex", conv, 2) == "weather in Tokyo\nand Berlin?"
+
+
+def test_regex_leaves_an_uncued_follow_up_alone():
+    conv = _conv(TOKYO, PRICE)
+    assert build_query("regex", conv, 1) == "its price in 2020?"
+
+
+def test_regex_false_positive_on_a_cue_word_switch():
+    conv = _conv(TOKYO, CUE_SWITCH)
+    assert build_query("regex", conv, 1) == "weather in Tokyo\nalso, explain BM25"
+
+
+def test_unknown_condition_raises():
+    with pytest.raises(ValueError, match="unknown condition"):
+        build_query("oracle", _conv(TOKYO, PARIS), 1)
