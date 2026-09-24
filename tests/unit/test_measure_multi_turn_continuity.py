@@ -1,9 +1,11 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from examples.measure_multi_turn_continuity import (
+    DEFAULT_DATA,
     Conversation,
     Turn,
     build_query,
@@ -17,6 +19,7 @@ from examples.measure_multi_turn_continuity import (
     score_retrieval,
     summarize,
 )
+from src.internal.search.context import _is_follow_up
 
 
 def _write(tmp_path: Path, conversations: list[dict]) -> Path:
@@ -413,3 +416,56 @@ def test_format_table_mentions_each_condition():
     table = format_table(summarize(rows, ["rules"], [], resamples=20, seed=0))
     for condition in ("raw", "regex", "concat", "gold_rewrite"):
         assert condition in table
+
+
+def test_committed_dataset_meets_the_spec_composition():
+    conversations = load_conversations(DEFAULT_DATA)
+    turns = [t for c in conversations for t in c.turns]
+    follow_ups = [t for t in turns if t.relation == "follow_up"]
+    switches = [t for t in turns if t.relation == "topic_switch"]
+
+    assert len(conversations) >= 40
+    assert all(2 <= len(c.turns) <= 4 for c in conversations)
+    openings = Counter(
+        c.turns[0].corpus if c.turns[0].route == "search" else c.turns[0].route
+        for c in conversations
+    )
+    assert openings["demo"] >= 8 and openings["scifact"] >= 8
+    assert openings["tool"] >= 8 and openings["chat"] >= 6
+    assert len(follow_ups) >= 40
+    kinds = Counter(t.kind for t in follow_ups)
+    assert set(kinds) == {"pronoun", "ellipsis", "comparison", "elaboration"}
+    assert all(n >= 6 for n in kinds.values())
+    uncued = [t for t in follow_ups if not _is_follow_up(t.text)]
+    assert len(uncued) * 2 >= len(follow_ups)
+    assert len(switches) >= 12
+    assert sum(_is_follow_up(t.text) for t in switches) >= 4
+    route_changes = sum(
+        1
+        for c in conversations
+        for prev, turn in zip(c.turns, c.turns[1:])
+        if turn.relation == "follow_up" and turn.route != prev.route
+    )
+    assert route_changes >= 6
+
+
+def test_scifact_gold_labels_match_beir_qrels():
+    qrels_dir = Path("data/beir/scifact/qrels")
+    if not qrels_dir.exists():
+        pytest.skip("BEIR SciFact not downloaded")
+    qrels: dict[str, set[str]] = {}
+    for split in ("train.tsv", "test.tsv"):
+        for line in (qrels_dir / split).read_text().splitlines()[1:]:
+            query_id, doc_id, _ = line.split("\t")
+            qrels.setdefault(query_id, set()).add(doc_id)
+    queries_path = Path("data/beir/scifact/queries.jsonl")
+    queries = {
+        q["_id"]: q["text"]
+        for q in map(json.loads, queries_path.read_text().splitlines())
+    }
+    for conv in load_conversations(DEFAULT_DATA):
+        for turn in conv.turns:
+            if turn.corpus == "scifact":
+                assert turn.beir_query_id, f"{conv.id}: scifact turn lacks beir id"
+                assert turn.gold_rewrite == queries[turn.beir_query_id], conv.id
+                assert set(turn.relevant_doc_ids) == qrels[turn.beir_query_id], conv.id
