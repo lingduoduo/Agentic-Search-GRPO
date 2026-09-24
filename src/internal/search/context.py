@@ -108,7 +108,7 @@ class Resolution:
 
     query: str
     continuation: bool
-    reason: str  # no_history | reference | fragment | semantic | switch
+    reason: str  # no_history | no_topic | reference | fragment | semantic | switch
 
 
 def _continues(
@@ -143,13 +143,25 @@ def resolve_follow_up(
         m.content
         for m in _safe_history(history)
         if m.role.lower() == "user" and m.content.strip()
-    ][-TOPIC_LOOKBACK:]
+    ]
+    if not user_texts:
+        return Resolution(message, False, "no_history")
+    # The turn just before the window is context only: it classifies the
+    # window's oldest turn, which is a topic only if it stands alone. The first
+    # turn of a session always does.
+    window = user_texts[-TOPIC_LOOKBACK:]
+    previous = (
+        user_texts[-TOPIC_LOOKBACK - 1] if len(user_texts) > TOPIC_LOOKBACK else None
+    )
     topic: str | None = None
-    for text in user_texts:
-        if topic is None or not _continues(text, topic, cosine, tau)[0]:
+    for text in window:
+        anchor = topic if topic is not None else previous
+        if anchor is None or not _continues(text, anchor, cosine, tau)[0]:
             topic = text
     if topic is None:
-        return Resolution(message, False, "no_history")
+        # Every turn in reach continues something older: searching the message
+        # as typed beats gluing it to another follow-up.
+        return Resolution(message, False, "no_topic")
     continues, reason = _continues(message, topic, cosine, tau)
     if continues:
         return Resolution(f"{topic}\n{message}", True, reason)

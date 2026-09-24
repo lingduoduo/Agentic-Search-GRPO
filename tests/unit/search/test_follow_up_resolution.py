@@ -142,9 +142,26 @@ def test_topic_looks_back_at_most_three_user_turns():
         "What about its memory use?",
     )
     got = resolve_follow_up("Is it open source?", history, cosine=None, tau=0.8)
-    # Every later turn continues "What is FAISS?", but it has left the 3-turn
-    # window, so the oldest turn inside the window becomes the topic.
-    assert got.query == "Does it use GPUs?\nIs it open source?"
+    # Every turn in the 3-turn window continues "What is FAISS?", which has left
+    # it. No standalone topic is in reach, so the message is searched as typed
+    # rather than glued to another follow-up.
+    assert got == Resolution("Is it open source?", False, "no_topic")
+
+
+def test_oldest_window_turn_is_the_topic_only_if_it_stands_alone():
+    history = _history(
+        "What is FAISS?",
+        "Explain the history of the Roman empire in some depth please.",
+        "Is it long?",
+        "And its causes?",
+    )
+    got = resolve_follow_up("Why did it fall?", history, cosine=None, tau=0.8)
+    # The Roman-empire turn is classified against the turn before the window
+    # (FAISS) and stands alone, so it is the topic.
+    assert got.query == (
+        "Explain the history of the Roman empire in some depth please.\n"
+        "Why did it fall?"
+    )
 
 
 def test_assistant_and_tool_markup_messages_are_ignored():
