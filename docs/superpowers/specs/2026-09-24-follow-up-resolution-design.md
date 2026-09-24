@@ -91,7 +91,10 @@ baseline, and with the flag off every path behaves exactly as today.
 
 **Observability.** The resolution is added to the response metadata as
 `follow_up: {"continuation": bool, "reason": str, "query": str}` whenever the flag
-is on, so the Dev Console shows what retrieval searched for.
+is on and the request takes a path that uses it (auto-routed, `chat_loop`,
+`chat_once`), so the Dev Console shows what retrieval searched for. The explicit
+`search_tool`, `hybrid_search`, `search_agent` and `tool_agent` modes keep the raw
+query and report nothing.
 
 **Flag default.** `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` ships off. The same PR
 flips the default to on only if every success criterion in section 3 is met; if
