@@ -436,7 +436,7 @@ def test_committed_dataset_meets_the_spec_composition():
         c.turns[0].corpus if c.turns[0].route == "search" else c.turns[0].route
         for c in conversations
     )
-    assert openings["demo"] >= 8 and openings["scifact"] >= 8
+    assert openings["demo"] >= 8 and openings["scifact"] >= 30
     assert openings["tool"] >= 8 and openings["chat"] >= 6
     assert len(follow_ups) >= 40
     kinds = Counter(t.kind for t in follow_ups)
@@ -453,6 +453,13 @@ def test_committed_dataset_meets_the_spec_composition():
         if turn.relation == "follow_up" and turn.route != prev.route
     )
     assert route_changes >= 6
+    scifact_switches = [
+        t
+        for c in conversations
+        for t in c.turns
+        if t.relation == "topic_switch" and t.corpus == "scifact"
+    ]
+    assert len(scifact_switches) >= 10
 
 
 def test_scifact_gold_labels_match_beir_qrels():
@@ -473,7 +480,12 @@ def test_scifact_gold_labels_match_beir_qrels():
         for turn in conv.turns:
             if turn.corpus == "scifact":
                 assert turn.beir_query_id, f"{conv.id}: scifact turn lacks beir id"
-                assert turn.gold_rewrite == queries[turn.beir_query_id], conv.id
+                if turn.relation == "follow_up":
+                    # Resolver-realistic: the question with its referent filled
+                    # in, never the BEIR claim (claims can contain the answer).
+                    assert turn.gold_rewrite != queries[turn.beir_query_id], conv.id
+                else:
+                    assert turn.gold_rewrite == queries[turn.beir_query_id], conv.id
                 assert set(turn.relevant_doc_ids) == qrels[turn.beir_query_id], conv.id
 
 
