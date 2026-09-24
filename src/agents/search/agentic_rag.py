@@ -198,6 +198,7 @@ class AgenticRAGLoop:
         self,
         question: str,
         *,
+        retrieval_query: str | None = None,
         chat_history: list[ChatMessage] | None = None,
         recorder: "ControlFlowRecorder | None" = None,
         user_memory: str | None = None,
@@ -220,13 +221,17 @@ class AgenticRAGLoop:
                     details=details,
                 )
 
+        # Retrieval (enhancement, sufficiency, gap queries) runs on the resolved
+        # standalone query; synthesis still answers the question as asked.
+        search_question = retrieval_query or question
+
         accumulated: dict[str, ContextDocument] = {}
         seen_queries: set[str] = set()
         rounds_used = 0
         sufficiency_degraded = False
 
         t0 = time.perf_counter()
-        bundle = await self._enhancer.enhance_async(question)
+        bundle = await self._enhancer.enhance_async(search_question)
         current_queries = bundle.all_queries()
         # Key by content fingerprint so docs from different retrieve_context() calls
         # (which all produce ephemeral D1-D5 IDs) are deduplicated correctly.
@@ -314,7 +319,9 @@ class AgenticRAGLoop:
             is_last = round_idx == self.config.max_rounds - 1
             if not is_last:
                 t_suff = time.perf_counter()
-                sufficient, degraded = await self._is_sufficient(question, merged)
+                sufficient, degraded = await self._is_sufficient(
+                    search_question, merged
+                )
                 sufficiency_degraded = sufficiency_degraded or degraded
                 # A failed-open check is reported as a failure that fell back,
                 # not as a verdict: "sufficient" is this loop's stop condition, so
@@ -330,7 +337,7 @@ class AgenticRAGLoop:
                 )
                 if sufficient:
                     break
-                follow_ups = await self._generate_followup(question, merged)
+                follow_ups = await self._generate_followup(search_question, merged)
                 novel_follow_ups = _dedupe_novel(follow_ups, seen_queries)
                 if not novel_follow_ups:
                     break
