@@ -263,6 +263,21 @@ export interface SSEApprovalRequiredEvent {
   approval: ToolApprovalView;
 }
 
+export interface ToolEscalationView {
+  id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  category: string;
+  message: string;
+  attempts: number;
+  expires_at: string;
+}
+
+export interface SSEEscalationRequiredEvent {
+  type: "escalation_required";
+  escalation: ToolEscalationView;
+}
+
 export interface SSEDoneEvent {
   type: "done";
   session_id: string;
@@ -288,6 +303,7 @@ export type SSEEvent =
   | SSEClaimEvent
   | SSETraceEvent
   | SSEApprovalRequiredEvent
+  | SSEEscalationRequiredEvent
   | SSEDoneEvent
   | SSEErrorEvent;
 
@@ -441,6 +457,7 @@ export type ToolStreamEvent =
   | ({ type: "tool_call" } & ToolCallTraceView)
   | { type: "answer"; text: string }
   | { type: "approval_required"; approval: ToolApprovalView }
+  | { type: "escalation_required"; escalation: ToolEscalationView }
   | {
       type: "done";
       session_id: string;

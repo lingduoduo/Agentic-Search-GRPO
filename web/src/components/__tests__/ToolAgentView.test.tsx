@@ -36,6 +36,51 @@ describe("ToolAgentView", () => {
     );
   });
 
+  it("shows an escalation card, posts the decision, and clears it on done", async () => {
+    let resolveDecision!: () => void;
+    const decided = new Promise<void>((resolve) => {
+      resolveDecision = resolve;
+    });
+    const submitSpy = vi.spyOn(api, "submitToolEscalation").mockImplementation(async () => {
+      resolveDecision();
+      return {};
+    });
+    // Mirrors the approval test's real-backend-blocks-on-the-decision setup:
+    // `done` only arrives after the decision endpoint has been called.
+    async function* fake() {
+      yield {
+        type: "escalation_required",
+        escalation: {
+          id: "esc1",
+          tool_name: "send_email",
+          arguments: {},
+          category: "unknown",
+          message: "remote tool reported an error",
+          attempts: 1,
+          expires_at: "2030-01-01T00:00:00Z",
+        },
+      } as const;
+      await decided;
+      yield { type: "done", session_id: "s1", tool_calls: [], num_turns: 1 } as const;
+    }
+    vi.spyOn(api, "sendToolMessage").mockImplementation(fake as never);
+
+    render(<ToolAgentView />);
+    fireEvent.change(screen.getByLabelText("Tool agent message"), {
+      target: { value: "go" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const skipBtn = await screen.findByRole("button", { name: /skip/i });
+    fireEvent.click(skipBtn);
+    await waitFor(() =>
+      expect(submitSpy).toHaveBeenCalledWith("esc1", "skip"),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /skip/i })).not.toBeInTheDocument(),
+    );
+  });
+
   it("renders streamed tool calls and the answer", async () => {
     async function* fake() {
       yield { type: "progress", turn: 1, text: "search · 3 docs" } as const;
