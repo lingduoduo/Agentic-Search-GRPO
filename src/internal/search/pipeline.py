@@ -46,15 +46,18 @@ class SearchPipeline:
         filters: dict[str, Any] | None,
         top_k: int,
         source_provider: str,
+        *,
+        retrieval_query: str | None = None,
     ) -> tuple:
         context = build_retrieval_context(query, history)
+        search_query = retrieval_query or context.retrieval_query
         extra: dict[str, Any] = {
             "source_provider": source_provider,
-            "retrieval_query": context.retrieval_query,
+            "retrieval_query": search_query,
         }
         try:
             candidates = await self._retrieval.retrieve(
-                context.retrieval_query,
+                search_query,
                 context.history,
                 filters,
                 top_k,
@@ -84,7 +87,7 @@ class SearchPipeline:
                 extra,
             )
 
-        evidence = await self._ranking.rank(context.retrieval_query, candidates, top_k)
+        evidence = await self._ranking.rank(search_query, candidates, top_k)
         extra["ranking"] = evidence.metadata
         if not evidence.evidence:
             return f"No results found for: {query}", [], [], "search", extra
