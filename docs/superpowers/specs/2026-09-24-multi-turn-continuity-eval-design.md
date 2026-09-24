@@ -163,7 +163,7 @@ signal. Split computed from the per-turn rows:
 - On TF-IDF an unresolved follow-up loses about half its hits (6 vs 11 of 12). The
   hybrid retriever's dense leg absorbs part of the loss (9 of 12) but not all.
 - `concat` recovers most of the gap (10 of 12); `regex` recovers less (8 of 12)
-  because it only fires on cue words, and 7 of the 12 SciFact follow-ups carry none.
+  because it only fires on cue words, and 6 of the 12 SciFact follow-ups carry none.
 - Every raw miss is a follow-up whose text lacks the entity ("which mutation makes
   HIV resistant to **it**?", "does **it** also cause atherosclerotic plaques?").
 - n=12 is small: the direction is consistent across both retrievers, but the
@@ -198,7 +198,7 @@ signal. Split computed from the per-turn rows:
     right now") `search`, while only the TOOL route runs `ToolAgentLoop`, which is
     where the weather, currency and stock tools live. The taxonomy and the serving
     path disagree about which route owns "look up a live value".
-- These numbers are the no-LLM cascade. In production the 20–52 clarify decisions
+- These numbers are the no-LLM cascade. In production the 19–52 clarify decisions
   per condition would go to the LLM classifier, which this eval deliberately leaves
   out; the routing result is about the deterministic stages only.
 
@@ -207,7 +207,7 @@ signal. Split computed from the per-turn rows:
 1. **Resolve follow-ups before retrieval, and make it switch-aware.** `concat`
    shows most of the retrieval headroom is cheap to win, but it drags the old topic
    into every switch. The fix needs a continuation/switch decision, not blind
-   concatenation; `regex`'s cue-word test is too narrow on follow-ups (7 of 12
+   concatenation; `regex`'s cue-word test is too narrow on follow-ups (6 of 12
    SciFact follow-ups uncued) and too broad on switches (7 of 16 cued switches
    misfire).
 2. **Routing continuity is not the next routing problem; coverage is.** Carrying
