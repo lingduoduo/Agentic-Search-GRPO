@@ -20,6 +20,18 @@ def search_direct_cos_min() -> float:
     return float(os.environ.get("AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN", "0.8"))
 
 
+# Provisional; replaced by the τ the multi-turn eval chooses on its dev half.
+DEFAULT_FOLLOW_UP_COS_MIN = 0.85
+
+
+def follow_up_cos_min() -> float:
+    return float(
+        os.environ.get(
+            "AGENTIC_SEARCH_FOLLOW_UP_COS_MIN", str(DEFAULT_FOLLOW_UP_COS_MIN)
+        )
+    )
+
+
 def make_cosine_fn(embedder):
     """Return (query, passage) -> cosine|None using e5 prefixes; None if no model."""
     if embedder is None:

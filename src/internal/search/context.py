@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Iterable
+from typing import Callable, Iterable
 
 from src.context import ChatMessage
 
@@ -91,3 +91,66 @@ def build_retrieval_context(
         retrieval_query=retrieval_query,
         history=bounded_history,
     )
+
+
+_REFERENCE = re.compile(
+    r"\b(?:it|its|they|them|their|this|that|these|those|one)\b", re.IGNORECASE
+)
+FRAGMENT_MAX_WORDS = 4
+TOPIC_LOOKBACK = 3
+
+Cosine = Callable[[str, str], "float | None"]
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """What retrieval searches for, and why."""
+
+    query: str
+    continuation: bool
+    reason: str  # no_history | reference | fragment | semantic | switch
+
+
+def _continues(
+    message: str, topic: str, cosine: Cosine | None, tau: float
+) -> tuple[bool, str]:
+    if _REFERENCE.search(message):
+        return True, "reference"
+    if len(message.split()) <= FRAGMENT_MAX_WORDS:
+        return True, "fragment"
+    if cosine is not None:
+        score = cosine(message, topic)
+        if score is not None and score >= tau:
+            return True, "semantic"
+    return False, "switch"
+
+
+def resolve_follow_up(
+    message: str,
+    history: Iterable[ChatMessage],
+    *,
+    cosine: Cosine | None,
+    tau: float,
+) -> Resolution:
+    """Resolve a follow-up into a standalone retrieval query, without an LLM.
+
+    Cue words ("also", "and", "how about") are deliberately not a signal: alone
+    they misfire on topic switches. The topic is the latest earlier user message
+    this gate itself judged standalone, within the last TOPIC_LOOKBACK user turns,
+    so a chain of follow-ups keeps the original topic and never grows.
+    """
+    user_texts = [
+        m.content
+        for m in _safe_history(history)
+        if m.role.lower() == "user" and m.content.strip()
+    ][-TOPIC_LOOKBACK:]
+    topic: str | None = None
+    for text in user_texts:
+        if topic is None or not _continues(text, topic, cosine, tau)[0]:
+            topic = text
+    if topic is None:
+        return Resolution(message, False, "no_history")
+    continues, reason = _continues(message, topic, cosine, tau)
+    if continues:
+        return Resolution(f"{topic}\n{message}", True, reason)
+    return Resolution(message, False, reason)
