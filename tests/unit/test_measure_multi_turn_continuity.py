@@ -10,6 +10,7 @@ from examples.measure_multi_turn_continuity import (
     evaluate,
     load_conversations,
     score_retrieval,
+    summarize,
 )
 
 
@@ -282,3 +283,83 @@ def test_evaluate_skips_retrieval_on_non_search_turns():
     rows = evaluate([conv], {"rules": lambda query: "tool"}, {"tfidf": retriever})
     assert calls == []
     assert all(r["retrieval"] == {} for r in rows)
+
+
+def _row(
+    conv,
+    index,
+    condition,
+    *,
+    relation="follow_up",
+    kind="pronoun",
+    predicted="search",
+    carried=False,
+    hit=None,
+):
+    return {
+        "conversation_id": conv,
+        "turn_index": index,
+        "relation": relation,
+        "kind": kind if relation == "follow_up" else None,
+        "gold_route": "search",
+        "condition": condition,
+        "query": "q",
+        "carried": carried,
+        "route": {"rules": predicted},
+        "retrieval": {}
+        if hit is None
+        else {"tfidf": {"hit5": hit, "rr10": 1.0 if hit else 0.0}},
+    }
+
+
+def _four_conditions(conv, index, gold_pred, other_pred="clarify", **kwargs):
+    rows = []
+    for condition in ("raw", "regex", "concat", "gold_rewrite"):
+        predicted = gold_pred if condition == "gold_rewrite" else other_pred
+        rows.append(_row(conv, index, condition, predicted=predicted, **kwargs))
+    return rows
+
+
+def test_route_accuracy_counts_clarify_as_a_miss():
+    rows = _four_conditions("c1", 1, "search")
+    summary = summarize(rows, ["rules"], [], resamples=50, seed=0)
+    acc = summary["follow_up"]["route_acc:rules"]
+    assert acc["raw"]["mean"] == 0.0
+    assert acc["gold_rewrite"]["mean"] == 1.0
+    assert acc["gold_rewrite"]["delta_vs_raw"]["point"] == 1.0
+    assert acc["raw"]["delta_vs_raw"] is None
+
+
+def test_bootstrap_resamples_conversations_not_turns():
+    # One conversation, turns alternating correct/incorrect under gold_rewrite.
+    # Resampling the single conversation always reproduces it, so the CI is a
+    # point; resampling turns would spread it.
+    rows = []
+    for index in range(1, 9):
+        rows += _four_conditions("c1", index, "search" if index % 2 else "chat")
+    summary = summarize(rows, ["rules"], [], resamples=200, seed=0)
+    delta = summary["follow_up"]["route_acc:rules"]["gold_rewrite"]["delta_vs_raw"]
+    assert delta == {"point": 0.5, "low": 0.5, "high": 0.5}
+
+
+def test_carry_over_is_scored_on_topic_switches_only():
+    conditions = ("raw", "regex", "concat", "gold_rewrite")
+    rows = [
+        _row("c1", 1, c, relation="topic_switch", carried=(c == "concat"))
+        for c in conditions
+    ]
+    rows += [_row("c1", 2, c, carried=True) for c in conditions]
+    summary = summarize(rows, ["rules"], [], resamples=50, seed=0)
+    assert summary["topic_switch"]["carry_over"]["concat"]["mean"] == 1.0
+    assert summary["topic_switch"]["carry_over"]["raw"]["mean"] == 0.0
+    assert "carry_over" not in summary["follow_up"]
+    assert summary["all"]["carry_over"]["concat"]["n"] == 1
+
+
+def test_retrieval_metrics_skip_non_search_turns():
+    rows = _four_conditions("c1", 1, "search", hit=True) + _four_conditions(
+        "c2", 1, "tool"
+    )
+    summary = summarize(rows, ["rules"], ["tfidf"], resamples=50, seed=0)
+    assert summary["all"]["hit5:tfidf"]["raw"]["n"] == 1
+    assert summary["all"]["route_acc:rules"]["raw"]["n"] == 2

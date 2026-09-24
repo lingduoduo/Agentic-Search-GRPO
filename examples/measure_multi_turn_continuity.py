@@ -32,6 +32,7 @@ from pathlib import Path
 
 from src.context import ChatMessage
 from src.internal.search.context import build_retrieval_context
+from src.model.post_training.eval.stats import cluster_bootstrap_ci
 
 DEFAULT_DATA = Path("data/eval/multi_turn_conversations.jsonl")
 DEFAULT_OUT = Path("data/eval/multi_turn_continuity.json")
@@ -223,3 +224,96 @@ def evaluate(
                     }
                 )
     return rows
+
+
+ValueOf = Callable[[dict], "float | None"]
+
+
+def _slices() -> dict[str, Callable[[dict], bool]]:
+    slices: dict[str, Callable[[dict], bool]] = {"all": lambda row: True}
+    for relation in RELATIONS:
+        slices[relation] = lambda row, relation=relation: row["relation"] == relation
+    for kind in KINDS:
+        slices[f"follow_up/{kind}"] = lambda row, kind=kind: row["kind"] == kind
+    return slices
+
+
+def _metrics(routers: Sequence[str], retrievers: Sequence[str]) -> dict[str, ValueOf]:
+    metrics: dict[str, ValueOf] = {}
+    for name in routers:
+        metrics[f"route_acc:{name}"] = lambda row, name=name: float(
+            row["route"][name] == row["gold_route"]
+        )
+    for name in retrievers:
+        metrics[f"hit5:{name}"] = lambda row, name=name: (
+            float(row["retrieval"][name]["hit5"]) if row["retrieval"] else None
+        )
+        metrics[f"mrr10:{name}"] = lambda row, name=name: (
+            row["retrieval"][name]["rr10"] if row["retrieval"] else None
+        )
+    metrics["carry_over"] = lambda row: (
+        float(row["carried"]) if row["relation"] == "topic_switch" else None
+    )
+    return metrics
+
+
+def _by_conversation(
+    rows: Sequence[dict],
+    condition: str,
+    in_slice: Callable[[dict], bool],
+    value_of: ValueOf,
+) -> dict[str, list[float]]:
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        if row["condition"] != condition or not in_slice(row):
+            continue
+        value = value_of(row)
+        if value is not None:
+            grouped.setdefault(row["conversation_id"], []).append(value)
+    return grouped
+
+
+def _mean(values: Sequence[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _paired_difference(units: Sequence[tuple[list[float], list[float]]]) -> float:
+    cond_values = [v for unit in units for v in unit[0]]
+    raw_values = [v for unit in units for v in unit[1]]
+    return _mean(cond_values) - _mean(raw_values)
+
+
+def summarize(
+    rows: Sequence[dict],
+    routers: Sequence[str],
+    retrievers: Sequence[str],
+    *,
+    resamples: int,
+    seed: int,
+) -> dict:
+    summary: dict = {}
+    for slice_name, in_slice in _slices().items():
+        for metric_name, value_of in _metrics(routers, retrievers).items():
+            raw = _by_conversation(rows, "raw", in_slice, value_of)
+            if not raw:
+                continue
+            per_condition: dict = {}
+            for condition in CONDITIONS:
+                grouped = _by_conversation(rows, condition, in_slice, value_of)
+                values = [v for conv_values in grouped.values() for v in conv_values]
+                delta = None
+                if condition != "raw":
+                    # Units are conversations: each carries its (condition, raw)
+                    # values for the same turns, so the difference stays paired.
+                    units = [(grouped[conv], raw[conv]) for conv in raw]
+                    point, low, high = cluster_bootstrap_ci(
+                        units, _paired_difference, resamples=resamples, seed=seed
+                    )
+                    delta = {"point": point, "low": low, "high": high}
+                per_condition[condition] = {
+                    "mean": _mean(values),
+                    "n": len(values),
+                    "delta_vs_raw": delta,
+                }
+            summary.setdefault(slice_name, {})[metric_name] = per_condition
+    return summary
