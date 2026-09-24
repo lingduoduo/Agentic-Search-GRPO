@@ -1,5 +1,8 @@
 import asyncio
 
+from fastapi.testclient import TestClient
+from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
+
 import src.internal.servers.web.app as web_app
 from src.shared_configs.intent import RouteStrategy
 
@@ -147,3 +150,114 @@ def test_search_pipeline_uses_the_retrieval_query_override():
     )
     assert seen["retrieve"] == RESOLVED
     assert extra["retrieval_query"] == RESOLVED
+
+
+class _ChatLLM:
+    def complete(self, messages, **_):
+        return "chat"
+
+
+def _two_turns(
+    monkeypatch, tmp_path, *, flag, second="Does it support GPUs?", mode=None
+):
+    calls = []
+
+    async def fake_rag(query, **kw):
+        calls.append((query, kw.get("retrieval_query")))
+        return "an answer", [], [], "chat", {}
+
+    monkeypatch.setattr(web_app, "_run_agentic_rag", fake_rag)
+    monkeypatch.setattr(web_app, "gate_embedder", lambda: None)
+    app = create_web_app(
+        SearchExperienceSettings(
+            db_path=tmp_path / "db.sqlite3", follow_up_resolution=flag
+        ),
+        llm=_ChatLLM(),
+    )
+    client = TestClient(app)
+    body = {"query": "What is FAISS?"}
+    if mode:
+        body["mode"] = mode
+    first = client.post("/api/agent", json=body).json()
+    second_body = {**body, "query": second, "session_id": first["session_id"]}
+    second_response = client.post("/api/agent", json=second_body).json()
+    return calls, first, second_response
+
+
+def test_flag_on_resolves_the_follow_up_for_retrieval(monkeypatch, tmp_path):
+    calls, _first, second = _two_turns(monkeypatch, tmp_path, flag=True)
+    assert calls[-1] == (
+        "Does it support GPUs?",
+        "What is FAISS?\nDoes it support GPUs?",
+    )
+    assert second["hook_metadata"]["follow_up"] == {
+        "continuation": True,
+        "reason": "reference",
+        "query": "What is FAISS?\nDoes it support GPUs?",
+    }
+
+
+def test_flag_on_first_turn_reports_no_history(monkeypatch, tmp_path):
+    calls, first, _second = _two_turns(monkeypatch, tmp_path, flag=True)
+    assert calls[0] == ("What is FAISS?", "What is FAISS?")
+    assert first["hook_metadata"]["follow_up"] == {
+        "continuation": False,
+        "reason": "no_history",
+        "query": "What is FAISS?",
+    }
+
+
+def test_flag_off_changes_nothing(monkeypatch, tmp_path):
+    calls, first, second = _two_turns(monkeypatch, tmp_path, flag=False)
+    assert calls == [("What is FAISS?", None), ("Does it support GPUs?", None)]
+    assert "follow_up" not in first["hook_metadata"]
+    assert "follow_up" not in second["hook_metadata"]
+
+
+def test_explicit_chat_loop_mode_is_resolved_too(monkeypatch, tmp_path):
+    calls, _first, _second = _two_turns(
+        monkeypatch, tmp_path, flag=True, mode="chat_loop"
+    )
+    assert calls[-1][1] == "What is FAISS?\nDoes it support GPUs?"
+
+
+def test_chat_once_mode_passes_retrieval_query(monkeypatch, tmp_path):
+    seen = []
+
+    async def fake_awr(question, **kw):
+        seen.append((question, kw.get("retrieval_query")))
+        from types import SimpleNamespace
+
+        from src.context import SearchContextBundle
+
+        # The chat_once path reads only answer, citations and context.documents.
+        return SimpleNamespace(
+            answer="an answer",
+            citations=[],
+            context=SearchContextBundle(query=question, documents=[]),
+        )
+
+    monkeypatch.setattr(web_app, "answer_with_retrieval", fake_awr)
+    monkeypatch.setattr(web_app, "gate_embedder", lambda: None)
+    app = create_web_app(
+        SearchExperienceSettings(
+            db_path=tmp_path / "db.sqlite3", follow_up_resolution=True
+        ),
+        llm=_ChatLLM(),
+    )
+    client = TestClient(app)
+    first = client.post(
+        "/api/agent", json={"query": "What is FAISS?", "mode": "chat_once"}
+    ).json()
+    client.post(
+        "/api/agent",
+        json={
+            "query": "Does it support GPUs?",
+            "mode": "chat_once",
+            "session_id": first["session_id"],
+        },
+    )
+    assert seen[-1] == (
+        "Does it support GPUs?",
+        "What is FAISS?\nDoes it support GPUs?",
+    )

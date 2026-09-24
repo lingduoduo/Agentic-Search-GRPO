@@ -79,6 +79,7 @@ def test_agent_endpoint_runs_pipeline_and_persists_chat(monkeypatch, tmp_path):
         top_k: int,
         filters=None,
         user_memory=None,
+        retrieval_query=None,
     ) -> AnswerGenerationResult:
         # Anonymous (no auth) now carries ["public"], not "unfiltered" — a
         # document restricted to another user must not leak to a logged-out
@@ -290,6 +291,7 @@ def test_agent_endpoint_reuses_existing_session_history(monkeypatch, tmp_path):
         top_k: int,
         filters=None,
         user_memory=None,
+        retrieval_query=None,
     ) -> AnswerGenerationResult:
         del filters
         observed_history.extend(chat_history or [])
@@ -346,6 +348,7 @@ def test_agent_endpoint_runs_query_processing_hook(monkeypatch, tmp_path):
         top_k: int,
         filters=None,
         user_memory=None,
+        retrieval_query=None,
     ) -> AnswerGenerationResult:
         del llm, chat_history, search_url, top_k, filters
         assert question == "rewritten deploy question"
@@ -729,6 +732,7 @@ def test_run_agent_chat_once_mode_returns_answer(monkeypatch, tmp_path):
         top_k,
         filters=None,
         user_memory=None,
+        retrieval_query=None,
     ):
         return _answer_result(question)
 
@@ -884,7 +888,15 @@ def test_explicit_mode_still_works(monkeypatch, tmp_path):
     called = {}
 
     async def fake_answer(
-        q, *, llm, chat_history, search_url, top_k, filters, user_memory=None
+        q,
+        *,
+        llm,
+        chat_history,
+        search_url,
+        top_k,
+        filters,
+        user_memory=None,
+        retrieval_query=None,
     ):
         called["answer"] = True
         return _answer_result(q)
@@ -1051,7 +1063,15 @@ def test_explicit_mode_never_clarifies(monkeypatch, tmp_path):
     called = {}
 
     async def fake_answer(
-        q, *, llm, chat_history, search_url, top_k, filters, user_memory=None
+        q,
+        *,
+        llm,
+        chat_history,
+        search_url,
+        top_k,
+        filters,
+        user_memory=None,
+        retrieval_query=None,
     ):
         called["answer"] = True
         return _answer_result(q)

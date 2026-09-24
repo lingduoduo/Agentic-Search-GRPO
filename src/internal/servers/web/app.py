@@ -29,6 +29,7 @@ from src.internal.configs import load_app_settings
 from src.internal.llm.interfaces import LLMConfig
 from src.internal.llm.providers import OpenAICompatibleLLM
 from src.internal.utils.embedding_gate import (
+    follow_up_cos_min,
     gate_embedder,
     make_cosine_fn,
     search_direct_cos_min,
@@ -63,6 +64,7 @@ from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
 from src.internal.search.models import RankedEvidence
+from src.internal.search.context import resolve_follow_up
 from src.internal.search.pipeline import SearchPipeline
 from src.internal.search.ranking import DefaultRankingStage
 from src.internal.search.stages import RerankHTTPRankingStage
@@ -188,6 +190,10 @@ class SearchExperienceSettings:
     # signed-in user's long-term memories. Off by default; inert unless
     # memory_compression is on; anonymous sessions are never curated.
     memory_auto_curate: bool = False
+    # Resolve follow-up turns into standalone retrieval queries (the answer
+    # prompt still gets the raw message). Off by default until the multi-turn
+    # eval's success criteria hold.
+    follow_up_resolution: bool = False
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
@@ -213,6 +219,7 @@ class SearchExperienceSettings:
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
             memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
+            follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
         )
 
@@ -1711,6 +1718,26 @@ def create_web_app(
             cache=get_cache_backend() if settings.memory_compression else None,
         )
         history = working.messages
+        # Resolved once, for retrieval only: routing and the answer prompt keep
+        # the message as typed.
+        follow_up_meta: dict = {}
+        retrieval_query: str | None = None
+        if settings.follow_up_resolution:
+            resolution = await asyncio.to_thread(
+                resolve_follow_up,
+                query,
+                history,
+                cosine=make_cosine_fn(gate_embedder()),
+                tau=follow_up_cos_min(),
+            )
+            retrieval_query = resolution.query
+            follow_up_meta = {
+                "follow_up": {
+                    "continuation": resolution.continuation,
+                    "reason": resolution.reason,
+                    "query": resolution.query,
+                }
+            }
         db.add_chat_message(session_id, role="user", content=query)
 
         # Resolve the retrieval URL server-side. A client-supplied search_url is
@@ -1774,7 +1801,9 @@ def create_web_app(
                         user_memory=user_memory,
                         user_present=capabilities.user_present,
                         forced_route=forced_route,
+                        retrieval_query=retrieval_query,
                     )
+                    extra.update(follow_up_meta)
                     _cap = _capture.active()
                     if _cap is not None:
                         _cap.route = extra.get("route")
@@ -1899,7 +1928,9 @@ def create_web_app(
                         history=history,
                         user_memory=user_memory,
                         on_claim=on_claim,
+                        retrieval_query=retrieval_query,
                     )
+                    extra.update(follow_up_meta)
                     return _finalize_response(
                         db,
                         session_id,
@@ -2003,6 +2034,7 @@ def create_web_app(
                     top_k=top_k,
                     filters=filters,
                     user_memory=user_memory,
+                    retrieval_query=retrieval_query,
                 )
             except HTTPException:
                 raise
@@ -2033,7 +2065,7 @@ def create_web_app(
                 documents=documents,
                 intent="chat",
                 hook_metadata=hook_metadata,
-                extra={},
+                extra=dict(follow_up_meta),
                 mode=mode,
             )
         finally:
