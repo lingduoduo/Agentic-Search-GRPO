@@ -31,15 +31,18 @@ memory recall and hooks, and LLM rewriting.
 class Resolution:
     query: str          # what retrieval searches for
     continuation: bool  # True when the message continues the topic
-    reason: str         # no_history | reference | fragment | semantic | switch
+    reason: str         # no_history | no_topic | reference | fragment | semantic | switch
 ```
 
 **Topic.** The most recent earlier user message that the gate itself classified
 as standalone (an opening or a switch), looking back at most 3 user turns. Earlier
 messages are re-classified in order on each call, so no state is stored and
 "weather in Tokyo" → "and in Paris?" → "Berlin?" keeps "weather in Tokyo" as the
-topic. Queries never chain. History passes through the existing `_safe_history`
-filter; assistant messages are ignored.
+topic. Queries never chain. The window's oldest turn is classified against the
+turn just before the window and is a topic only if it stands alone; when no turn
+in reach stands alone, the message is searched as typed (reason `no_topic`).
+History passes through the existing `_safe_history` filter; assistant messages
+are ignored.
 
 **Gate**, in order; the first rule that fires decides:
 
@@ -69,7 +72,9 @@ failure, which is treated the same way.
 **Known weak spot.** A standalone message containing "this" or "their"
 ("Proofread this sentence: …") fires `reference`. The eval measures how often.
 
-**Cost.** One e5 encoding of two short strings per turn with history, no LLM.
+**Cost.** No LLM. A cosine (one e5 encoding of two short strings) is computed
+only when the reference and fragment rules do not decide, for the message and for
+each earlier window turn being classified: up to 4 cosine calls per resolution.
 
 ## 2. Wiring
 
@@ -184,7 +189,8 @@ CIs on the difference from `raw`, resampling conversations. Per-turn rows:
 
 On the dev half the only follow-up that reaches the semantic rule ("Can the virus
 infect hematopoietic progenitor cells ex vivo?") scores 0.768 against its topic,
-while five topic switches score 0.72–0.83 ("Also, can you explain what a
+while five topic switches score 0.72–0.83 (figures from a dev-half diagnostic run;
+the committed JSON stores test-half rows only) ("Also, can you explain what a
 blockchain is?" 0.83). No threshold separates them, every τ from 0.80 up ties at
 dev gate accuracy 0.953, and ties resolve to the top of the grid: τ = 0.95, which
 switches the rule off in practice. `gated` and `gated_cues` are identical on every
@@ -200,7 +206,7 @@ The rule that decided each test turn:
 | follow-up (41) | 27 | 7 | 7 missed |
 | topic switch (13) | 1 carried | 2 carried | 10 |
 
-- Missed follow-ups: five-word follow-ups just over the fragment limit ("And
+- Missed follow-ups: five- and six-word follow-ups just over the fragment limit ("And
   spinal long term potentiation?", "Should I pack an umbrella?", "Show me a short
   Python example."), a cue-word follow-up the spec deliberately ignores ("What
   about the axonal transport defects?"), and definite descriptions ("Is the
@@ -222,8 +228,9 @@ SciFact follow-ups, Hit@5 (15 test turns):
 | tfidf | 8 | 9 | 13 | 11 | 11 | 11 |
 | hybrid | 12 | 12 | 13 | 13 | 13 | 13 |
 
-- `gated` matches the realistic standalone rewrite exactly (11 and 13), but that
-  gain's CI touches zero on TF-IDF (+0.20 [+0.00, +0.40]).
+- `gated` matches the realistic standalone rewrite in hit counts (11 and 13),
+  though per turn they differ on 2 of the 15 TF-IDF turns (one hit each way), and
+  its gain's CI touches zero on TF-IDF (+0.20 [+0.00, +0.40]).
 - `concat` beats even `gold_rewrite` on TF-IDF (13 vs 11, +0.33 [+0.13, +0.60]).
   13 of the 18 new SciFact pairs share their relevant document with the opening,
   so carrying the opening claim's own words retrieves that document whether or not
