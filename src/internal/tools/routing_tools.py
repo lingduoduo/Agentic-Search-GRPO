@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 _SEARCH_TOOL_PARAMS = {
     "type": "object",
     "properties": {
-        "query": {"type": "string", "description": "The search query."},
+        "query": {"type": "string", "minLength": 1, "description": "The search query."},
     },
     "required": ["query"],
+    "additionalProperties": False,
 }
 
 _RAG_TOOL_PARAMS = {
@@ -23,10 +24,12 @@ _RAG_TOOL_PARAMS = {
     "properties": {
         "query": {
             "type": "string",
+            "minLength": 1,
             "description": "The question to answer using retrieval.",
         },
     },
     "required": ["query"],
+    "additionalProperties": False,
 }
 
 

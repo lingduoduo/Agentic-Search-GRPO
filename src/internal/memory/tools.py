@@ -28,9 +28,14 @@ class _AddMemoryTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "The memory to store."}
+                    "content": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The memory to store.",
+                    }
                 },
                 "required": ["content"],
+                "additionalProperties": False,
             },
         )
 
@@ -65,10 +70,11 @@ class _UpdateMemoryTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
-                    "memory_id": {"type": "string"},
-                    "content": {"type": "string"},
+                    "memory_id": {"type": "string", "minLength": 1},
+                    "content": {"type": "string", "minLength": 1},
                 },
                 "required": ["memory_id", "content"],
+                "additionalProperties": False,
             },
         )
 
@@ -104,8 +110,9 @@ class _DeleteMemoryTool(Tool):
             description="Delete an outdated or incorrect memory identified by memory_id.",
             parameters={
                 "type": "object",
-                "properties": {"memory_id": {"type": "string"}},
+                "properties": {"memory_id": {"type": "string", "minLength": 1}},
                 "required": ["memory_id"],
+                "additionalProperties": False,
             },
         )
 

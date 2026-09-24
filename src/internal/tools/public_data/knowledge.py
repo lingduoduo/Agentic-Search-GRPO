@@ -30,19 +30,24 @@ _ARXIV_SORTS = {"relevance", "lastUpdatedDate", "submittedDate"}
 _WIKIPEDIA_PARAMS = {
     "type": "object",
     "properties": {
-        "query": {"type": "string", "description": "What to look up."},
+        "query": {"type": "string", "minLength": 1, "description": "What to look up."},
         "language": {
             "type": "string",
+            "pattern": "^[A-Za-z]+(-[A-Za-z]+)*$",
+            "maxLength": 20,
             "description": "Wikipedia language code, e.g. 'en' or 'de'.",
             "default": "en",
         },
         "limit": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
             "description": "How many articles to return (1-10).",
             "default": 3,
         },
     },
     "required": ["query"],
+    "additionalProperties": False,
 }
 
 
@@ -120,19 +125,27 @@ def build_wikipedia_tool() -> FunctionTool:
 _ARXIV_PARAMS = {
     "type": "object",
     "properties": {
-        "query": {"type": "string", "description": "Topic, title, or author."},
+        "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Topic, title, or author.",
+        },
         "max_results": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
             "description": "How many papers to return (1-25).",
             "default": 3,
         },
         "sort_by": {
             "type": "string",
+            "enum": sorted(_ARXIV_SORTS),
             "description": "One of relevance, lastUpdatedDate, submittedDate.",
             "default": "relevance",
         },
     },
     "required": ["query"],
+    "additionalProperties": False,
 }
 
 
@@ -187,18 +200,24 @@ def build_arxiv_tool() -> FunctionTool:
 _WAYBACK_PARAMS = {
     "type": "object",
     "properties": {
-        "url": {"type": "string", "description": "The URL to look up."},
+        "url": {"type": "string", "minLength": 1, "description": "The URL to look up."},
         "year": {
             "type": "integer",
+            # The Wayback Machine began in 1996; CDX timestamps carry 4-digit years.
+            "minimum": 1996,
+            "maximum": 9999,
             "description": "Restrict snapshots to this calendar year.",
         },
         "limit": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
             "description": "How many snapshots to return (1-50).",
             "default": 10,
         },
     },
     "required": ["url"],
+    "additionalProperties": False,
 }
 
 
