@@ -181,11 +181,7 @@ def build_crypto_price_tool() -> FunctionTool:
 _CURRENCY_PARAMS = {
     "type": "object",
     "properties": {
-        "amount": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "description": "How much to convert.",
-        },
+        "amount": {"type": "number", "description": "How much to convert."},
         "from_currency": {
             "type": "string",
             "pattern": "^[A-Za-z]{3}$",

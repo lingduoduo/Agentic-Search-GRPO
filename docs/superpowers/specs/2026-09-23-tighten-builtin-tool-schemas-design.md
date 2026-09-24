@@ -24,7 +24,9 @@ memory tools:
    except open maps listed in the guard with a reason. The only one:
    `params` on `search_domain`/`batch_search`, whose keys depend on `tag`.
 3. Every `integer` has both `minimum` and `maximum`.
-4. Every `number` has a lower bound (`minimum` or `exclusiveMinimum`).
+4. Every `number` has a lower bound (`minimum` or `exclusiveMinimum`), except
+   numbers listed in the guard with a reason. The only one:
+   `convert_currency.amount` — any sign converts, and the tool has no amount check.
 5. Every `array` has `items` and `maxItems`.
 6. Every required `string` has `minLength >= 1`.
 
@@ -47,15 +49,21 @@ the tool actually does; the clamps stay as defence in depth.
 | search_nearby_places.limit | 1–50 |
 | search_location.limit | 1–20 |
 | search_location.country_code | `^[A-Za-z]{2}$` |
-| convert_currency.amount | exclusiveMinimum 0 |
 | convert_currency.from/to_currency | `^[A-Za-z]{3}$` |
 | get_crypto_price.vs_currency | `^[A-Za-z]{2,10}$` |
 | extract_page.url | `^[Hh][Tt][Tt][Pp][Ss]?://` (the executor rejects anything else) |
 | web_search.queries | minItems 1, **maxItems 5** |
 
 `web_search.queries` had no cap at all, and each query is a paid provider call;
-5 matches `batch_search`'s existing limit. This is the one new limit rather than
-a prose constraint made formal.
+5 matches `batch_search`'s existing limit. This is the one new numeric limit
+rather than a prose constraint made formal.
+
+Closing the schemas is itself a behaviour change for the tools whose executors
+read arguments with `.get` — `web_search` and the three memory tools used to
+ignore an extra key, and `web_search` used to drop an empty query item; both are
+now rejected (with #637), costing the model a turn to resend. The `FunctionTool`
+tools already failed on an extra key (`fn(**arguments)` raised `TypeError`), so
+for them the rejection only arrives earlier and clearer.
 
 Patterns stay ECMA-262-portable (no inline flags), since providers consume these
 schemas too.

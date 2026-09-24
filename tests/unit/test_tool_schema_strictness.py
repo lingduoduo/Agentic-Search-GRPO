@@ -25,6 +25,13 @@ OPEN_MAPS = {
     ("batch_search", "$.queries[].params"),
 }
 
+# Numbers with no natural bound, with the reason they stay unbounded.
+UNBOUNDED_NUMBERS = {
+    # Any sign converts: refunds and debts are real inputs, and the tool has
+    # no amount check to describe.
+    ("convert_currency", "$.amount"),
+}
+
 
 class _NoLLM:
     def complete(self, *args, **kwargs):
@@ -55,7 +62,11 @@ def _violations(tool: str, path: str, schema: dict, required: bool) -> list[str]
             found += _violations(tool, f"{path}.{key}", sub, key in needed)
     if kind == "integer" and not ("minimum" in schema and "maximum" in schema):
         found.append(f"{path}: integer needs minimum and maximum")
-    if kind == "number" and not ("minimum" in schema or "exclusiveMinimum" in schema):
+    if (
+        kind == "number"
+        and (tool, path) not in UNBOUNDED_NUMBERS
+        and not ("minimum" in schema or "exclusiveMinimum" in schema)
+    ):
         found.append(f"{path}: number needs a lower bound")
     if kind == "array":
         if "items" not in schema or "maxItems" not in schema:
@@ -142,10 +153,11 @@ TABLE = [
         {"amount": 1, "from_currency": "usd", "to_currency": "EUR"},
         True,
     ),
+    # The converter has no amount check: refunds and debts are real inputs.
     (
         "convert_currency",
-        {"amount": 0, "from_currency": "USD", "to_currency": "EUR"},
-        False,
+        {"amount": -50, "from_currency": "USD", "to_currency": "EUR"},
+        True,
     ),
     (
         "convert_currency",
