@@ -162,3 +162,88 @@ the v1 record in git).
   stability, τ chosen on dev only.
 - Every test is mutation-checked, and the CI unit job's torch-free import is
   checked.
+
+## Results (2026-09-24)
+
+Run: `python -m examples.measure_multi_turn_continuity` on dataset v2 (58
+conversations). τ chosen on the dev half (27 conversations); every number below
+is from the test half (31 conversations, 54 non-opening turns). Brackets are 95%
+CIs on the difference from `raw`, resampling conversations. Per-turn rows:
+`data/eval/multi_turn_continuity.json`.
+
+**Decision: the flag stays off.** Three of the four success criteria fail.
+
+| criterion | result | met |
+|---|---|---|
+| 1. `gated` beats `raw` on SciFact follow-up Hit@5 (tfidf), CI low > 0 | +0.20 [+0.00, +0.40] | no |
+| 2. topic-switch carry-over ≤ 0.15 | 0.23 (3 of 13) | no |
+| 3. SciFact follow-up hits within one of `concat` | 11 vs 13 | no |
+| 4. median latency ≤ 30 ms | 16.5 ms | yes |
+
+### τ: the semantic rule never helps
+
+On the dev half the only follow-up that reaches the semantic rule ("Can the virus
+infect hematopoietic progenitor cells ex vivo?") scores 0.768 against its topic,
+while five topic switches score 0.72–0.83 ("Also, can you explain what a
+blockchain is?" 0.83). No threshold separates them, every τ from 0.80 up ties at
+dev gate accuracy 0.953, and ties resolve to the top of the grid: τ = 0.95, which
+switches the rule off in practice. `gated` and `gated_cues` are identical on every
+test metric. `DEFAULT_FOLLOW_UP_COS_MIN` is set to 0.95 accordingly. Latency is
+the median over resolutions that call the encoder (e5-base-v2, warm, this Mac).
+
+### Gate accuracy: 44 of 54 (0.81)
+
+The rule that decided each test turn:
+
+| gold relation | reference | fragment | switch |
+|---|---|---|---|
+| follow-up (41) | 27 | 7 | 7 missed |
+| topic switch (13) | 1 carried | 2 carried | 10 |
+
+- Missed follow-ups: five-word follow-ups just over the fragment limit ("And
+  spinal long term potentiation?", "Should I pack an umbrella?", "Show me a short
+  Python example."), a cue-word follow-up the spec deliberately ignores ("What
+  about the axonal transport defects?"), and definite descriptions ("Is the
+  disease linked to changes in Treg development?", "Which compounds activate the
+  dephosphorylated form?", "Which should I use for a small project?").
+- Carried switches: four-word standalone questions inside the fragment limit
+  ("What is cross-encoder reranking?", "And what is FAISS?") and the predicted
+  weak spot ("Proofread this sentence: …" fires `reference`).
+
+The word-count fragment rule is wrong in both directions, and e5 cosine cannot
+rescue the cases it misses.
+
+### Retrieval
+
+SciFact follow-ups, Hit@5 (15 test turns):
+
+| retriever | raw | regex | concat | gold_rewrite | gated | gated_cues |
+|---|---|---|---|---|---|---|
+| tfidf | 8 | 9 | 13 | 11 | 11 | 11 |
+| hybrid | 12 | 12 | 13 | 13 | 13 | 13 |
+
+- `gated` matches the realistic standalone rewrite exactly (11 and 13), but that
+  gain's CI touches zero on TF-IDF (+0.20 [+0.00, +0.40]).
+- `concat` beats even `gold_rewrite` on TF-IDF (13 vs 11, +0.33 [+0.13, +0.60]).
+  13 of the 18 new SciFact pairs share their relevant document with the opening,
+  so carrying the opening claim's own words retrieves that document whether or not
+  the follow-up is resolved. On this dataset `concat`'s advantage is partly that
+  overlap, not better resolution.
+- SciFact topic switches (6 test turns): `concat` loses a hit (4 vs 5 for `raw`
+  and `gated`, both retrievers); `gated` carries none of them.
+
+### What this means
+
+- Blind `concat` is the strongest condition on follow-ups and the worst on
+  switches (13 of 13 carried, −1 SciFact switch hit); the gate trades most of that
+  switch damage away (3 of 13) but also 2 of 15 SciFact follow-up hits.
+- The next resolver needs a better standalone signal than word count and e5
+  similarity: whether the message names its own subject (a content noun or entity
+  not in the topic) would catch both "What is cross-encoder reranking?" (standalone)
+  and "And spinal long term potentiation?" (continues), and cue words deserve a
+  place as a weak signal combined with that check rather than on their own.
+- The eval should add SciFact pairs whose relevant documents differ from the
+  opening's, so resolution is measured separately from topic-term overlap.
+
+Caveats: 15 SciFact follow-ups and 13 switches on the test half; one author wrote
+all non-BEIR text, rewrites and labels.

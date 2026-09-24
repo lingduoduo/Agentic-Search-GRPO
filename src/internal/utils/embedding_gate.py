@@ -20,8 +20,10 @@ def search_direct_cos_min() -> float:
     return float(os.environ.get("AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN", "0.8"))
 
 
-# Provisional; replaced by the τ the multi-turn eval chooses on its dev half.
-DEFAULT_FOLLOW_UP_COS_MIN = 0.85
+# Chosen on the multi-turn eval's dev half (2026-09-24, τ grid 0.70–0.95). No
+# lower τ beat the semantic rule being off: e5 scores several topic switches as
+# high as the one follow-up that reaches the rule, so ties resolve to the top.
+DEFAULT_FOLLOW_UP_COS_MIN = 0.95
 
 
 def follow_up_cos_min() -> float:
