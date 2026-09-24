@@ -26,6 +26,7 @@ Run:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -166,3 +167,59 @@ def build_query(condition: str, conversation: Conversation, index: int) -> str:
     if condition == "regex":
         return build_retrieval_context(turn.text, _history(prior)).retrieval_query
     raise ValueError(f"unknown condition {condition!r}")
+
+
+Router = Callable[[str], str]
+Retriever = Callable[[str, str], list[str]]
+
+
+def score_retrieval(ranked: list[str], relevant: tuple[str, ...]) -> tuple[bool, float]:
+    wanted = set(relevant)
+    hit = any(doc_id in wanted for doc_id in ranked[:HIT_K])
+    rr = next(
+        (
+            1.0 / rank
+            for rank, doc_id in enumerate(ranked[:MRR_K], 1)
+            if doc_id in wanted
+        ),
+        0.0,
+    )
+    return hit, rr
+
+
+def evaluate(
+    conversations: Sequence[Conversation],
+    routers: dict[str, Router],
+    retrievers: dict[str, Retriever],
+) -> list[dict]:
+    rows: list[dict] = []
+    for conversation in conversations:
+        for index, turn in enumerate(conversation.turns):
+            for condition in CONDITIONS:
+                query = build_query(condition, conversation, index)
+                retrieval: dict[str, dict] = {}
+                if turn.route == "search":
+                    for name, retrieve in retrievers.items():
+                        hit, rr = score_retrieval(
+                            retrieve(turn.corpus, query), turn.relevant_doc_ids
+                        )
+                        retrieval[name] = {"hit5": hit, "rr10": rr}
+                rows.append(
+                    {
+                        "conversation_id": conversation.id,
+                        "turn_index": index,
+                        "relation": turn.relation,
+                        "kind": turn.kind,
+                        "gold_route": turn.route,
+                        "condition": condition,
+                        "query": query,
+                        # Read on topic-switch turns only, where the gold query is
+                        # the text itself: any difference is prior-turn text.
+                        "carried": query != turn.text,
+                        "route": {
+                            name: route(query) for name, route in routers.items()
+                        },
+                        "retrieval": retrieval,
+                    }
+                )
+    return rows

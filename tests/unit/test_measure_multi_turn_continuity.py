@@ -7,7 +7,9 @@ from examples.measure_multi_turn_continuity import (
     Conversation,
     Turn,
     build_query,
+    evaluate,
     load_conversations,
+    score_retrieval,
 )
 
 
@@ -202,3 +204,81 @@ def test_regex_false_positive_on_a_cue_word_switch():
 def test_unknown_condition_raises():
     with pytest.raises(ValueError, match="unknown condition"):
         build_query("oracle", _conv(TOKYO, PARIS), 1)
+
+
+def test_score_retrieval_hit_and_reciprocal_rank():
+    assert score_retrieval(["a", "b", "c"], ("c",)) == (True, pytest.approx(1 / 3))
+    assert score_retrieval(["a", "b", "c", "d", "e", "f"], ("f",)) == (
+        False,
+        pytest.approx(1 / 6),
+    )
+
+
+def test_score_retrieval_handles_short_and_empty_rankings():
+    assert score_retrieval([], ("a",)) == (False, 0.0)
+    assert score_retrieval(["x"], ("a",)) == (False, 0.0)
+
+
+def test_score_retrieval_ignores_ranks_past_ten():
+    ranked = [f"x{i}" for i in range(10)] + ["a"]
+    assert score_retrieval(ranked, ("a",)) == (False, 0.0)
+
+
+FAISS = Turn(
+    "what is FAISS",
+    "search",
+    "opening",
+    "what is FAISS",
+    corpus="demo",
+    relevant_doc_ids=("d1",),
+)
+FAISS_TYPES = Turn(
+    "which variants does it offer",
+    "search",
+    "follow_up",
+    "FAISS index types",
+    kind="pronoun",
+    corpus="demo",
+    relevant_doc_ids=("d2",),
+)
+
+
+def test_evaluate_rows_route_and_retrieval():
+    conv = Conversation("c", (FAISS, FAISS_TYPES))
+    routes = {"what is FAISS": "search", "FAISS index types": "search"}
+
+    def router(query):
+        return routes.get(query, "clarify")
+
+    def retriever(corpus, query):
+        return ["d2"] if "index types" in query else ["d1"]
+
+    rows = evaluate([conv], {"rules": router}, {"tfidf": retriever})
+
+    assert len(rows) == 2 * 4
+    raw = next(r for r in rows if r["turn_index"] == 1 and r["condition"] == "raw")
+    assert raw["route"] == {"rules": "clarify"}
+    assert raw["retrieval"]["tfidf"] == {"hit5": False, "rr10": 0.0}
+    assert raw["carried"] is False
+    gold = next(
+        r for r in rows if r["turn_index"] == 1 and r["condition"] == "gold_rewrite"
+    )
+    assert gold["route"] == {"rules": "search"}
+    assert gold["retrieval"]["tfidf"] == {"hit5": True, "rr10": 1.0}
+    concat = next(
+        r for r in rows if r["turn_index"] == 1 and r["condition"] == "concat"
+    )
+    assert concat["carried"] is True
+
+
+def test_evaluate_skips_retrieval_on_non_search_turns():
+    conv = Conversation("c", (TOKYO, PARIS))
+    calls = []
+
+    def retriever(corpus, query):
+        calls.append(query)
+        return []
+
+    rows = evaluate([conv], {"rules": lambda query: "tool"}, {"tfidf": retriever})
+    assert calls == []
+    assert all(r["retrieval"] == {} for r in rows)
