@@ -398,12 +398,27 @@ def choose_tau(
 def median_latency_ms(
     conversations: Sequence[Conversation], cosine, tau: float
 ) -> float:
+    """Median cost of a resolution that calls the encoder.
+
+    The reference and fragment rules decide most turns without it; including
+    those free calls would report the median as ~0 and hide the encoder's cost.
+    """
+    calls = 0
+
+    def counted(message, topic):
+        nonlocal calls
+        calls += 1
+        return cosine(message, topic)
+
     timings = []
-    for turn, history, resolve in _resolve_all(conversations, cosine, tau):
+    for turn, history, resolve in _resolve_all(conversations, counted, tau):
+        before = calls
         start = time.perf_counter()
         resolve(turn.text, history)
-        timings.append((time.perf_counter() - start) * 1000)
-    return statistics.median(timings)
+        elapsed = (time.perf_counter() - start) * 1000
+        if calls > before:
+            timings.append(elapsed)
+    return statistics.median(timings) if timings else 0.0
 
 
 def check_criteria(

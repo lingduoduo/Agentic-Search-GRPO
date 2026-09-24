@@ -659,3 +659,16 @@ def test_main_refuses_gated_run_without_the_embedder(monkeypatch, tmp_path):
                 "10",
             ]
         )
+
+
+def test_median_latency_counts_only_resolutions_that_call_the_encoder():
+    import time as _time
+
+    def slow_cosine(message, topic):
+        _time.sleep(0.02)
+        return 0.1
+
+    # PARIS and BERLIN are decided by the fragment rule without the encoder;
+    # only the Oslo switch consults it. A median over all three would be ~0.
+    conv = Conversation("c", (TOKYO, PARIS, BERLIN, OSLO_SWITCH))
+    assert median_latency_ms([conv], slow_cosine, tau=0.8) >= 15.0
