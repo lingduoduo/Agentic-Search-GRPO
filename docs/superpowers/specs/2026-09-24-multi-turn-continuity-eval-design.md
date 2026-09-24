@@ -173,9 +173,11 @@ per-turn rows; CIs from `cluster_bootstrap_ci` over its 12 conversations:
 | tfidf | 6 | 8, +0.17 [+0.00, +0.42] | 10, +0.33 [+0.08, +0.58] | 11, +0.42 [+0.17, +0.67] |
 | hybrid | 9 | 11, +0.17 [+0.00, +0.42] | 11, +0.17 [+0.00, +0.42] | 12, +0.25 [+0.00, +0.50] |
 
-- The one difference whose CI excludes zero is `concat` over `raw` on TF-IDF:
-  prepending the previous user turn recovers 4 of 12 follow-ups. That comparison
-  does not depend on the gold rewrites.
+- Of the conditions a resolver could actually produce, the one whose gain
+  excludes zero is `concat` over `raw` on TF-IDF: prepending the previous user
+  turn recovers 4 of 12 follow-ups. That comparison does not depend on the gold
+  rewrites. (`gold_rewrite` on TF-IDF also excludes zero, but it carries answer
+  terms.)
 - `regex` and `concat` are not distinguishable at n=12 (their CIs overlap, and on
   hybrid they tie at 11). On hybrid no condition's gain excludes zero.
 - Every raw follow-up miss is a follow-up whose text lacks the entity ("which
