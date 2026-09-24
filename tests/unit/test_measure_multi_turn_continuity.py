@@ -1,10 +1,16 @@
 import json
+from functools import partial
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from examples.measure_multi_turn_continuity import (
+    check_criteria,
+    choose_tau,
+    gate_accuracy,
+    median_latency_ms,
+    split_of,
     DEFAULT_DATA,
     Conversation,
     Turn,
@@ -19,7 +25,7 @@ from examples.measure_multi_turn_continuity import (
     score_retrieval,
     summarize,
 )
-from src.internal.search.context import _is_follow_up
+from src.internal.search.context import _is_follow_up, resolve_follow_up
 
 
 def _write(tmp_path: Path, conversations: list[dict]) -> Path:
@@ -481,3 +487,163 @@ def test_knn_router_refuses_to_run_when_the_encoder_cannot_predict(monkeypatch):
     monkeypatch.setattr(similarity, "predict_route", lambda query, settings=None: None)
     with pytest.raises(SystemExit, match="could not predict"):
         make_router("knn")
+
+
+def _resolvers(cosine=None, tau=0.8):
+    return {
+        "gated": partial(resolve_follow_up, cosine=cosine, tau=tau),
+        "gated_cues": partial(resolve_follow_up, cosine=None, tau=tau),
+    }
+
+
+OSLO_SWITCH = Turn(
+    "Tell me the Oslo weather forecast for the coming weekend please.",
+    "tool",
+    "topic_switch",
+    "Tell me the Oslo weather forecast for the coming weekend please.",
+)
+
+
+def test_evaluate_adds_gated_conditions_with_continuation():
+    conv = Conversation("c", (TOKYO, PARIS, OSLO_SWITCH))
+    rows = evaluate([conv], {"rules": lambda q: "tool"}, {}, _resolvers())
+    by = {(r["turn_index"], r["condition"]): r for r in rows}
+    assert by[(1, "gated")]["query"] == "weather in Tokyo\nand in Paris?"
+    assert by[(1, "gated")]["continuation"] is True
+    assert by[(2, "gated")]["query"] == OSLO_SWITCH.text
+    assert by[(2, "gated")]["carried"] is False
+    assert by[(1, "raw")]["continuation"] is None
+    assert len(rows) == 3 * 6
+
+
+def test_gate_accuracy_scores_non_opening_turns():
+    conv = Conversation("c", (TOKYO, PARIS, OSLO_SWITCH))
+    rows = evaluate([conv], {"rules": lambda q: "tool"}, {}, _resolvers())
+    assert gate_accuracy(rows, "gated") == {"mean": 1.0, "n": 2}
+
+
+def test_summarize_reports_resolver_conditions_and_corpus_slices():
+    conv = Conversation("c", (FAISS, FAISS_TYPES))
+    rows = evaluate(
+        [conv],
+        {"rules": lambda q: "search"},
+        {
+            "tfidf": lambda corpus, q: ["d2"]
+            if "FAISS" in q and "variants" in q
+            else ["d1"]
+        },
+        _resolvers(),
+    )
+    summary = summarize(rows, ["rules"], ["tfidf"], resamples=20, seed=0)
+    hit = summary["follow_up/demo"]["hit5:tfidf"]
+    assert hit["raw"]["mean"] == 0.0
+    assert hit["gated"]["mean"] == 1.0
+    assert "gated" in format_table(summary)
+
+
+def test_split_is_stable_and_roughly_balanced():
+    ids = [f"conv-{i}" for i in range(200)]
+    splits = [split_of(i) for i in ids]
+    assert splits == [split_of(i) for i in ids]
+    assert 70 <= splits.count("dev") <= 130
+
+
+def test_choose_tau_picks_the_best_threshold_and_breaks_ties_high():
+    follow = Turn(
+        "Which compounds activate the dephosphorylated form?",
+        "search",
+        "follow_up",
+        "Which compounds activate dephosphorylated AMPK?",
+        kind="pronoun",
+        corpus="demo",
+        relevant_doc_ids=("d1",),
+    )
+    switch = Turn(
+        "Explain the causes of the French revolution in detail.",
+        "chat",
+        "topic_switch",
+        "Explain the causes of the French revolution in detail.",
+    )
+    opening = Turn(
+        "AMPK activation reduces lung fibrosis.",
+        "search",
+        "opening",
+        "AMPK activation reduces lung fibrosis.",
+        corpus="demo",
+        relevant_doc_ids=("d1",),
+    )
+    convs = [Conversation("a", (opening, follow)), Conversation("b", (opening, switch))]
+    scores = {follow.text: 0.9, switch.text: 0.75}
+    tau = choose_tau(convs, lambda message, topic: scores.get(message, 0.0))
+    # Any τ in (0.75, 0.90] classifies both correctly; ties resolve to the highest.
+    assert tau == 0.9
+
+
+def test_median_latency_is_measured_in_milliseconds():
+    conv = Conversation("c", (TOKYO, PARIS, OSLO_SWITCH))
+    assert median_latency_ms([conv], lambda m, t: 0.5, tau=0.8) >= 0.0
+
+
+def test_check_criteria_reads_the_four_thresholds():
+    summary = {
+        "follow_up/scifact": {
+            "hit5:tfidf": {
+                "gated": {
+                    "mean": 0.8,
+                    "n": 10,
+                    "delta_vs_raw": {"point": 0.3, "low": 0.1, "high": 0.5},
+                },
+                "concat": {"mean": 0.9, "n": 10, "delta_vs_raw": None},
+            }
+        },
+        "topic_switch": {
+            "carry_over": {"gated": {"mean": 0.1, "n": 10, "delta_vs_raw": None}}
+        },
+    }
+    got = check_criteria(summary, [], latency_ms=12.0)
+    assert got == {
+        "gated_beats_raw": True,
+        "carry_over_at_most_0.15": True,
+        "within_one_hit_of_concat": True,
+        "latency_at_most_30ms": True,
+    }
+    summary["topic_switch"]["carry_over"]["gated"]["mean"] = 0.2
+    assert (
+        check_criteria(summary, [], latency_ms=40.0)["carry_over_at_most_0.15"] is False
+    )
+
+
+def test_main_refuses_gated_run_without_the_embedder(monkeypatch, tmp_path):
+    # Without e5, `gated` would silently equal `gated_cues`.
+    import src.internal.utils.embedding_gate as embedding_gate
+    from examples.measure_multi_turn_continuity import main
+
+    data = tmp_path / "conversations.jsonl"
+    data.write_text(
+        json.dumps(
+            {
+                "id": "c1",
+                "turns": [
+                    _tool("weather in Tokyo"),
+                    _tool("and in Paris?", "follow_up", "ellipsis", "weather in Paris"),
+                ],
+            }
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(embedding_gate, "gate_embedder", lambda: None)
+    with pytest.raises(SystemExit, match="gate embedder"):
+        main(
+            [
+                "--data",
+                str(data),
+                "--routers",
+                "rules",
+                "--retrievers",
+                "tfidf",
+                "--out",
+                str(tmp_path / "out.json"),
+                "--resamples",
+                "10",
+            ]
+        )
