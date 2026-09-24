@@ -111,17 +111,88 @@ async def test_window_strategy_never_calls_the_summarizer():
     assert summarizer.calls == 0
 
 
+class _Marker:
+    def __init__(self, marker):
+        self.marker = marker
+
+    def complete(self, prompt, **kwargs):
+        return self.marker
+
+
+class _Echo:
+    """A perfect summarizer: returns everything it was asked to summarize."""
+
+    def complete(self, prompt, **kwargs):
+        return prompt[-1]["content"]
+
+
 @pytest.mark.asyncio
 async def test_runs_are_isolated():
     conv = _small()
-    first = _Summarizer()
-    await run_strategy(conv, Strategy("summary", 4), _Answerer(), first)
+    await run_strategy(conv, Strategy("summary", 4), _Answerer(), _Marker("RUN-ONE"))
     answer = _Answerer()
-    # A fresh run starts with no stored summary: until the window first
-    # overflows there is nothing to summarize, so the first probe of a
-    # window as large as the transcript carries no summary.
-    await run_strategy(conv, Strategy("summary", 1000), answer, _Summarizer())
-    assert not any(m[0]["role"] == "system" for m in answer.sent)
+    # The echo summarizer copies its prompt -- including any prior summary --
+    # into the new one, so a leaked first-run summary would surface here.
+    await run_strategy(conv, Strategy("summary", 4), answer, _Echo())
+    sent = " ".join(m["content"] for msgs in answer.sent for m in msgs)
+    assert "Prior summary" in sent and "RUN-ONE" not in sent
+
+
+@pytest.mark.asyncio
+async def test_summary_prompt_is_summary_then_tail_then_probe():
+    conv = _small()
+    answer = _Answerer()
+    await run_strategy(conv, Strategy("summary", 4), answer, _Marker("S"))
+    facts = {f.index: f for f in conv.facts}
+    for k, msgs in enumerate(answer.sent):
+        question = facts[conv.probe_order[k]].question
+        assert msgs[0]["role"] == "system"
+        assert len(msgs) == 1 + 4 + 1  # summary, 4-message tail, probe
+        assert msgs[-1] == {"role": "user", "content": question}
+        assert sum(m["content"] == question for m in msgs) == 1
+
+
+@pytest.mark.asyncio
+async def test_lag_casualties_are_flagged_and_the_rest_reach_the_summary():
+    # A fact that leaves the window on the probe turn itself is in neither the
+    # tail nor the summary (the summary is built from earlier turns). A perfect
+    # summarizer keeps every other dropped fact.
+    conv = _small()
+    results = await run_strategy(conv, Strategy("summary", 6), _Answerer(), _Echo())
+    dropped = [r for r in results if not r.in_window]
+    assert dropped
+    for r in dropped:
+        assert r.in_summary is (not r.dropped_this_turn)
+
+
+@pytest.mark.asyncio
+async def test_summarizer_stats_count_attempts_and_advances():
+    class _Failing:
+        def complete(self, prompt, **kwargs):
+            raise TimeoutError("slow")
+
+    stats = {}
+    await run_strategy(
+        _small(), Strategy("summary", 4), _Answerer(), _Failing(), stats=stats
+    )
+    assert stats["summarizer_calls"] > 0 and stats["summarizer_advanced"] == 0
+
+    stats = {}
+    await run_strategy(
+        _small(), Strategy("summary", 4), _Answerer(), _Marker("S"), stats=stats
+    )
+    assert stats["summarizer_advanced"] == stats["summarizer_calls"] > 0
+
+
+@pytest.mark.asyncio
+async def test_rows_are_written_as_each_run_finishes(tmp_path):
+    from examples.measure_memory_strategies import append_rows
+
+    path = tmp_path / "rows.jsonl"
+    results = await run_strategy(_small(), Strategy("window", 4), _Answerer(), None)
+    append_rows(path, results)
+    append_rows(path, results)
+    assert len(path.read_text().splitlines()) == 2 * len(results)
 
 
 @pytest.mark.asyncio
@@ -165,6 +236,23 @@ def test_aggregate_splits_recall_by_window():
     assert s["recall_in_window"] == 1.0
     assert s["recall_dropped"] == 0.5
     assert s["probes"] == 3
+    assert s["summary_retention"] is None  # no summary to retain anything
+
+
+def test_aggregate_excludes_lag_casualties_from_summary_metrics():
+    from examples.measure_memory_strategies import ProbeResult
+
+    rows = [
+        ProbeResult("summary-6", 0, 0, True, False, True, 100, 0.1),
+        ProbeResult(
+            "summary-6", 0, 1, False, False, False, 90, 0.1, dropped_this_turn=True
+        ),
+    ]
+    s = aggregate(rows, {})["summary-6"]
+    assert s["lag_casualties"] == 1
+    assert s["summary_retention"] == 1.0
+    assert s["recall_dropped_excl_lag"] == 1.0
+    assert s["recall_dropped"] == 0.5
 
 
 def test_no_fact_value_is_a_substring_of_another():

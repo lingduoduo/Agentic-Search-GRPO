@@ -15,7 +15,14 @@ one turn.
 
 The answer prompt is what plain chat sends -- history plus the user message, no
 system prompt of its own -- so a summary arrives as the leading system message,
-exactly as production builds it.
+exactly as production builds it. Sampling is not production's: answers use
+temperature 0 and 64 tokens (plain chat uses 0.7 and 512), trading realism for
+repeatability of short factual answers.
+
+A fact that leaves the window on the probe turn itself is in neither the tail
+nor the summary -- production's one-turn lag. Those rows are flagged
+``dropped_this_turn`` and kept out of the summary-retention figures, since no
+summarizer could have kept them.
 
 Run (needs Ollama with the model pulled; ~1-1.5 h for the full grid):
 
@@ -23,7 +30,7 @@ Run (needs Ollama with the model pulled; ~1-1.5 h for the full grid):
         --llm_model llama3.2:3b --out data/eval/memory_strategies.json
 
 The same local model summarizes and answers. Production summarizes with the
-configured remote LLM, so summary quality here is a lower bound.
+configured remote LLM, so summary quality is a confound, not a bound.
 """
 
 from __future__ import annotations
@@ -240,6 +247,8 @@ class ProbeResult:
     prompt_tokens: int | None
     latency_s: float
     answer: str = ""
+    # Left the window on this very turn: unreachable by any summary (one-turn lag).
+    dropped_this_turn: bool = False
 
 
 # (messages) -> (answer text, prompt tokens, seconds)
@@ -310,6 +319,8 @@ async def run_strategy(
                 fact_index=fact_index,
                 correct=score(answer, fact.value),
                 in_window=fact_index >= before - keep,
+                # The previous turn loaded `before - 2` messages.
+                dropped_this_turn=before - 2 - keep <= fact_index < before - keep,
                 in_summary=bool(working.summary) and score(working.summary, fact.value),
                 prompt_tokens=prompt_tokens,
                 latency_s=latency,
@@ -328,6 +339,7 @@ def aggregate(rows: list[ProbeResult], stats: dict[str, dict]) -> dict:
     for name in dict.fromkeys(r.strategy for r in rows):
         mine = [r for r in rows if r.strategy == name]
         dropped = [r for r in mine if not r.in_window]
+        reachable = [r for r in dropped if not r.dropped_this_turn]
         tokens = [r.prompt_tokens for r in mine if r.prompt_tokens is not None]
         report[name] = {
             "probes": len(mine),
@@ -335,10 +347,12 @@ def aggregate(rows: list[ProbeResult], stats: dict[str, dict]) -> dict:
             "recall_in_window": _share([r for r in mine if r.in_window]),
             "recall_dropped": _share(dropped),
             "dropped_probes": len(dropped),
-            # Of the facts that had left the window, how many the summary kept.
+            "lag_casualties": len(dropped) - len(reachable),
+            "recall_dropped_excl_lag": _share(reachable),
+            # Of the dropped facts a summary could have kept, how many it did.
             "summary_retention": (
-                round(sum(r.in_summary for r in dropped) / len(dropped), 3)
-                if dropped
+                round(sum(r.in_summary for r in reachable) / len(reachable), 3)
+                if reachable and name.startswith("summary")
                 else None
             ),
             "prompt_tokens_mean": round(statistics.mean(tokens)) if tokens else None,
@@ -350,6 +364,13 @@ def aggregate(rows: list[ProbeResult], stats: dict[str, dict]) -> dict:
             **stats.get(name, {}),
         }
     return report
+
+
+def append_rows(path: Path, results: list[ProbeResult]) -> None:
+    """Append one run's rows as JSON lines, so a crash loses at most one run."""
+    with path.open("a") as handle:
+        for result in results:
+            handle.write(json.dumps(asdict(result)) + "\n")
 
 
 def _ollama_answer(base: str, model: str) -> AnswerFn:
@@ -409,6 +430,8 @@ async def _main(args: argparse.Namespace) -> dict:
                     stats=stats.setdefault(strategy.name, {}),
                 )
                 rows += results
+                if args.rows:
+                    append_rows(args.rows, results)
                 print(
                     f"conv {conv.id} {strategy.name}: "
                     f"{sum(r.correct for r in results)}/{len(results)}",
@@ -416,14 +439,22 @@ async def _main(args: argparse.Namespace) -> dict:
                 )
     finally:
         summarizer.close()
-    for entry in stats.values():
+    for name, entry in stats.items():
         entry["summarizer_seconds"] = round(entry["summarizer_seconds"], 1)
+        calls, advanced = entry["summarizer_calls"], entry["summarizer_advanced"]
+        if calls and advanced / calls < 0.9:
+            # compress_session swallows summarizer errors, so a run of timeouts
+            # quietly turns summary-N into window-N.
+            print(f"WARNING {name}: only {advanced}/{calls} compressions saved")
     return {
         "config": {
             "model": args.llm_model,
             "conversations": args.conversations,
             "windows": args.windows,
             "seed": args.seed,
+            "pairs": DEFAULT_PAIRS,
+            "fact_pairs": list(DEFAULT_FACT_PAIRS),
+            "answer_sampling": {"temperature": 0.0, "max_tokens": 64},
         },
         "summary": aggregate(rows, stats),
         "rows": [asdict(r) for r in rows],
@@ -438,7 +469,16 @@ def main() -> None:
     parser.add_argument("--llm_base", default="http://localhost:11434/v1")
     parser.add_argument("--llm_model", default="llama3.2:3b")
     parser.add_argument("--out", type=Path)
+    parser.add_argument(
+        "--rows", type=Path, help="append rows here as each run finishes (JSONL)"
+    )
     args = parser.parse_args()
+    if any(n % 2 for n in args.windows):
+        # A fact and its acknowledgement are adjacent; an odd window can split
+        # them, leaving the value in the tail while the fact counts as dropped.
+        parser.error("--windows must be even")
+    if args.out and not args.rows:
+        args.rows = args.out.with_suffix(".rows.jsonl")
     report = asyncio.run(_main(args))
     print(json.dumps(report["summary"], indent=2))
     if args.out:
