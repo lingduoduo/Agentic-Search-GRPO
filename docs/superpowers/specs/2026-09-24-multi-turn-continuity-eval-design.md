@@ -139,3 +139,84 @@ confirm it goes red.
   spot-check comes with the fix.
 - The other gaps the investigation found (duplicated user turn on clarify,
   stale `[D1]` labels in history, per-surface sessions). Listed for the fix spec.
+
+## Results (2026-09-24)
+
+Run: `python -m examples.measure_multi_turn_continuity` (both routers, both
+retrievers, 2,000 resamples). 40 conversations, 109 user turns: 40 openings, 53
+follow-ups, 16 topic switches. Per-turn rows: `data/eval/multi_turn_continuity.json`.
+Brackets are 95% CIs on the difference from `raw`, resampling conversations.
+
+### Retrieval: follow-ups lose hits only where retrieval is hard
+
+The demo corpus is saturated: with 20 documents a top-5 hit is nearly free, and
+every condition scores 10–11 of 11 demo follow-ups. That was a design flaw in this
+spec, and it dilutes the pooled numbers (follow-up Hit@5, TF-IDF: raw 0.74 →
+`gold_rewrite` 0.91, +0.17 [+0.00, +0.39]). SciFact (5,183 docs) carries the
+signal. Split computed from the per-turn rows:
+
+| SciFact follow-ups, Hit@5 (n=12) | raw | regex | concat | gold_rewrite |
+|---|---|---|---|---|
+| tfidf | 6 | 8 | 10 | 11 |
+| hybrid | 9 | 11 | 11 | 12 |
+
+- On TF-IDF an unresolved follow-up loses about half its hits (6 vs 11 of 12). The
+  hybrid retriever's dense leg absorbs part of the loss (9 of 12) but not all.
+- `concat` recovers most of the gap (10 of 12); `regex` recovers less (8 of 12)
+  because it only fires on cue words, and 7 of the 12 SciFact follow-ups carry none.
+- Every raw miss is a follow-up whose text lacks the entity ("which mutation makes
+  HIV resistant to **it**?", "does **it** also cause atherosclerotic plaques?").
+- n=12 is small: the direction is consistent across both retrievers, but the
+  CIs are wide.
+
+### Topic switches: `concat` always carries the old topic
+
+- Carry-over: `concat` 1.00 by construction; `regex` 0.44 [+0.19, +0.69], exactly
+  the 7 of 16 switches that open with a cue word ("Also, …", "How about …", "But …").
+- The damage this does to retrieval is not measured: all 5 search switches land in
+  the saturated demo corpus (every condition 5 of 5).
+
+### Routing: the no-LLM router cannot route standalone queries, so continuity is not its bottleneck
+
+| route accuracy | raw | regex | concat | gold_rewrite |
+|---|---|---|---|---|
+| openings, `rules` | 0.12 | 0.12 | 0.12 | 0.12 |
+| openings, `knn` | 0.17 | 0.17 | 0.17 | 0.17 |
+| follow-ups, `rules` | 0.23 | 0.25 | 0.23 | 0.25 (+0.02 [−0.08, +0.14]) |
+| follow-ups, `knn` | 0.30 | 0.30 | 0.32 | 0.32 (+0.02 [+0.00, +0.06]) |
+
+- Even the hand-written standalone query is routed correctly at most a third of the
+  time, so resolving references cannot move routing: `gold_rewrite` gains +0.02.
+  Follow-ups get the same route as their `gold_rewrite` in 28/53 (`rules`) and
+  36/53 (`knn`) cases under `raw`, and `regex`/`concat` do not change that.
+- Probing `recognize_intent` directly shows why:
+  - the rules know action tools (tickets, email, scheduling), not the public-data
+    tools: "What's the weather in Tokyo?", "Convert 100 USD to JPY." and "What is
+    Tesla's stock price?" all return clarify;
+  - any question ending in "?" routes to chat, so "What is BM25?" → chat;
+  - the canonical kNN examples label current-info lookups ("what is the queue depth
+    right now") `search`, while only the TOOL route runs `ToolAgentLoop`, which is
+    where the weather, currency and stock tools live. The taxonomy and the serving
+    path disagree about which route owns "look up a live value".
+- These numbers are the no-LLM cascade. In production the 20–52 clarify decisions
+  per condition would go to the LLM classifier, which this eval deliberately leaves
+  out; the routing result is about the deterministic stages only.
+
+### What this decides for the fix spec
+
+1. **Resolve follow-ups before retrieval, and make it switch-aware.** `concat`
+   shows most of the retrieval headroom is cheap to win, but it drags the old topic
+   into every switch. The fix needs a continuation/switch decision, not blind
+   concatenation; `regex`'s cue-word test is too narrow on follow-ups (7 of 12
+   SciFact follow-ups uncued) and too broad on switches (7 of 16 cued switches
+   misfire).
+2. **Routing continuity is not the next routing problem; coverage is.** Carrying
+   the previous route would mostly propagate a wrong route. Public-data tool
+   queries and "?"-terminated lookups need rules or canonical examples first, and
+   the search-vs-tool ownership of live lookups needs a decision.
+3. **Before measuring the fix, replace the demo corpus in this eval** (or drop it
+   from retrieval scoring) and add SciFact topic switches, so switch damage and a
+   rewriter's gain are both measurable.
+
+Caveats: one author wrote every conversation, route label and demo gold rewrite
+(SciFact text and qrels are BEIR's). Route accuracy excludes the LLM classifier.
