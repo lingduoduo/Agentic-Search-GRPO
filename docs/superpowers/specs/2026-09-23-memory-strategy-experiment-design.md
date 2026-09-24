@@ -57,6 +57,9 @@ builds it. The same model is the summarizer (production uses the configured
 remote LLM; the local 3B model is the only one that runs here), so summary
 quality is a stated confound.
 
+**Sampling** differs from production on purpose: answers use temperature 0 and
+64 tokens (plain chat uses 0.7 and 512), for repeatable short factual answers.
+
 ## Metrics, per strategy
 
 - recall accuracy, overall and split by whether the fact was inside the window
@@ -65,6 +68,32 @@ quality is a stated confound.
   above 4,096 flagged as `context_overflow`;
 - summarizer calls and total summarizer seconds;
 - answer latency.
+
+- **Lag casualties**: a fact that leaves the window on the probe turn itself is
+  in neither the tail nor the summary, so no summarizer could have kept it.
+  Those rows are flagged `dropped_this_turn`, counted separately, and excluded
+  from `summary_retention` and `recall_dropped_excl_lag`.
+- Summarizer `advanced/calls` is reported per summary strategy; a low ratio
+  means summary-N was measuring summarizer timeouts (`compress_session`
+  swallows them), and the run warns.
+- Rows are appended per run to a JSONL file, so a crash loses one run, not all.
+
+## What the results can and cannot support
+
+In-window vs dropped is decided by fact position and probe order, identically
+for window-N and summary-N on the same conversation. So:
+
+- **Can:** paired window-N vs summary-N on the same dropped (conversation,
+  fact) rows at equal N, with lag casualties separate and uncertainty clustered
+  by conversation; summary retention vs recall given retention (summarizer
+  dropped it vs model ignored it); summarizer cost.
+- **Cannot:** in-window vs dropped as a clean effect (confounded with
+  position); cross-N comparisons of dropped recall (the dropped mix differs by
+  N); transfer to production's remote summarizer or sampling; small differences
+  without repeated runs (Ollama at temperature 0 gave 4/4 then 2/4 on the same
+  conversation); token or latency comparisons until Ollama's `prompt_tokens`
+  is shown to count the whole prompt (it may report post-truncation or
+  uncached tokens).
 
 ## Deliverables
 
