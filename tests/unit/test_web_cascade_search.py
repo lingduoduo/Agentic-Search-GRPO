@@ -179,3 +179,33 @@ def test_serpapi_failure_with_stale_entry_needs_no_browser(monkeypatch, serp_cal
     assert calls == ["q", "q"]
     assert pages[0].url == "https://x"
     assert pages[0].metadata["stale"] is True
+
+
+def test_a_stale_browser_answer_is_served_but_counts_as_a_breaker_failure():
+    """The browser leg answered from stale rows because its live call failed:
+    the pages are still useful, but recording a success would reset the
+    breaker (or close it from half-open) while the browser server is down."""
+    from src.internal.resilience.circuit_breaker import get_breaker
+
+    async def fake_serp(query, **kw):
+        return [_err()]
+
+    async def stale_browser(query, **kw):
+        return [
+            SearchPage(
+                title="t", summary="s", url="http://b/1", metadata={"stale": True}
+            )
+        ]
+
+    breaker = get_breaker("browser_search")
+    breaker.record_failure()  # one earlier real failure
+    fn = make_web_cascade_search(
+        browser_search_url="http://browser/retrieve",
+        serpapi_fn=fake_serp,
+        browser_fn=stale_browser,
+    )
+
+    pages = asyncio.run(fn("q"))
+
+    assert [p.url for p in pages] == ["http://b/1"]
+    assert breaker.snapshot().consecutive_failures == 2

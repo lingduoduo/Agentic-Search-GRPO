@@ -70,6 +70,13 @@ the same key, fresh hits, and the stale fallback.
   wrapper around `search_tool`.
 - The circuit breaker is still consulted inside `serpapi_search`.
 
+**Breaker accounting (ruling made during review).** The cascade's browser
+leg records a circuit-breaker **failure** when every page it got back is an
+error page or a stale answer. A stale answer means the live call failed.
+Recording it as a success would reset the breaker, or close it from
+half-open, while the browser server is down. The stale pages are still
+returned.
+
 ### 5. Retrieval rows fall back to stale
 
 In `SearchClient.retrieve`, when `_post_json` raises:

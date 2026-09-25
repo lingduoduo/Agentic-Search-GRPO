@@ -698,8 +698,14 @@ def make_web_cascade_search(
                         )
                     )
                 else:
-                    # search_tool reports HTTP failures as error pages, not raises.
-                    if browser_pages and all(p.error for p in browser_pages):
+                    # search_tool reports HTTP failures as error pages, not raises,
+                    # and answers a failed live call from stale cached rows. Both
+                    # mean the browser server did not answer: a success here
+                    # would reset (or close) the breaker during an outage.
+                    if browser_pages and all(
+                        p.error or (p.metadata or {}).get("stale")
+                        for p in browser_pages
+                    ):
                         breaker.record_failure()
                     else:
                         breaker.record_success()
