@@ -52,6 +52,10 @@ class ToolView(BaseModel):
     # one. That distinction is the usual answer to "why did the agent ignore it".
     agent_callable: bool = True
     user_scoped: bool = False
+    effect: str = "unspecified"
+    result_kind: str | None = None
+    citeable: bool = False
+    retries_internally: bool = False
 
 
 class OpenAPIRegisterRequest(BaseModel):

@@ -12,6 +12,8 @@ from .base import ToolEffect as ToolEffect
 from .base import FailureCategory as FailureCategory
 from .base import ToolFailure as ToolFailure
 from .base import ToolErrorText as ToolErrorText
+from .base import ResultKind as ResultKind
+from .base import InvalidToolInput as InvalidToolInput
 from .parsers import FunctionCall as FunctionCall
 from .parsers import HermesToolParser as HermesToolParser
 from .parsers import JSONToolParser as JSONToolParser

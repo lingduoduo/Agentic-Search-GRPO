@@ -41,7 +41,15 @@ from typing import (
 from uuid import UUID
 
 from .api import ApiToolRegistry, ApiToolNotFoundError
-from .base import FailureCategory, FunctionTool, Tool, ToolEffect, ToolFailure
+from .base import (
+    FailureCategory,
+    FunctionTool,
+    InvalidToolInput,
+    ResultKind,
+    Tool,
+    ToolEffect,
+    ToolFailure,
+)
 from .validation import validate_arguments
 
 if TYPE_CHECKING:
@@ -123,13 +131,47 @@ class ToolInvocation:
     failure: ToolFailure | None
 
 
+def validate_tool_contract(tool: Tool, *, source: str) -> list[str]:
+    """The ways *tool* breaks the standard tool contract (empty = conforms)."""
+    problems: list[str] = []
+    if tool.result_kind is None:
+        problems.append("result_kind must be declared")
+    if tool.effect is ToolEffect.UNSPECIFIED and source != "mcp":
+        problems.append(
+            "effect must be declared (UNSPECIFIED is only for source='mcp')"
+        )
+    if tool.citeable and tool.result_kind is not ResultKind.DOCUMENTS:
+        problems.append("citeable tools must declare result_kind DOCUMENTS")
+    return problems
+
+
+_INPUT_STATUSES = frozenset({400, 404, 422})
+
+
 def _failure_from_exception(exc: Exception) -> ToolFailure:
-    transient = isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError))
+    if isinstance(exc, InvalidToolInput):
+        return ToolFailure(FailureCategory.INVALID_INPUT, str(exc))
     try:
         import aiohttp
-
-        transient = transient or isinstance(exc, aiohttp.ClientError)
     except ImportError:  # pragma: no cover - aiohttp is a declared dependency
+        aiohttp = None
+    if aiohttp is not None and isinstance(exc, aiohttp.ClientResponseError):
+        status = exc.status
+        if status in _INPUT_STATUSES:
+            category = FailureCategory.INVALID_INPUT
+        elif status == 429 or status >= 500:
+            category = FailureCategory.TRANSIENT
+        else:
+            category = FailureCategory.PERMANENT
+        return ToolFailure(category, type(exc).__name__)
+    transient = isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError))
+    if aiohttp is not None:
+        transient = transient or isinstance(exc, aiohttp.ClientError)
+    try:
+        import httpx
+
+        transient = transient or isinstance(exc, httpx.TransportError)
+    except ImportError:
         pass
     category = FailureCategory.TRANSIENT if transient else FailureCategory.UNKNOWN
     return ToolFailure(category, type(exc).__name__)
@@ -138,9 +180,10 @@ def _failure_from_exception(exc: Exception) -> ToolFailure:
 class ToolRegistry:
     """Singleton registry for all tools exposed via MCP and the REST API."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, strict: bool = False) -> None:
         self._entries: dict[str, ToolEntry] = {}
         self._api_registry = ApiToolRegistry()
+        self._strict = strict
 
     # ------------------------------------------------------------------
     # Registration
@@ -156,6 +199,10 @@ class ToolRegistry:
         user_scoped: bool = False,
     ) -> None:
         """Add a tool to the registry (replaces any existing tool with the same name)."""
+        if self._strict:
+            problems = validate_tool_contract(tool, source=source)
+            if problems:
+                raise ValueError(f"tool {tool.name}: " + "; ".join(problems))
         self._entries[tool.name] = ToolEntry(
             tool=tool,
             source=source,
@@ -175,6 +222,8 @@ class ToolRegistry:
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
         stopping: bool = False,
+        result_kind: ResultKind | None = None,
+        retries_internally: bool = False,
     ) -> Any:
         """Decorator that registers a Python function as a tool.
 
@@ -200,6 +249,8 @@ class ToolRegistry:
                 effect=effect,
                 citeable=citeable,
                 stopping=stopping,
+                result_kind=result_kind,
+                retries_internally=retries_internally,
             )
             self.register(t, source="function")
             return (
@@ -378,10 +429,8 @@ class ToolRegistry:
     # Summary for the REST API
     # ------------------------------------------------------------------
 
-    def tool_summary(self, name: str) -> dict[str, Any] | None:
-        entry = self._entries.get(name)
-        if not entry:
-            return None
+    @staticmethod
+    def _summary(entry: ToolEntry) -> dict[str, Any]:
         t = entry.tool
         return {
             "name": t.name,
@@ -391,21 +440,20 @@ class ToolRegistry:
             "provider_id": entry.provider_id,
             "agent_callable": entry.agent_callable,
             "user_scoped": entry.user_scoped,
+            "effect": t.effect.value,
+            "result_kind": t.result_kind.value if t.result_kind is not None else None,
+            "citeable": t.citeable,
+            "retries_internally": t.retries_internally,
         }
 
+    def tool_summary(self, name: str) -> dict[str, Any] | None:
+        entry = self._entries.get(name)
+        if not entry:
+            return None
+        return self._summary(entry)
+
     def all_summaries(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": e.tool.name,
-                "description": e.tool.schema.description,
-                "parameters": e.tool.schema.parameters,
-                "source": e.source,
-                "provider_id": e.provider_id,
-                "agent_callable": e.agent_callable,
-                "user_scoped": e.user_scoped,
-            }
-            for e in self._entries.values()
-        ]
+        return [self._summary(e) for e in self._entries.values()]
 
 
 # ---------------------------------------------------------------------------
@@ -421,10 +469,21 @@ def tool(
     name: str | None = None,
     description: str = "",
     parameters: dict[str, Any] | None = None,
+    effect: ToolEffect = ToolEffect.UNSPECIFIED,
+    citeable: bool = False,
+    result_kind: ResultKind | None = None,
+    retries_internally: bool = False,
 ) -> Any:
     """Module-level shorthand for ``tool_registry.tool(...)``."""
     return tool_registry.tool(
-        fn, name=name, description=description, parameters=parameters
+        fn,
+        name=name,
+        description=description,
+        parameters=parameters,
+        effect=effect,
+        citeable=citeable,
+        result_kind=result_kind,
+        retries_internally=retries_internally,
     )
 
 
@@ -434,4 +493,5 @@ __all__ = [
     "ToolInvocation",
     "tool_registry",
     "tool",
+    "validate_tool_contract",
 ]
