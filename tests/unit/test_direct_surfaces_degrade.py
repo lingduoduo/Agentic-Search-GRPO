@@ -254,3 +254,35 @@ def test_chat_other_errors_keep_error(monkeypatch, stream):
         assert resp.json()["answer"] == ""
         assert resp.json()["error"] == "bad input format"
         assert resp.json()["degraded"] is None
+
+
+PLAIN_RUNNER = "src.internal.servers.web.plain_chat_runner._run_plain_chat"
+
+
+def test_chat_stream_through_the_real_wrapper_streams_tokens(monkeypatch):
+    """The wrapper must forward on_token; patching the wrapper itself hid that
+    every real streaming /chat request failed with a TypeError."""
+
+    async def runner(message, *, manager, tokenizer, history, on_token=None, **kw):
+        for piece in ("hel", "lo"):
+            await on_token(piece)
+        return "hello"
+
+    monkeypatch.setattr(PLAIN_RUNNER, runner)
+    app, _store = _chat_app()
+
+    events = _events(_send_chat(app, stream=True).text)
+
+    assert [e["type"] for e in events] == ["token", "token", "answer", "done"]
+    assert events[2]["text"] == "hello"
+
+
+def test_chat_stream_degrades_through_the_real_wrapper(monkeypatch):
+    monkeypatch.setattr(PLAIN_RUNNER, _unavailable)
+    app, store = _chat_app()
+
+    events = _events(_send_chat(app, stream=True).text)
+
+    assert [e["type"] for e in events] == ["answer", "done"]
+    assert events[1]["degraded"] == "model_unavailable"
+    assert _roles(store, events[1]["session_id"]) == ["user"]

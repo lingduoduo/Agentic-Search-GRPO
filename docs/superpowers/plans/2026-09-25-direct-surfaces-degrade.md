@@ -461,3 +461,16 @@ Stream (`_gen`), before `except Exception`:
 - [ ] Add `store.add_chat_message(session_id, role="assistant", content=CHAT_MODEL_UNAVAILABLE_MESSAGE)` to the chat non-stream arm; `test_chat_degrades_with_unavailable_message` must go red. Restore, clear `__pycache__`.
 - [ ] Replace `SearchFilters(access_acl=capabilities.access_acl)` in `_search_only_answer` with `SearchFilters()`; the ACL tests must go red. Restore, clear `__pycache__`.
 - [ ] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider`, `ruff check . && ruff format --check .`, `git diff --check origin/main...HEAD`.
+
+## Execution note: streaming /chat wrapper (added during review)
+
+**The bug.** `chat_backend._run_plain_chat` accepted `on_turn` but not
+`on_token`. The SSE branch passes `on_token=`, so **every real streaming
+`/chat` request failed with a `TypeError`**, which surfaced as an SSE
+`error`. That made the new streaming degrade arm unreachable. Existing tests
+monkeypatched the wrapper itself, so they never exercised it.
+
+**The fix, folded into this PR because the spec's streaming behavior depends
+on it.** The wrapper now forwards `on_token`. Two tests go through the real
+wrapper by patching `plain_chat_runner._run_plain_chat`: one for tokens, and
+one for the degrade path. Both were RED before the fix and GREEN after it.

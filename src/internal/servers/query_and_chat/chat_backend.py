@@ -53,6 +53,7 @@ async def _run_plain_chat(
     tokenizer,
     history: list,
     on_turn=None,
+    on_token=None,
 ) -> str:
     """Delegate to the plain-chat runner.
 
@@ -74,6 +75,7 @@ async def _run_plain_chat(
         tokenizer=tokenizer,
         history=history,
         on_turn=on_turn,
+        on_token=on_token,
     )
 
 
