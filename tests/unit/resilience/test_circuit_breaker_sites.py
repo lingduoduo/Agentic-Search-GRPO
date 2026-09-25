@@ -95,3 +95,64 @@ def test_serpapi_missing_key_never_touches_the_breaker(monkeypatch):
     pages = asyncio.run(search.serpapi_search("q"))
     assert "required" in pages[0].error
     assert breaker_snapshots() == []
+
+
+# --- browser_search ----------------------------------------------------------
+
+
+def _cascade(browser_outcome):
+    from src.internal.tools.search import SearchPage, make_web_cascade_search
+
+    calls = []
+
+    async def fake_serp(query, **kw):
+        return [SearchPage(error="serp down")]
+
+    async def fake_browser(query, **kw):
+        calls.append(query)
+        if isinstance(browser_outcome, BaseException):
+            raise browser_outcome
+        return browser_outcome
+
+    fn = make_web_cascade_search(
+        browser_search_url="http://browser/retrieve",
+        serpapi_fn=fake_serp,
+        browser_fn=fake_browser,
+    )
+    return fn, calls
+
+
+def test_browser_open_breaker_skips_the_call():
+    fn, calls = _cascade(RuntimeError("connection refused"))
+    with threshold(2):
+        for _ in range(2):
+            asyncio.run(fn("q"))
+        pages = asyncio.run(fn("q"))
+    assert len(calls) == 2
+    errors = [p.error for p in pages]
+    assert "serp down" in errors
+    assert (
+        "Browser search is temporarily skipped after repeated failures (circuit open)."
+        in errors
+    )
+
+
+def test_browser_all_error_pages_count_as_failure():
+    from src.internal.tools.search import SearchPage
+
+    fn, _ = _cascade([SearchPage(error="503")])
+    with threshold(2):
+        for _ in range(2):
+            asyncio.run(fn("q"))
+    assert get_breaker("browser_search").snapshot().state == "open"
+
+
+def test_browser_empty_result_is_a_success():
+    fn, calls = _cascade([])
+    get_breaker("browser_search").record_failure()
+    with threshold(2):
+        for _ in range(3):
+            asyncio.run(fn("q"))
+    assert len(calls) == 3
+    snap = get_breaker("browser_search").snapshot()
+    assert (snap.state, snap.consecutive_failures) == ("closed", 0)
