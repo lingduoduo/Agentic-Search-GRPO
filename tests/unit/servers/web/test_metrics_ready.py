@@ -184,3 +184,27 @@ def test_ready_passes_the_route_auth_audit(tmp_path, monkeypatch):
     # `with` runs the lifespan, and the lifespan runs check_router_auth.
     with TestClient(_ready_app(tmp_path)) as client:
         assert client.get("/ready").status_code == 200
+
+
+def test_ready_503_when_store_ping_hangs_past_the_probe_timeout(tmp_path, monkeypatch):
+    # A long write holding the store lock must not hang the probe.
+    import threading
+
+    _stub_retrieval(monkeypatch, _ok)
+    store = AgenticSearchStore(tmp_path / "s.sqlite3")
+    release = threading.Event()
+    monkeypatch.setattr(store, "ping", lambda: release.wait(5))
+    policies = load_timeout_policies(
+        {}, overrides={"readiness": {"probe_timeout_seconds": 0.2}}
+    )
+    try:
+        with use_timeout_policies(policies):
+            response = TestClient(_ready_app(tmp_path, store=store)).get("/ready")
+    finally:
+        release.set()
+    assert response.status_code == 503
+    assert response.json()["checks"]["store"] == {
+        "ok": False,
+        "error": "TimeoutError",
+    }
+    store.close()

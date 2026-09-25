@@ -39,9 +39,11 @@ def _failed(error: str) -> Check:
 
 
 async def _check_store(db: AgenticSearchStore) -> Check:
+    timeout = get_timeout_policies().readiness.probe_timeout_seconds
     try:
-        # A worker thread: a request thread may hold the store lock.
-        await asyncio.to_thread(db.ping)
+        # A worker thread, bounded: a request thread may hold the store lock for
+        # a long write, and a probe that hangs is worse than one that says no.
+        await asyncio.wait_for(asyncio.to_thread(db.ping), timeout)
     except Exception as exc:
         return _failed(type(exc).__name__)
     return _passed()

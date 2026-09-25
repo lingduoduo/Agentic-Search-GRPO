@@ -174,4 +174,4 @@ behaviour change).
 
 | key | default | bounds |
 |---|---|---|
-| `probe_timeout_seconds` | 2.0 | `GET /ready`'s probe of the retrieval server's `/health` |
+| `probe_timeout_seconds` | 2.0 | `GET /ready`'s store ping and its probe of the retrieval server's `/health`, each (they run concurrently) |

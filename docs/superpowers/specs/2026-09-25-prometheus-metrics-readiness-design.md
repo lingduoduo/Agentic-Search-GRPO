@@ -97,7 +97,7 @@ two checks:
 
 | Check | Pass condition |
 |---|---|
-| `store` | `db.ping()`, a new public `AgenticSearchStore` method running `SELECT 1`, returns without raising |
+| `store` | `db.ping()`, a new public `AgenticSearchStore` method running `SELECT 1`, returns without raising within `readiness.probe_timeout_seconds` (a long write holding the store lock must not hang the probe) |
 | `retrieval` | `GET <retrieval base>/health` returns 2xx within `readiness.probe_timeout_seconds`. The base is `settings.search_url` with its path replaced by `/health`, e.g. `http://localhost:8001/retrieve` becomes `http://localhost:8001/health`. |
 
 - **Status:** 200 if every check passes, otherwise 503. The body is
@@ -110,7 +110,7 @@ two checks:
 
   ```toml
   [readiness]
-  probe_timeout_seconds = 2.0     # /ready's retrieval /health probe
+  probe_timeout_seconds = 2.0     # /ready's store ping and retrieval /health probe, each
   ```
 
   This adds a `ReadinessPolicy` dataclass and a `readiness` field on
