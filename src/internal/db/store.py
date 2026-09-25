@@ -106,13 +106,30 @@ def _synchronized(cls):
     ~0.45ms at a 120-turn transcript, so serializing costs nothing against a
     request budget -- and the default DB path is ``:memory:``, where per-thread
     connections would hand every thread its own empty database.
+
+    **A method that raises is rolled back** at the outermost call, so a failed
+    write can never be published by a later commit.
     """
 
     def wrap(method):
         @functools.wraps(method)
         def guarded(self, *args, **kwargs):
             with self._lock:
-                return method(self, *args, **kwargs)
+                self._call_depth += 1
+                try:
+                    return method(self, *args, **kwargs)
+                except BaseException:
+                    # A method is the transaction unit (see above). If it
+                    # raises before commit(), sqlite3 leaves its implicit
+                    # transaction open, and the next method's commit() would
+                    # publish the half-done write. Only the outermost call
+                    # decides: an inner failure an outer method catches is
+                    # still the outer method's transaction.
+                    if self._call_depth == 1 and self._conn.in_transaction:
+                        self._conn.rollback()
+                    raise
+                finally:
+                    self._call_depth -= 1
 
         return guarded
 
@@ -144,6 +161,7 @@ class AgenticSearchStore:
         # Reentrant: public methods call other public methods, and a plain Lock
         # would deadlock on the second acquire rather than fail visibly.
         self._lock = threading.RLock()
+        self._call_depth = 0
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._configure_connection()
