@@ -37,10 +37,6 @@ USER_AGENT = "AgenticSearch/1.0 (+https://github.com/linghypshen/Agentic-Search)
 # wastes the turn. Measured need: web.archive.org answers ~2 of 6 identical
 # requests with 503, independent of User-Agent and query parameters.
 _RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
-# No retry *starts* after this much wall time. The per-call timeout is a
-# parameter, not a constant -- search_nearby_places passes a much longer
-# Overpass budget -- so an attempt cap alone would let one dead host cost three
-# full timeouts inside an agent turn.
 
 # Upper bound on any single document body handed back to the model. Abstracts
 # and article intros are otherwise long enough to crowd out the rollout budget.
@@ -142,6 +138,10 @@ async def _fetch(
 
         if attempt + 1 >= attempts:
             break
+        # No retry *starts* after this much wall time. The per-call timeout is a
+        # parameter, not a constant -- search_nearby_places passes a much longer
+        # Overpass budget -- so an attempt cap alone would let one dead host cost three
+        # full timeouts inside an agent turn.
         if time.monotonic() - started >= policy.retry_budget_seconds:
             break
         backoff = policy.backoff_seconds

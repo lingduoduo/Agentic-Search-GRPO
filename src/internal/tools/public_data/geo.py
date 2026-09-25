@@ -284,6 +284,7 @@ async def _search_nearby_places(
     lon = float(longitude)
     radius = max(1, min(int(radius_meters), 10000))
     limit = max(1, min(int(limit), 50))
+    # Overpass queries are slow; they get their own budget.
     policy = get_timeout_policies().tools.public_data
 
     # Anchored so "cafe" matches amenity=cafe and not every value containing
