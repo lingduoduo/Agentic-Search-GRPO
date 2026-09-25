@@ -29,8 +29,6 @@ FAVOR_RECENT_DECAY_MULTIPLIER: float = 2.0
 CONTEXT_CHUNKS_ABOVE: int = int(os.environ.get("CONTEXT_CHUNKS_ABOVE", "1"))
 CONTEXT_CHUNKS_BELOW: int = int(os.environ.get("CONTEXT_CHUNKS_BELOW", "1"))
 
-LLM_SOCKET_READ_TIMEOUT: int = int(os.environ.get("LLM_SOCKET_READ_TIMEOUT", "60"))
-
 # Weighting between vector and keyword search; 1 = pure vector, 0 = pure keyword.
 HYBRID_ALPHA: float = max(0, min(1, float(os.environ.get("HYBRID_ALPHA", "0.5"))))
 
