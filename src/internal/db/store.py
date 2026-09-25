@@ -125,8 +125,13 @@ def _synchronized(cls):
                     # publish the half-done write. Only the outermost call
                     # decides: an inner failure an outer method catches is
                     # still the outer method's transaction.
-                    if self._call_depth == 1 and self._conn.in_transaction:
-                        self._conn.rollback()
+                    # Best effort: a closed connection or a failed rollback must
+                    # not replace the exception the caller needs to see.
+                    try:
+                        if self._call_depth == 1 and self._conn.in_transaction:
+                            self._conn.rollback()
+                    except sqlite3.Error:
+                        pass
                     raise
                 finally:
                     self._call_depth -= 1
