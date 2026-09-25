@@ -212,6 +212,31 @@ def test_invoke_function_tool_via_http(tmp_path):
         _restore_registry(snap)
 
 
+def test_invoke_reports_a_raising_tool_as_an_error_not_a_500(tmp_path):
+    snap = _clear_registry()
+    try:
+
+        def flaky() -> str:
+            """Fail like an LLM-backed tool whose provider is down."""
+            raise RuntimeError("llm provider down")
+
+        tool_registry.tool(
+            flaky, effect=ToolEffect.READ_ONLY, result_kind=ResultKind.JSON
+        )
+        client = TestClient(_make_app(tmp_path))
+        resp = client.post(
+            "/admin/tools/flaky/invoke",
+            json={"arguments": {}},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["response"] == ""
+        assert data["errors"] == ["unknown: RuntimeError"]
+    finally:
+        _restore_registry(snap)
+
+
 def test_invoke_unknown_tool_returns_404(tmp_path):
     client = TestClient(_make_app(tmp_path))
     resp = client.post(

@@ -207,7 +207,11 @@ def create_tools_router(settings: AppSettings) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Tool {name!r} not found.",
             )
-        response_text, raw, errors = await tool_registry.invoke(name, req.arguments)
-        return InvokeResponse(response=response_text, raw=raw, errors=errors)
+        result = await tool_registry.invoke_detailed(name, req.arguments)
+        errors = result.errors
+        if result.failure is not None and not result.response and not errors:
+            # The tool raised: report it instead of a bare 500.
+            errors = [f"{result.failure.category.value}: {result.failure.message}"]
+        return InvokeResponse(response=result.response, raw=result.raw, errors=errors)
 
     return router
