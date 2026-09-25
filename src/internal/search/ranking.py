@@ -9,6 +9,7 @@ import httpx
 
 from src.context import ContextDocument
 from src.context.utils import mmr_rerank
+from src.internal.resilience.circuit_breaker import CircuitOpenError
 
 from .models import CandidateSet, RankedEvidence
 
@@ -56,6 +57,10 @@ class DefaultRankingStage:
                     documents = result.evidence
                 operations.append("external_rerank")
                 rerank_status = "applied"
+            except CircuitOpenError as exc:
+                logger.warning("Rerank skipped, using original order: %s", exc)
+                rerank_status = "circuit_open"
+                degraded = True
             except httpx.TimeoutException as exc:
                 logger.warning(
                     "Rerank request timed out, using original order: %s", exc

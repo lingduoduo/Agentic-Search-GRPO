@@ -156,3 +156,110 @@ def test_browser_empty_result_is_a_success():
     assert len(calls) == 3
     snap = get_breaker("browser_search").snapshot()
     assert (snap.state, snap.consecutive_failures) == ("closed", 0)
+
+
+# --- rerank ------------------------------------------------------------------
+
+
+def _rerank_stage(monkeypatch, outcome):
+    """Patch httpx.AsyncClient: post raises ``outcome`` or returns it."""
+    import httpx
+
+    from src.internal.search import stages
+
+    calls = []
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, *, json, timeout):
+            calls.append(url)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if isinstance(outcome, int):
+                return httpx.Response(outcome, request=httpx.Request("POST", url))
+            return httpx.Response(200, json=outcome, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(stages.httpx, "AsyncClient", _Client)
+    return stages.RerankHTTPRankingStage("http://r"), calls
+
+
+def _candidates():
+    from src.context.search import SearchResult
+    from src.internal.search.models import CandidateSet
+
+    return CandidateSet(
+        query="q",
+        candidates=[SearchResult(contents="one", title="One", score=0.2)],
+        provider="retrieval",
+    )
+
+
+def test_rerank_open_breaker_raises_without_calling(monkeypatch):
+    import httpx
+
+    from src.internal.resilience.circuit_breaker import CircuitOpenError
+
+    stage, calls = _rerank_stage(monkeypatch, httpx.ConnectError("down"))
+    with threshold(2):
+        for _ in range(2):
+            with pytest.raises(httpx.ConnectError):
+                asyncio.run(stage.rank("q", _candidates(), 1))
+        with pytest.raises(CircuitOpenError):
+            asyncio.run(stage.rank("q", _candidates(), 1))
+    assert len(calls) == 2
+
+
+def test_rerank_5xx_counts_and_4xx_does_not(monkeypatch):
+    import httpx
+
+    stage, _ = _rerank_stage(monkeypatch, 422)
+    with threshold(2):
+        for _ in range(3):
+            with pytest.raises(httpx.HTTPStatusError):
+                asyncio.run(stage.rank("q", _candidates(), 1))
+        assert get_breaker("rerank").snapshot().state == "closed"
+        stage, _ = _rerank_stage(monkeypatch, 503)
+        for _ in range(2):
+            with pytest.raises(httpx.HTTPStatusError):
+                asyncio.run(stage.rank("q", _candidates(), 1))
+    assert get_breaker("rerank").snapshot().state == "open"
+
+
+def test_rerank_cache_hit_never_touches_the_breaker(monkeypatch):
+    from src.internal.resilience.circuit_breaker import breaker_snapshots
+    from src.internal.search import stages
+
+    class _Cache:
+        def get(self, key):
+            return [{"document": {"_idx": "0"}, "score": 0.9}]
+
+        def set(self, key, value):
+            raise AssertionError("a hit is not re-cached")
+
+    monkeypatch.setattr(stages, "serving_cache", lambda: _Cache())
+    stage, calls = _rerank_stage(monkeypatch, RuntimeError("must not be called"))
+    result = asyncio.run(stage.rank("q", _candidates(), 1))
+    assert [d.title for d in result.evidence] == ["One"]
+    assert calls == []
+    assert breaker_snapshots() == []
+
+
+def test_default_ranking_reports_circuit_open():
+    from src.internal.resilience.circuit_breaker import CircuitOpenError
+    from src.internal.search.ranking import DefaultRankingStage
+
+    class _OpenReranker:
+        async def rank(self, query, candidates, top_k):
+            raise CircuitOpenError("rerank", 12.0)
+
+    result = asyncio.run(
+        DefaultRankingStage(_OpenReranker()).rank("q", _candidates(), 1)
+    )
+    assert result.metadata["rerank_status"] == "circuit_open"
+    assert result.metadata["degraded"] is True
+    assert [d.title for d in result.evidence] == ["One"]
