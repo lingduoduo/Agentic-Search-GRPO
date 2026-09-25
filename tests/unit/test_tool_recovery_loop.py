@@ -12,6 +12,7 @@ from src.agents.tool.recovery import RecoveryPolicy
 from src.internal.tools import (
     FailureCategory,
     FunctionTool,
+    ResultKind,
     ToolEffect,
     ToolErrorText,
     ToolFailure,
@@ -427,3 +428,25 @@ def test_denied_approval_is_never_escalated():
         )
     )
     assert calls == [] and seen == []
+
+
+def test_loop_does_not_retry_a_tool_that_retries_internally():
+    calls = []
+
+    @FunctionTool.from_fn(
+        name="lookup",
+        effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
+    )
+    async def lookup():
+        calls.append(1)
+        return ToolErrorText(
+            '{"error": "x"}',
+            ToolFailure(FailureCategory.TRANSIENT, "upstream temporarily unavailable"),
+        )
+
+    loop, _ = _loop([lookup], [CALL, "done"])
+    output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    assert len(calls) == 1
+    assert output.tool_recovery["degraded"] == ["lookup"]

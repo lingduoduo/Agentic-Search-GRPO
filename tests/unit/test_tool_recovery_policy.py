@@ -104,3 +104,15 @@ def test_jitter_scales_the_backoff():
         lambda low, high: 1.5,
     )
     assert got.delay == 0.75
+
+
+def test_a_tool_that_retries_internally_is_not_retried_again():
+    got = POLICY.decide(
+        _f(FailureCategory.TRANSIENT),
+        ToolEffect.READ_ONLY,
+        0,
+        10.0,
+        MID,
+        retries_internally=True,
+    )
+    assert got.action is Action.UNAVAILABLE

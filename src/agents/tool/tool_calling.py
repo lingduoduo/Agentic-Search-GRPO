@@ -351,6 +351,7 @@ class ToolAgentLoop(AgentLoopBase):
             )
         tool = self._registry.get(name)
         effect = tool.effect if tool is not None else ToolEffect.UNSPECIFIED
+        retries_internally = tool.retries_internally if tool is not None else False
         retries = 0
         while True:
             outcome = await self._registry.invoke_detailed(name, args)
@@ -366,7 +367,11 @@ class ToolAgentLoop(AgentLoopBase):
                     retry_count=retries,
                 )
             decision = self._recovery.decide(
-                failure, effect, retries, state.budget_left
+                failure,
+                effect,
+                retries,
+                state.budget_left,
+                retries_internally=retries_internally,
             )
             if decision.action is Action.RETRY:
                 state.budget_left -= decision.delay  # reserve before awaiting
