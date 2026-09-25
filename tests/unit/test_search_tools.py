@@ -513,7 +513,7 @@ class TestMultiQueryWebSearchTool:
         asyncio.run(tool.execute("inst1", {"queries": ["hello\x00world", "  ok  "]}))
         assert seen == ["hello world", "ok"]
 
-    def test_execute_returns_no_results_string_when_empty(self):
+    def test_execute_returns_empty_json_array_when_empty(self):
         async def _fake(query, **kwargs):
             return []
 
@@ -521,7 +521,7 @@ class TestMultiQueryWebSearchTool:
         result_str, raw, _ = asyncio.run(
             tool.execute("inst1", {"queries": ["nothing"]})
         )
-        assert result_str == "No results found."
+        assert result_str == "[]"
 
     def test_execute_accepts_string_queries(self):
         seen = []

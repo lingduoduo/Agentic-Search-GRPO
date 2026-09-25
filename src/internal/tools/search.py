@@ -18,7 +18,16 @@ from urllib.parse import urlunsplit
 from ...context.search import SearchResult
 from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohttp
 from ..cache.serving import serving_cache
-from .base import FunctionTool, Tool, ToolEffect, ToolSchema
+from .base import (
+    FailureCategory,
+    FunctionTool,
+    ResultKind,
+    Tool,
+    ToolEffect,
+    ToolErrorText,
+    ToolFailure,
+    ToolSchema,
+)
 from .html_text import _html_to_text
 from .public_data._http import PublicDataError, guarded
 from .validation import validate_arguments
@@ -760,6 +769,14 @@ class MultiQueryWebSearchTool(Tool):
     def citeable(self) -> bool:
         return True
 
+    @property
+    def effect(self) -> ToolEffect:
+        return ToolEffect.READ_ONLY
+
+    @property
+    def result_kind(self) -> ResultKind:
+        return ResultKind.DOCUMENTS
+
     async def execute(
         self, instance_id: str, arguments: dict[str, Any]
     ) -> tuple[str, Any, Any]:
@@ -769,7 +786,7 @@ class MultiQueryWebSearchTool(Tool):
         queries = _normalize_queries_input(raw_queries)
 
         if not queries:
-            return "No results found.", [], {}
+            return json.dumps([]), [], {}
 
         executed_queries = [prepare_domain_query(q, domain) for q in queries]
         results_per_query: list[list[SearchPage]] = await asyncio.gather(
@@ -787,8 +804,12 @@ class MultiQueryWebSearchTool(Tool):
 
         seen_urls: set[str] = set()
         merged: list[SearchPage] = []
+        errors: list[str] = []
         for pages in results_per_query:
             for page in pages:
+                if page.error:
+                    errors.append(page.error)
+                    continue
                 if page.url and page.url in seen_urls:
                     continue
                 if page.url:
@@ -798,7 +819,20 @@ class MultiQueryWebSearchTool(Tool):
         metadata: dict[str, Any] = {"queries": queries}
         if domain != "general":
             metadata.update(domain=domain, executed_queries=executed_queries)
-        return format_search_pages(merged), merged, metadata
+        if not merged and errors:
+            # A Tool subclass (unlike FunctionTool) must put the failure into
+            # its own metadata: that is how invoke_detailed learns about it.
+            failure = ToolFailure(FailureCategory.UNKNOWN, "web search unavailable")
+            return (
+                ToolErrorText(json.dumps({"error": errors[0]}), failure),
+                merged,
+                {**metadata, "failure": failure},
+            )
+        documents = [
+            {"title": p.title or "", "content": p.summary or "", "url": p.url or ""}
+            for p in merged
+        ]
+        return json.dumps(documents, ensure_ascii=False), merged, metadata
 
 
 def build_search_tool(

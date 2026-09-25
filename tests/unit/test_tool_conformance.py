@@ -3,9 +3,10 @@ import json
 
 import pytest
 
+from src.agents.core.state import TaskStatus
 from src.internal.tools import FailureCategory, ResultKind, ToolErrorText
 from src.internal.tools.registry import validate_tool_contract
-from src.internal.tools.search import SearchPage
+from src.internal.tools.search import MultiQueryWebSearchTool, SearchPage
 
 
 def assert_documents(text: str) -> list[dict]:
@@ -98,3 +99,85 @@ def test_rag_routing_tool_conforms_and_lets_errors_raise(monkeypatch):
     monkeypatch.setattr("src.context.answer_with_retrieval", boom)
     with pytest.raises(RuntimeError):
         _run(tool, query="q")
+
+
+def _web_tool(pages_by_query):
+    async def fake_search(query, **kwargs):
+        return pages_by_query[query]
+
+    return MultiQueryWebSearchTool(search_fn=fake_search)
+
+
+def test_web_search_conforms():
+    tool = _web_tool({})
+    assert validate_tool_contract(tool, source="function") == []
+    assert (tool.effect.value, tool.result_kind, tool.citeable) == (
+        "read_only",
+        ResultKind.DOCUMENTS,
+        True,
+    )
+
+
+def test_web_search_returns_deduplicated_documents():
+    tool = _web_tool(
+        {
+            "a": [
+                SearchPage(title="A", summary="sa", url="http://1"),
+                SearchPage(title="B", summary="sb", url="http://2"),
+            ],
+            "b": [SearchPage(title="A again", summary="x", url="http://1")],
+        }
+    )
+    response, raw, meta = _run(tool, queries=["a", "b"])
+    items = assert_documents(response)
+    assert [i["url"] for i in items] == ["http://1", "http://2"]
+    assert items[0] == {"title": "A", "content": "sa", "url": "http://1"}
+    assert meta["queries"] == ["a", "b"]
+
+
+def test_web_search_partial_failure_keeps_the_successes():
+    tool = _web_tool(
+        {
+            "a": [SearchPage(title="A", summary="sa", url="http://1")],
+            "b": [SearchPage(error="rate limited")],
+        }
+    )
+    response, _raw, meta = _run(tool, queries=["a", "b"])
+    assert "failure" not in meta
+    assert [i["url"] for i in assert_documents(response)] == ["http://1"]
+
+
+def test_web_search_total_failure_is_typed_unknown():
+    tool = _web_tool(
+        {
+            "a": [SearchPage(error="no provider")],
+            "b": [SearchPage(error="rate limited")],
+        }
+    )
+    response, _raw, meta = _run(tool, queries=["a", "b"])
+    assert isinstance(response, ToolErrorText)
+    assert meta["failure"].category is FailureCategory.UNKNOWN
+    assert json.loads(response) == {"error": "no provider"}
+
+
+def test_web_search_missing_fields_become_empty_strings():
+    tool = _web_tool({"a": [SearchPage(title="", summary="", url="")]})
+    response, _raw, _meta = _run(tool, queries=["a"])
+    assert assert_documents(response) == [{"title": "", "content": "", "url": ""}]
+
+
+def test_web_search_runs_without_an_approval_callback():
+    from src.agents import ToolAgentLoop, ToolAgentLoopConfig
+    from tests.unit.test_tool_recovery_loop import _Manager, _Tokenizer
+
+    tool = _web_tool({"q": [SearchPage(title="A", summary="s", url="http://1")]})
+    tokenizer = _Tokenizer()
+    manager = _Manager(
+        tokenizer, ['{"name":"web_search","arguments":{"queries":["q"]}}', "done"]
+    )
+    loop = ToolAgentLoop(
+        tokenizer, manager, [tool], ToolAgentLoopConfig(response_length=8192)
+    )
+    output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    trace = [json.loads(line) for line in output.action_trace.splitlines()]
+    assert trace[0]["status"] == str(TaskStatus.COMPLETED)
