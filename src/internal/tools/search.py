@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl
 from urllib.parse import urlencode
@@ -576,6 +576,25 @@ async def search_tool(
             page_size=page_size,
             timeout_seconds=timeout_seconds,
         )
+    # A failed live lookup (every page an error, a timeout or blank; an open
+    # circuit is an error page) is answered from a stale cached copy while one
+    # is inside the grace window. An empty list is a successful empty search.
+    if (
+        cache is not None
+        and pages
+        and all(p.error or p.timed_out or p.is_blank for p in pages)
+    ):
+        stale = cache.get_stale(cache_key)
+        if stale is not None:
+            logger.info(
+                "search_tool: %s failed for %r; serving stale cached pages",
+                provider,
+                query,
+            )
+            return [
+                replace(p, metadata={**p.metadata, "stale": True})
+                for p in copy.deepcopy(stale)
+            ]
     # Never cache an empty or failed lookup: for a web provider that is usually
     # a transient failure, and pinning it for the TTL would hide the recovery.
     # A blank page is an empty-message timeout (str(asyncio.TimeoutError()) is
