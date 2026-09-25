@@ -53,6 +53,7 @@ from src.context import answer_with_retrieval
 from src.context import build_context_bundle
 from src.context.models import AnswerGenerationResult
 from src.context.models import ContextDocument
+from src.context.models import ModelUnavailableError
 from src.context.models import SearchFilters
 from src.context.search import SearchResult, citation_key
 from src.internal.access.capabilities import resolve_capabilities
@@ -999,6 +1000,13 @@ def _enforce_access(documents: list, filters) -> list:
     if matches is None:
         return documents
     return [d for d in documents if matches(getattr(d, "metadata", None) or {})]
+
+
+def _dispatch_failure(exc: Exception) -> HTTPException:
+    """The 502 an agent dispatch failure becomes, carrying its message."""
+    logger.exception("Agent dispatch error: %s", exc)
+    detail = str(exc) if str(exc).strip() else "Unexpected error during agent dispatch"
+    return HTTPException(status_code=502, detail=detail)
 
 
 def _filters_payload(filters):
@@ -2112,14 +2120,59 @@ def create_web_app(
                 )
             except HTTPException:
                 raise
-            except Exception as exc:
-                logger.exception("Agent dispatch error: %s", exc)
-                detail = (
-                    str(exc)
-                    if str(exc).strip()
-                    else "Unexpected error during agent dispatch"
+            except ModelUnavailableError as exc:
+                logger.warning("Model unavailable, degrading to search-only: %s", exc)
+                # Explicit modes are corpus-only: an outage must not send the
+                # query to an external web provider they never contacted. Auto
+                # mode already validated and uses the request's own choice.
+                degraded_provider = (
+                    _normalize_source_provider(request.source_provider)
+                    if normalized_mode in (None, "auto")
+                    else "retrieval"
                 )
-                raise HTTPException(status_code=502, detail=detail) from exc
+                try:
+                    (
+                        answer,
+                        citations,
+                        documents,
+                        intent,
+                        extra,
+                    ) = await _auto_search_pipeline(
+                        query,
+                        # Not the request's llm: that model is what just failed,
+                        # and query expansion would call it again.
+                        llm=None,
+                        search_url=search_url,
+                        browser_search_url=settings.browser_search_url,
+                        rerank_url=settings.rerank_url,
+                        top_k=top_k,
+                        filters=filters,
+                        history=history,
+                        source_provider=degraded_provider,
+                        extra={"route_degraded": "model_unavailable"},
+                        domain=domain,
+                        retrieval_query=retrieval_query,
+                    )
+                except Exception as fallback_exc:
+                    raise _dispatch_failure(fallback_exc) from fallback_exc
+                extra.update(follow_up_meta)
+                _cap = _capture.active()
+                if _cap is not None:
+                    _cap.route_degraded = extra.get("route_degraded")
+                return _finalize_response(
+                    db,
+                    session_id,
+                    query=query,
+                    answer=answer,
+                    citations=citations,
+                    documents=documents,
+                    intent=intent,
+                    hook_metadata=hook_metadata,
+                    extra=extra,
+                    mode=normalized_mode or "auto",
+                )
+            except Exception as exc:
+                raise _dispatch_failure(exc) from exc
 
             documents = [
                 _document_with_metadata(

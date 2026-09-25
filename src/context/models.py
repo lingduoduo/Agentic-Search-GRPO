@@ -38,7 +38,12 @@ class LLMClient(Protocol):
         """Return an LLM completion for chat-style messages."""
 
 
-class LLMTimeoutError(RuntimeError):
+class ModelUnavailableError(RuntimeError):
+    """The model could not be reached or refused service (connect error,
+    timeout, 5xx/429, circuit open). Not raised for request/config errors."""
+
+
+class LLMTimeoutError(ModelUnavailableError):
     """The LLM call exceeded its timeout."""
 
 

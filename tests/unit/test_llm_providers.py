@@ -8,7 +8,7 @@ import requests
 from unittest.mock import MagicMock, patch
 
 
-from src.context.models import LLMTimeoutError
+from src.context.models import LLMTimeoutError, ModelUnavailableError
 from src.context.structured_output import StructuredOutputRequest
 from src.internal.llm.interfaces import LLMConfig, ToolChoiceOptions
 from src.internal.llm.providers import (
@@ -373,16 +373,16 @@ def test_llm_timeout_error_does_not_leak_endpoint_or_original_text():
     assert caught.value.__suppress_context__ is True
 
 
-def test_plain_connection_error_still_propagates():
-    # Scope boundary: a host that is down or refusing is a misconfiguration signal
-    # and must stay loud. Plain ConnectionError is NOT a Timeout, so it escapes.
+def test_plain_connection_error_is_model_unavailable():
+    # A host that is down or refusing means the model is unavailable: the web
+    # dispatch degrades to search-only on this type instead of a 502.
     llm = _timeout_llm()
     with patch.object(
         llm._session,
         "post",
         side_effect=requests.ConnectionError("connection refused"),
     ):
-        with pytest.raises(requests.ConnectionError):
+        with pytest.raises(ModelUnavailableError):
             llm.complete([{"role": "user", "content": "hi"}])
 
 
