@@ -59,9 +59,15 @@ replace).
 **Validation (fail fast, at load):**
 
 - Unknown table or key → `ValueError` naming its dotted path (`llm.socket_read_timout_seconds`).
-- `*_seconds` > 0; `max_retries` / `grounded_max_retries` integers ≥ 0;
-  `max_attempts` / `max_escalations` integers ≥ 1; `backoff_seconds` a non-empty
-  list of numbers ≥ 0. A bool is not a number.
+- `*_seconds` finite and > 0, except `sse.heartbeat_seconds` and
+  `llm.local_generation_timeout_seconds`, which accept 0 (= disabled, as today).
+- Integer counts ≥ 1, except `tool_loop.recovery.max_retries` and
+  `llm.grounded_max_retries`, which accept 0. Every other `max_retries` is an
+  attempt count (`SearchClient` loops `range(max_retries)`), so 0 would make no
+  request. `backoff_seconds` a non-empty list of numbers ≥ 0. A bool is not a number.
+- The four env vars are validated the same way and errors name the env var
+  (`TOOL_APPROVAL_TIMEOUT_SECONDS must be positive.`). A negative heartbeat or
+  generation timeout, which today silently disables it, now fails at load.
 - `AGENTIC_SEARCH_TIMEOUTS_PATH` set to a missing or unparsable file → `ValueError`
   naming the path. Unset or empty → bundled only.
 
@@ -81,7 +87,8 @@ import time. A kwarg or dataclass default that is a literal today becomes `None`
 become reads inside the function that uses them.
 
 **Dependency:** `tomli; python_version < "3.11"` in `requirements.txt` and
-`pyproject.toml` dependencies; `tomllib` on 3.11+.
+`pyproject.toml` dependencies; `tomllib` on 3.11+. `requirements-unit-test.txt` installs `tomli`
+unconditionally so the 3.10 fallback path is tested on CI's 3.12.
 
 ## 2. Schema
 
