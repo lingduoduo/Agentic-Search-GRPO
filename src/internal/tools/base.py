@@ -54,6 +54,18 @@ class ToolFailure:
     message: str
     retry_after: float | None = None
     provider_attempts: int = 0
+    is_timeout: bool = False
+
+
+def is_timeout_exception(exc: BaseException) -> bool:
+    """Recognize timeout types, retaining Python 3.10 asyncio compatibility."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    try:
+        import httpx
+    except ImportError:
+        return False
+    return isinstance(exc, httpx.TimeoutException)
 
 
 class ToolErrorText(str):

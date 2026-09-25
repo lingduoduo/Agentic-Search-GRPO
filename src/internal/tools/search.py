@@ -34,6 +34,7 @@ from .base import (
     ToolErrorText,
     ToolFailure,
     ToolSchema,
+    is_timeout_exception,
 )
 from .html_text import _html_to_text
 from .public_data._http import guarded
@@ -215,6 +216,22 @@ logger = logging.getLogger(__name__)
 
 SearchProvider = Literal["retrieval", "google", "serpapi", "serper"]
 
+
+def _error_text(exc: BaseException) -> str:
+    """``str(asyncio.TimeoutError())`` is empty, and an error page with an empty
+    ``error`` reads as a successful empty result everywhere ``page.error`` is
+    tested -- so fall back to the exception type."""
+    return str(exc) or type(exc).__name__
+
+
+def _timed_out(exc: BaseException) -> bool:
+    """Timeout identity from the exception type, including a retry wrapper's
+    cause (SearchClient raises RuntimeError ``from`` its last attempt)."""
+    return is_timeout_exception(exc) or (
+        exc.__cause__ is not None and is_timeout_exception(exc.__cause__)
+    )
+
+
 GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
 SERPAPI_SEARCH_ENDPOINT = "https://serpapi.com/search.json"
 SERPAPI_CIRCUIT_OPEN_ERROR = (
@@ -267,6 +284,9 @@ class SearchPage:
     summary: str = ""
     url: str = ""
     error: str | None = None
+    # Set from the exception type where an error page is built, so a typed
+    # ToolFailure downstream can report a timeout without reading ``error``.
+    timed_out: bool = False
     score: float = 0.0
     # Retrieval-side metadata, carried so downstream consumers can enforce the
     # document's ACL. Dropping it here made access control impossible on any
@@ -315,7 +335,12 @@ async def google_custom_search(
             timeout_seconds=timeout_seconds,
         )
     except Exception as exc:
-        return [SearchPage(error=_redact_secret_params(str(exc)))]
+        return [
+            SearchPage(
+                error=_redact_secret_params(_error_text(exc)),
+                timed_out=_timed_out(exc),
+            )
+        ]
     return [
         SearchPage(
             title=item.get("title", ""),
@@ -369,7 +394,12 @@ async def serpapi_search(
             breaker.record_success()
         else:
             breaker.record_failure()
-        return [SearchPage(error=_redact_secret_params(str(exc)))]
+        return [
+            SearchPage(
+                error=_redact_secret_params(_error_text(exc)),
+                timed_out=_timed_out(exc),
+            )
+        ]
     breaker.record_success()
 
     pages = [
@@ -422,8 +452,9 @@ async def serper_dev_search(
                 response.raise_for_status()
                 data = await response.json()
     except Exception as exc:
-        err = str(exc).replace(api_key, "[REDACTED]") if api_key else str(exc)
-        return [SearchPage(error=_redact_secret_params(err))]
+        err = _error_text(exc)
+        err = err.replace(api_key, "[REDACTED]") if api_key else err
+        return [SearchPage(error=_redact_secret_params(err), timed_out=_timed_out(exc))]
 
     results = data.get("organic") or []
     return [
@@ -470,7 +501,12 @@ async def retrieval_search(
             )
         ]
     except Exception as exc:
-        return [SearchPage(error=_redact_secret_params(str(exc)))]
+        return [
+            SearchPage(
+                error=_redact_secret_params(_error_text(exc)),
+                timed_out=_timed_out(exc),
+            )
+        ]
     finally:
         await client.aclose()
 
@@ -613,7 +649,12 @@ def make_web_cascade_search(
                 except Exception as exc:  # noqa: BLE001
                     breaker.record_failure()
                     logger.warning("browser cascade leg failed for %r: %s", query, exc)
-                    failures.append(SearchPage(error=f"Browser search failed: {exc}"))
+                    failures.append(
+                        SearchPage(
+                            error=f"Browser search failed: {exc}",
+                            timed_out=_timed_out(exc),
+                        )
+                    )
                 else:
                     # search_tool reports HTTP failures as error pages, not raises.
                     if browser_pages and all(p.error for p in browser_pages):
@@ -877,11 +918,11 @@ class MultiQueryWebSearchTool(Tool):
 
         seen_urls: set[str] = set()
         merged: list[SearchPage] = []
-        errors: list[str] = []
+        errors: list[SearchPage] = []
         for pages in results_per_query:
             for page in pages:
                 if page.error:
-                    errors.append(page.error)
+                    errors.append(page)
                     continue
                 if page.url and page.url in seen_urls:
                     continue
@@ -895,9 +936,13 @@ class MultiQueryWebSearchTool(Tool):
         if not merged and errors:
             # A Tool subclass (unlike FunctionTool) must put the failure into
             # its own metadata: that is how invoke_detailed learns about it.
-            failure = ToolFailure(FailureCategory.UNKNOWN, "web search unavailable")
+            failure = ToolFailure(
+                FailureCategory.UNKNOWN,
+                "web search unavailable",
+                is_timeout=all(p.timed_out for p in errors),
+            )
             return (
-                ToolErrorText(json.dumps({"error": errors[0]}), failure),
+                ToolErrorText(json.dumps({"error": errors[0].error}), failure),
                 merged,
                 {**metadata, "failure": failure},
             )

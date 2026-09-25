@@ -504,3 +504,60 @@ def test_tool_run_failure_metrics(monkeypatch):
             asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
         after = _tool_run_snapshot(outcome)
         assert tuple(b - a for a, b in zip(before, after)) == (1, 1, rounds)
+
+
+def test_timeout_retry_is_two_attempts_with_recovery():
+    from src.internal.observability.prometheus import REGISTRY
+
+    def values():
+        return tuple(
+            REGISTRY.get_sample_value(
+                "agentic_search_tool_attempts_total", {"outcome": outcome}
+            )
+            or 0
+            for outcome in ("success", "timeout", "error", "cancelled")
+        )
+
+    calls = []
+
+    @FunctionTool.from_fn(name="lookup", effect=ToolEffect.READ_ONLY)
+    async def lookup():
+        calls.append(1)
+        if len(calls) == 1:
+            raise asyncio.TimeoutError()
+        return "ok"
+
+    loop, _ = _loop([lookup], [CALL, "done"])
+    before = values()
+    output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    assert tuple(b - a for a, b in zip(before, values())) == (1, 1, 0, 0)
+    assert _trace(output)[0]["retry_count"] == 1
+    assert _trace(output)[0]["status"] == str(TaskStatus.COMPLETED)
+
+
+def test_denied_approval_is_not_a_tool_attempt():
+    from src.internal.observability.prometheus import REGISTRY
+
+    def values():
+        return tuple(
+            REGISTRY.get_sample_value(
+                "agentic_search_tool_attempts_total", {"outcome": outcome}
+            )
+            or 0
+            for outcome in ("success", "timeout", "error", "cancelled")
+        )
+
+    tool, calls = _writer(99)
+    tokenizer = _Tokenizer()
+    manager = _Manager(tokenizer, [SEND, "done"])
+    loop = ToolAgentLoop(
+        tokenizer, manager, [tool], ToolAgentLoopConfig(response_length=8192)
+    )
+
+    async def deny(request):
+        return ApprovalDecision.DENY
+
+    before = values()
+    asyncio.run(loop.run([{"role": "user", "content": "go"}], {}, on_approval=deny))
+    assert calls == []
+    assert values() == before

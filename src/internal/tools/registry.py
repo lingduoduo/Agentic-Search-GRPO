@@ -40,6 +40,8 @@ from typing import (
 )
 from uuid import UUID
 
+from src.internal.observability.prometheus import observe_tool_attempt
+
 from .api import ApiToolRegistry, ApiToolNotFoundError
 from .base import (
     FailureCategory,
@@ -49,6 +51,7 @@ from .base import (
     Tool,
     ToolEffect,
     ToolFailure,
+    is_timeout_exception,
 )
 from .validation import validate_arguments
 
@@ -174,7 +177,9 @@ def _failure_from_exception(exc: Exception) -> ToolFailure:
     except ImportError:
         pass
     category = FailureCategory.TRANSIENT if transient else FailureCategory.UNKNOWN
-    return ToolFailure(category, type(exc).__name__)
+    return ToolFailure(
+        category, type(exc).__name__, is_timeout=is_timeout_exception(exc)
+    )
 
 
 class ToolRegistry:
@@ -385,12 +390,9 @@ class ToolRegistry:
         if tool is None or errors:
             return "", None, errors
 
-        instance_id = await tool.create()
-        try:
-            response, raw, _meta = await tool.execute(instance_id, arguments)
-        finally:
-            await tool.release(instance_id)
-
+        response, raw, _meta = await self._execute(
+            tool, arguments, convert_errors=False
+        )
         return response, raw, []
 
     async def invoke_detailed(
@@ -409,19 +411,48 @@ class ToolRegistry:
                 errors,
                 ToolFailure(FailureCategory.INVALID_INPUT, "; ".join(errors)),
             )
-        instance_id = await tool.create()
-        try:
-            try:
-                response, raw, meta = await tool.execute(instance_id, arguments)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning("tool %r raised", name, exc_info=True)
-                return ToolInvocation("", None, [], _failure_from_exception(exc))
-        finally:
-            await tool.release(instance_id)
+        response, raw, meta = await self._execute(tool, arguments, convert_errors=True)
         failure = meta.get("failure") if isinstance(meta, dict) else None
         return ToolInvocation(response, raw, [], failure)
+
+    async def _execute(
+        self, tool: Tool, arguments: dict[str, Any], *, convert_errors: bool
+    ) -> tuple[str, Any, Any]:
+        """Count one validated lifecycle, preserving each public API's errors."""
+        outcome = "error"
+        try:
+            instance_id = await tool.create()
+            try:
+                try:
+                    response, raw, meta = await tool.execute(instance_id, arguments)
+                except Exception as exc:
+                    if not convert_errors:
+                        raise
+                    logger.warning("tool %r raised", tool.name, exc_info=True)
+                    response, raw, meta = (
+                        "",
+                        None,
+                        {"failure": _failure_from_exception(exc)},
+                    )
+            finally:
+                await tool.release(instance_id)
+            failure = meta.get("failure") if isinstance(meta, dict) else None
+            outcome = (
+                "success"
+                if failure is None
+                else "timeout"
+                if failure.is_timeout
+                else "error"
+            )
+            return response, raw, meta
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception as exc:
+            outcome = "timeout" if is_timeout_exception(exc) else "error"
+            raise
+        finally:
+            observe_tool_attempt(outcome)
 
     # ------------------------------------------------------------------
     # Summary for the REST API
