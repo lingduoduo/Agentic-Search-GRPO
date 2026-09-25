@@ -19,6 +19,7 @@ from .models import GroundedGenerationConfig
 from .models import LLMClient
 from .models import LLMResponse
 from .models import LLMTimeoutError
+from .models import ModelUnavailableError
 from .models import PromptBundle
 from .models import SearchContextBundle
 from .models import SearchFilters
@@ -76,6 +77,7 @@ __all__ = [
     "LLMClient",
     "LLMResponse",
     "LLMTimeoutError",
+    "ModelUnavailableError",
     "PromptBundle",
     "QueryType",
     "SearchContextBundle",
