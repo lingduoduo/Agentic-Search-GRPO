@@ -323,3 +323,117 @@ def test_memory_invoke_text_is_unchanged_for_not_found():
         registry.invoke("delete_memory", {"memory_id": "m"})
     )
     assert (response, errors) == ("memory not found", [])
+
+
+def test_the_global_registry_is_strict():
+    from src.internal.tools import FunctionTool, ToolEffect
+    from src.internal.tools.registry import tool_registry
+
+    with pytest.raises(ValueError, match="result_kind"):
+        tool_registry.register(
+            FunctionTool(lambda: "x", name="_undeclared", effect=ToolEffect.READ_ONLY)
+        )
+    assert tool_registry.get("_undeclared") is None
+
+
+def test_every_production_tool_registers_strictly():
+    from unittest.mock import MagicMock
+
+    from src.internal.memory.tools import build_memory_registry
+    from src.internal.tools import ToolRegistry
+    from src.internal.tools.knowledge_base import seed_tools, tool_knowledge_base
+    from src.internal.tools.routing_tools import build_search_routing_tool
+
+    registry = ToolRegistry(strict=True)
+    seed_tools(registry, tools=tool_knowledge_base(llm=MagicMock()))
+    registry.register(
+        build_search_routing_tool(search_url="http://x", top_k=5, name="search_bound")
+    )
+    build_memory_registry(
+        _Store(), "u1"
+    )  # strict internally; raises if a memory tool breaks the contract
+
+
+def test_openapi_admin_endpoint_maps_contract_violation_to_422(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from src.internal.auth import generate_user_jwt_token
+    from src.internal.configs import AppSettings, AuthSettings
+    from src.internal.db import UserRecord
+    from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
+    from src.internal.tools.registry import tool_registry
+
+    admin = "admin"
+    settings = AppSettings(auth=AuthSettings(super_users=(admin,)))
+    app = create_web_app(
+        SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"),
+        app_settings=settings,
+    )
+    app.state.auth_store.upsert_user(UserRecord(id=admin))
+    token = generate_user_jwt_token(user_id=admin)
+
+    def boom(self, openapi_json, *, name, headers=None, icon=None):
+        raise ValueError("tool x: result_kind must be declared")
+
+    original = tool_registry.__class__.register_from_openapi
+    tool_registry.__class__.register_from_openapi = boom
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/admin/tools/openapi",
+            json={"name": "Bad", "openapi_json": "{}"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        tool_registry.__class__.register_from_openapi = original
+
+    assert resp.status_code == 422
+    assert "result_kind" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_discovery_skips_a_non_conforming_remote_tool(monkeypatch, caplog):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from src.internal.tools import mcp_client
+    from src.internal.tools.mcp_client import McpServerSpec, register_mcp_tools
+    from src.internal.tools.registry import ToolRegistry
+
+    good = SimpleNamespace(name="good_remote", description="d", inputSchema={})
+    bad = SimpleNamespace(name="bad_remote", description="d", inputSchema={})
+
+    class _FakeSession:
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[good, bad])
+
+    @asynccontextmanager
+    async def _connect(spec):
+        yield _FakeSession()
+
+    monkeypatch.setattr(mcp_client, "_connect", _connect)
+
+    original_build_tool = mcp_client._build_tool
+
+    def fake_build_tool(spec, remote):
+        if remote.name == "bad_remote":
+            from src.internal.tools import FunctionTool
+
+            return FunctionTool(lambda: "x", name="bad_remote", result_kind=None)
+        return original_build_tool(spec, remote)
+
+    monkeypatch.setattr(mcp_client, "_build_tool", fake_build_tool)
+
+    registry = ToolRegistry(strict=True)
+    with caplog.at_level("WARNING"):
+        count = await register_mcp_tools(
+            registry, [McpServerSpec(name="local", url="http://x/")]
+        )
+
+    assert count == 1
+    assert registry.get("good_remote") is not None
+    assert registry.get("bad_remote") is None
+    assert any("bad_remote" in record.message for record in caplog.records)

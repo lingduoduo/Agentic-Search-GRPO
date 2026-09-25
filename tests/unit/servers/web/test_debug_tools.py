@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.internal.servers.web.debug_router import create_debug_router
-from src.internal.tools.base import FunctionTool
+from src.internal.tools.base import FunctionTool, ResultKind, ToolEffect
 from src.internal.tools.registry import tool_registry
 
 
@@ -24,7 +24,12 @@ def _client() -> TestClient:
 
 def test_tools_lists_registered_and_catalog():
     stub = FunctionTool(
-        lambda query: "ok", name="stub_tool_dbg", description="a stub", parameters={}
+        lambda query: "ok",
+        name="stub_tool_dbg",
+        description="a stub",
+        parameters={},
+        effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.TEXT,
     )
     tool_registry.register(stub, source="function")
     try:
@@ -44,6 +49,8 @@ def test_tools_discover_ranks_relevant_tool():
         name="wikipedia_search_dbg",
         description="Search Wikipedia for encyclopedia articles about a topic.",
         parameters={},
+        effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.TEXT,
     )
     tool_registry.register(stub, source="function")
     try:

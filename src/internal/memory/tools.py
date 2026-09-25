@@ -162,7 +162,7 @@ def build_memory_registry(
         _UpdateMemoryTool(store, user_id, counts),
         _DeleteMemoryTool(store, user_id, counts),
     ]
-    registry = ToolRegistry()
+    registry = ToolRegistry(strict=True)
     for tool in tools:
         registry.register(tool)
     schemas = [tool.schema.to_dict() for tool in tools]

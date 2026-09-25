@@ -213,13 +213,17 @@ async def register_mcp_tools(registry: ToolRegistry, specs: list[McpServerSpec])
             )
             continue
         for remote in remote_tools:
-            registry.register(
-                _build_tool(spec, remote),
-                source=MCP_SOURCE,
-                provider_id=spec.name,
-                agent_callable=remote.name not in spec.agent_exclude,
-                user_scoped=remote.name in spec.user_scoped,
-            )
+            try:
+                registry.register(
+                    _build_tool(spec, remote),
+                    source=MCP_SOURCE,
+                    provider_id=spec.name,
+                    agent_callable=remote.name not in spec.agent_exclude,
+                    user_scoped=remote.name in spec.user_scoped,
+                )
+            except ValueError as exc:
+                logger.warning("skipping MCP tool %s: %s", remote.name, exc)
+                continue
             registered += 1
         logger.info(
             "MCP server %r: registered %d tool(s)", spec.name, len(remote_tools)

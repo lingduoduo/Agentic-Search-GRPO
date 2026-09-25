@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from src.internal.auth import AuthenticatedUser
 from src.internal.configs import AppSettings
 from src.internal.servers._auth import make_require_admin
+from src.internal.tools.api import ApiToolError
 from src.internal.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,16 @@ def create_tools_router(settings: AppSettings) -> APIRouter:
                 req.openapi_json,
                 name=req.name,
                 headers=req.headers or None,
+            )
+        except ApiToolError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            )
+        except ValueError as exc:
+            # A contract violation raised by ToolRegistry.register() itself
+            # (strict mode), not a malformed spec — distinct from ApiToolError.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             )
         except Exception as exc:
             raise HTTPException(

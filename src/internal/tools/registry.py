@@ -458,7 +458,7 @@ class ToolRegistry:
 # Module-level singleton + convenience decorator
 # ---------------------------------------------------------------------------
 
-tool_registry = ToolRegistry()
+tool_registry = ToolRegistry(strict=True)
 
 
 def tool(
