@@ -54,6 +54,10 @@ from src.agents.core.base import (
     simple_timer,
 )
 from src.agents.core.state import PerformanceMetrics, TaskStatus, ToolExecutionResult
+from src.internal.observability.agent_metrics import (
+    record_decision_round,
+    track_agent_run,
+)
 from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools import FailureCategory
 from src.internal.tools.base import Tool, ToolEffect
@@ -642,6 +646,7 @@ class ToolAgentLoop(AgentLoopBase):
             payload["error_message"] = result.error_message
         return json.dumps(payload)
 
+    @track_agent_run("tool")
     async def run(
         self,
         messages: list[dict[str, Any]],
@@ -676,6 +681,7 @@ class ToolAgentLoop(AgentLoopBase):
         while True:
             # ── generate ─────────────────────────────────────────────────
             with simple_timer("generate_sequences", metrics):
+                record_decision_round()
                 response_ids = await self.generate_response_ids(
                     prompt_ids=prompt_ids,
                     sampling_params=sampling_params,
