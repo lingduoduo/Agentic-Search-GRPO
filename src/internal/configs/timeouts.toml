@@ -69,3 +69,7 @@ retry_budget_seconds = 10.0        # total retry sleep per run
 
 [sse]
 heartbeat_seconds = 15.0           # keepalive on an idle stream, 0 = off; env AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS
+
+[circuit_breaker]
+failure_threshold = 5              # consecutive failures that open a breaker
+open_seconds = 30.0                # how long an open breaker fails fast before one probe

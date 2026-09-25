@@ -153,6 +153,12 @@ class SSEPolicy:
 
 
 @dataclass(frozen=True)
+class CircuitBreakerPolicy:
+    failure_threshold: int
+    open_seconds: float
+
+
+@dataclass(frozen=True)
 class TimeoutPolicies:
     tools: ToolsPolicies
     retrieval: RetrievalPolicies
@@ -160,6 +166,7 @@ class TimeoutPolicies:
     llm: LLMPolicy
     tool_loop: ToolLoopPolicy
     sse: SSEPolicy
+    circuit_breaker: CircuitBreakerPolicy
 
 
 def _read_bundled() -> dict[str, Any]:

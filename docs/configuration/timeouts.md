@@ -169,3 +169,17 @@ behaviour change).
 | key | default | bounds | env override |
 |---|---|---|---|
 | `heartbeat_seconds` | 15.0 | keepalive on an idle stream, `0` = off | `AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS` |
+
+### `[circuit_breaker]`
+
+One policy for every serving-dependency breaker (`serpapi`, `browser_search`,
+`rerank`, `remote_llm`; see `src/internal/resilience/circuit_breaker.py`).
+A breaker opens after `failure_threshold` consecutive failures — a transport
+error, a timeout, HTTP 5xx or 429 — and then fails fast for `open_seconds`
+before letting one probe call through. Breaker state is per process and is
+reported under `circuits` by `GET /api/admin/metrics`.
+
+| key | default | bounds |
+|---|---|---|
+| `failure_threshold` | 5 | consecutive failures that open a breaker, `>= 1` |
+| `open_seconds` | 30.0 | how long an open breaker fails fast before one probe |

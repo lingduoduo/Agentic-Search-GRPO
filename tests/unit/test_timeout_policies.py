@@ -68,6 +68,7 @@ TODAY = {
         },
     },
     "sse": {"heartbeat_seconds": 15.0},
+    "circuit_breaker": {"failure_threshold": 5, "open_seconds": 30.0},
 }
 
 
@@ -149,6 +150,11 @@ def test_empty_path_env_means_bundled_only():
             "tool_loop.recovery.backoff_seconds",
         ),
         ({"llm": 5}, "llm"),
+        (
+            {"circuit_breaker": {"failure_threshold": 0}},
+            "circuit_breaker.failure_threshold",
+        ),
+        ({"circuit_breaker": {"open_seconds": 0}}, "circuit_breaker.open_seconds"),
     ],
 )
 def test_invalid_values_error_naming_the_key(overrides, path):
