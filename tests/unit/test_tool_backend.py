@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -205,7 +206,11 @@ def test_no_broker_means_on_approval_none(monkeypatch):
 
 
 def _make_app_with_memory(
-    *, llm=None, memory_compression=False, memory_auto_curate=False
+    *,
+    llm=None,
+    memory_compression=False,
+    memory_auto_curate=False,
+    memory_history_tokens=None,
 ):
     store = AgenticSearchStore(":memory:")
     app = FastAPI()
@@ -217,6 +222,7 @@ def _make_app_with_memory(
             llm=llm,
             memory_compression=memory_compression,
             memory_auto_curate=memory_auto_curate,
+            memory_history_tokens=memory_history_tokens,
         )
     )
     app.state.search_agent_manager = object()
@@ -383,3 +389,65 @@ def test_send_tool_schedules_compression_with_signed_in_user(monkeypatch):
         json={"message": "next", "session_id": session_id, "stream": False},
     )
     assert scheduled == [(5, True, sentinel, app.state._store, "u1", True)]
+
+
+class _SummaryLLM:
+    def complete(self, messages, **kwargs):
+        return "S"
+
+
+async def _await(task):
+    return await task
+
+
+def _seed_sized(store, n, chars=4000):
+    session = store.create_chat_session(title="long")
+    for i in range(n):
+        store.add_chat_message(
+            session.id,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"{i}:".ljust(chars, "x"),
+        )
+    return session.id
+
+
+def test_send_tool_passes_the_token_budget(monkeypatch):
+    app = _make_app_with_memory(memory_history_tokens=2500)
+    session_id = _seed_sized(app.state._store, 10)
+    captured = _capture_tool_agent(monkeypatch)
+    TestClient(app).post(
+        "/tool/send-tool-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert len(captured[0]) == 2
+
+
+@pytest.mark.parametrize("compression", [False, True])
+def test_send_tool_compresses_only_when_direct_compression_is_on(
+    monkeypatch, compression
+):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.servers.query_and_chat import tool_backend
+
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
+    app = _make_app_with_memory(
+        llm=_SummaryLLM(), memory_compression=compression, memory_history_tokens=2500
+    )
+    session_id = _seed_sized(app.state._store, 10)
+    _capture_tool_agent(monkeypatch)
+    tasks: list = []
+    real = tool_backend.schedule_compression
+
+    def spy(wm, **kw):
+        tasks.append(real(wm, **kw))
+        return tasks[-1]
+
+    monkeypatch.setattr(tool_backend, "schedule_compression", spy)
+    with TestClient(app) as client:
+        client.post(
+            "/tool/send-tool-message",
+            json={"message": "next", "session_id": session_id, "stream": False},
+        )
+        assert (tasks[0] is not None) is compression
+        if compression:
+            assert client.portal.call(_await, tasks[0]) is True

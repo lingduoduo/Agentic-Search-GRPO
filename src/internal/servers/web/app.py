@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from src.internal.auth import AuthenticatedUser
 from src.internal.servers._auth import caller_may_use_session, make_require_admin
 from src.internal.configs import AppSettings
+from src.internal.configs import get_env_int
 from src.internal.configs import get_timeout_policies
 from src.internal.configs import load_app_settings
 from src.internal.llm.interfaces import LLMConfig
@@ -155,6 +156,7 @@ from .tool_agent_runner import (
 from src.internal.cache.interface import get_cache_backend
 from src.internal.cache.serving import configure_serving_cache, reset_serving_cache
 from src.internal.memory.working import (
+    DEFAULT_HISTORY_TOKENS,
     MAX_HISTORY_MESSAGES,
     load_working_memory,
     schedule_compression,
@@ -189,12 +191,18 @@ class SearchExperienceSettings:
     # working unauthenticated for local research use.
     memory_require_auth: bool = False
     # Summarize turns that fall off the history tail into a system message the
-    # next turn sees, using the configured LLM client. Off by default; with no
-    # LLM client the flag is inert.
-    memory_compression: bool = False
+    # next turn sees, using the configured LLM client; inert without one.
+    # AGENTIC_SEARCH_MEMORY_COMPRESSION unset: on for /api/agent only, which
+    # already sends history to that llm; truthy: every surface; else: off.
+    memory_compression: bool = True
+    # The same for /chat and /tool, which answer with the local model: on,
+    # their older turns reach the remote llm, so it needs the explicit flag.
+    memory_compression_direct: bool = False
+    # Estimated-token budget of the history tail every surface sends.
+    memory_history_tokens: int = DEFAULT_HISTORY_TOKENS
     # On each compression event, also curate the summarized turns into the
     # signed-in user's long-term memories. Off by default; inert unless
-    # memory_compression is on; anonymous sessions are never curated.
+    # compression is on for that surface; anonymous sessions are never curated.
     memory_auto_curate: bool = False
     # Resolve follow-up turns into standalone retrieval queries (the answer
     # prompt still gets the raw message). Off by default until the multi-turn
@@ -218,6 +226,16 @@ class SearchExperienceSettings:
             return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
         app_settings = settings or load_app_settings()
+        compression_set = bool(
+            os.environ.get("AGENTIC_SEARCH_MEMORY_COMPRESSION", "").strip()
+        )
+        history_tokens = get_env_int(
+            os.environ, "AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS", DEFAULT_HISTORY_TOKENS
+        )
+        if history_tokens <= 0:
+            raise ValueError(
+                "AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS must be a positive integer."
+            )
         return cls(
             search_url=app_settings.services.retrieval_url,
             rerank_url=app_settings.services.rerank_url,
@@ -226,7 +244,11 @@ class SearchExperienceSettings:
             allow_client_search_url=_flag("AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL"),
             debug_panels=_flag("AGENTIC_SEARCH_DEBUG_PANELS"),
             memory_require_auth=_flag("AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH"),
-            memory_compression=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
+            memory_compression=(
+                not compression_set or _flag("AGENTIC_SEARCH_MEMORY_COMPRESSION")
+            ),
+            memory_compression_direct=_flag("AGENTIC_SEARCH_MEMORY_COMPRESSION"),
+            memory_history_tokens=history_tokens,
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
             follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
@@ -475,8 +497,9 @@ def _register_routers(
     debug_panels: bool = False,
     llm: LLMClient | None = None,
     memory_require_auth: bool = False,
-    memory_compression: bool = False,
+    memory_compression_direct: bool = False,
     memory_auto_curate: bool = False,
+    memory_history_tokens: int | None = None,
 ) -> None:
     """Attach all API routers and exception handlers to *app*."""
 
@@ -488,8 +511,9 @@ def _register_routers(
         create_chat_router(
             db,
             llm=llm,
-            memory_compression=memory_compression,
+            memory_compression=memory_compression_direct,
             memory_auto_curate=memory_auto_curate,
+            memory_history_tokens=memory_history_tokens,
         )
     )
     app.include_router(create_search_router(db, search_url=search_url))
@@ -502,8 +526,9 @@ def _register_routers(
             search_url=search_url,
             resolved=settings,
             llm=llm,
-            memory_compression=memory_compression,
+            memory_compression=memory_compression_direct,
             memory_auto_curate=memory_auto_curate,
+            memory_history_tokens=memory_history_tokens,
         )
     )
     app.include_router(query_basic_router)
@@ -1616,8 +1641,9 @@ def create_web_app(
         debug_panels=settings.debug_panels,
         llm=llm,
         memory_require_auth=settings.memory_require_auth,
-        memory_compression=settings.memory_compression,
+        memory_compression_direct=settings.memory_compression_direct,
         memory_auto_curate=settings.memory_auto_curate,
+        memory_history_tokens=settings.memory_history_tokens,
     )
 
     frontend_dist = _frontend_dist_path()
@@ -1795,6 +1821,7 @@ def create_web_app(
             db,
             session_id,
             keep_last=MAX_HISTORY_MESSAGES,
+            token_budget=settings.memory_history_tokens,
             cache=get_cache_backend() if settings.memory_compression else None,
         )
         history = working.messages

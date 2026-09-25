@@ -317,6 +317,7 @@ def _client_with(
     llm=None,
     memory_compression=False,
     memory_auto_curate=False,
+    memory_history_tokens=None,
 ):
     monkeypatch.setattr(
         "src.internal.servers.query_and_chat.chat_backend.resolve_active_user",
@@ -329,6 +330,7 @@ def _client_with(
             llm=llm,
             memory_compression=memory_compression,
             memory_auto_curate=memory_auto_curate,
+            memory_history_tokens=memory_history_tokens,
         )
     )
     app.state.search_agent_manager = object()
@@ -443,3 +445,68 @@ def test_send_chat_schedules_compression(store, monkeypatch):
         json={"message": "next", "session_id": session_id, "stream": False},
     )
     assert scheduled == [(5, True, sentinel, store, _USER_ID, True)]
+
+
+class _SummaryLLM:
+    def complete(self, messages, **kwargs):
+        return "S"
+
+
+async def _await(task):
+    return await task
+
+
+def _seed_sized(store, n, chars=4000):
+    session = store.create_chat_session(user_id=_USER_ID, title="long")
+    for i in range(n):
+        store.add_chat_message(
+            session.id,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"{i}:".ljust(chars, "x"),
+        )
+    return session.id
+
+
+def test_send_chat_passes_the_token_budget(store, monkeypatch):
+    session_id = _seed_sized(store, 10)
+    captured = _capture_plain_chat(monkeypatch)
+    client = _client_with(store, monkeypatch, memory_history_tokens=2500)
+    client.post(
+        "/chat/send-chat-message",
+        json={"message": "next", "session_id": session_id, "stream": False},
+    )
+    assert len(captured[0]) == 2
+
+
+@pytest.mark.parametrize("compression", [False, True])
+def test_send_chat_compresses_only_when_direct_compression_is_on(
+    store, monkeypatch, compression
+):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.servers.query_and_chat import chat_backend
+
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", InMemoryCache())
+    session_id = _seed_sized(store, 10)
+    _capture_plain_chat(monkeypatch)
+    tasks: list = []
+    real = chat_backend.schedule_compression
+
+    def spy(wm, **kw):
+        tasks.append(real(wm, **kw))
+        return tasks[-1]
+
+    monkeypatch.setattr(chat_backend, "schedule_compression", spy)
+    with _client_with(
+        store,
+        monkeypatch,
+        llm=_SummaryLLM(),
+        memory_compression=compression,
+        memory_history_tokens=2500,
+    ) as client:
+        client.post(
+            "/chat/send-chat-message",
+            json={"message": "next", "session_id": session_id, "stream": False},
+        )
+        assert (tasks[0] is not None) is compression
+        if compression:
+            assert client.portal.call(_await, tasks[0]) is True

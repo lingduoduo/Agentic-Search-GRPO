@@ -77,6 +77,7 @@ def create_chat_router(
     llm=None,
     memory_compression: bool = False,
     memory_auto_curate: bool = False,
+    memory_history_tokens: int | None = None,
 ) -> APIRouter:
     """Return an APIRouter for chat session endpoints bound to *store*.
 
@@ -85,7 +86,8 @@ def create_chat_router(
     background and the next turn sees the summary. Plain chat itself still
     runs on the local model. ``memory_auto_curate`` additionally curates each
     summarized span into the signed-in user's memories; anonymous sessions
-    are never curated.
+    are never curated. ``memory_history_tokens`` caps the history tail by
+    estimated tokens (None: the message count alone).
     """
 
     router = APIRouter(prefix="/chat", tags=["chat"])
@@ -227,6 +229,7 @@ def create_chat_router(
             store,
             session_id,
             keep_last=MAX_HISTORY_MESSAGES,
+            token_budget=memory_history_tokens,
             cache=get_cache_backend() if memory_compression else None,
         )
         history = working.messages

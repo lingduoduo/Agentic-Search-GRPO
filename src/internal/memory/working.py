@@ -1,11 +1,14 @@
 """Working memory: the session tail plus a compressed summary of what fell off it.
 
-Every conversational surface used to keep the last N messages and forget the
-rest. This module keeps the same tail and, when turns fall outside it, hands
-them to a background summarizer whose output is prepended to the next turn as
-one system message. Per-session state (the summary and the id of the last
-message it covers) lives in the process's ``CacheBackend`` -- in-memory by
-default, Redis when ``CACHE_BACKEND=redis`` -- so no new dependency is added.
+Every surface sends the newest messages that fit both a message cap and an
+estimated-token budget (``AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS``). When turns
+fall outside that tail they go to a background summarizer, one bounded chunk
+per call, whose output is prepended to the next turn as one system message.
+Summarization is on by default for ``/api/agent`` only; see
+``AGENTIC_SEARCH_MEMORY_COMPRESSION``. Per-session state (the summary and the
+id of the last message it covers) lives in the process's ``CacheBackend`` --
+in-memory by default, Redis when ``CACHE_BACKEND=redis`` -- so no new
+dependency is added.
 """
 
 from __future__ import annotations
