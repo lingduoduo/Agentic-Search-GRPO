@@ -8,7 +8,7 @@ import logging
 import time
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ from src.context.models import (
 )
 from src.context.pipeline import generate_answer, retrieve_contexts
 from src.context.query_enhancer import QueryEnhancer
+from src.internal.configs.timeouts import get_timeout_policies
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,9 @@ class AgenticRAGConfig:
     topk: int = 5
     retrieval_url: str = "http://localhost:8001/retrieve"
     max_followups_per_round: int = 5
-    sufficiency_timeout_s: float = 5.0
+    sufficiency_timeout_s: float = field(
+        default_factory=lambda: get_timeout_policies().llm.sufficiency_timeout_seconds
+    )
     filters: SearchFilters | None = None
 
 

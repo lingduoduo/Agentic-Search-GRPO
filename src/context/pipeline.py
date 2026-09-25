@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Callable
 
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.observability.stage_metrics import mark_answer_generation
 
 from .models import AnswerGenerationRequest
@@ -197,7 +198,8 @@ def _generate_guarded_answer(
         verify_claim,
     )
 
-    max_attempts = 1 + min(max(request.grounded_generation.max_retries, 0), 1)
+    cap = get_timeout_policies().llm.grounded_max_retries
+    max_attempts = 1 + min(max(request.grounded_generation.max_retries, 0), cap)
     raw_text = ""
     feedback = ""
     result = None

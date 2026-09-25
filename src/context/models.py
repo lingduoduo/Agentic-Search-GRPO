@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Protocol
 
 from src.context.search import SearchResult
+from src.internal.configs.timeouts import get_timeout_policies
 
 from .enums import AgentBehavior
 from .enums import AnswerStyle
@@ -282,7 +283,9 @@ class AgentBehaviorConfig:
 @dataclass(frozen=True)
 class GroundedGenerationConfig:
     enabled: bool = True
-    max_retries: int = 1
+    max_retries: int = field(
+        default_factory=lambda: get_timeout_policies().llm.grounded_max_retries
+    )
     overlap_threshold: float = 0.15
 
 

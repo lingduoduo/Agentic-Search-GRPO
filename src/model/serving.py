@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Any, Protocol, runtime_checkable
 
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.observability.stage_metrics import note_generation
 from src.internal.servers.web import request_capture as _capture
 
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Cap on remembered truncations, so a caller that never pops cannot leak.
 _TRUNCATION_RECORD_LIMIT = 256
+
+# Sentinel distinguishing "argument omitted" (read the policy) from an
+# explicit `generation_timeout_seconds=None` (keep meaning "no timeout").
+_FROM_POLICY = object()
 
 
 @runtime_checkable
@@ -249,12 +254,16 @@ class OpenAIServerManager:
         tokenizer: Any,
         base_url: str,
         model: str,
-        timeout_seconds: int = 120,
+        timeout_seconds: float | None = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else get_timeout_policies().llm.remote_total_timeout_seconds
+        )
         # One session per event loop driving this manager -- see _get_session.
         self._sessions: dict[Any, Any] = {}
 
@@ -420,8 +429,8 @@ class LocalServerManager:
         torch_dtype: str | None = None,
         allow_unsafe_mps: bool = False,
         local_files_only: bool = True,
-        generation_timeout_seconds: float | None = 120.0,
-        generation_heartbeat_seconds: float = 10.0,
+        generation_timeout_seconds: float | None | object = _FROM_POLICY,
+        generation_heartbeat_seconds: float | None = None,
     ) -> None:
         self.model_path = model_path
         self.device = _resolve_local_device(device)
@@ -429,10 +438,18 @@ class LocalServerManager:
         self.torch_dtype = torch_dtype
         self.allow_unsafe_mps = allow_unsafe_mps
         self.local_files_only = local_files_only
-        self.generation_timeout_seconds = generation_timeout_seconds
+        self.generation_timeout_seconds = (
+            get_timeout_policies().llm.local_generation_timeout_seconds
+            if generation_timeout_seconds is _FROM_POLICY
+            else generation_timeout_seconds
+        )
         # request_id -> True for generations the wall clock cut short.
         self._truncated: dict[str, bool] = {}
-        self.generation_heartbeat_seconds = generation_heartbeat_seconds
+        self.generation_heartbeat_seconds = (
+            get_timeout_policies().llm.local_heartbeat_seconds
+            if generation_heartbeat_seconds is None
+            else generation_heartbeat_seconds
+        )
         self._model: Any = None
         self._tokenizer: Any = None
 

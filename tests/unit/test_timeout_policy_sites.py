@@ -338,3 +338,79 @@ def test_web_hybrid_uses_policy(monkeypatch):
     ):
         asyncio.run(_run())
     assert seen and all(s == (3.0, 2) for s in seen)
+
+
+def _make_default_llm(multi_llm):
+    return multi_llm.LitellmLLM(
+        api_key="test-key",
+        model_provider="openai",
+        model_name="test-model",
+        max_input_tokens=1024,
+    )
+
+
+def test_llm_socket_read_timeout_follows_policy():
+    from src.internal.llm import multi_llm
+
+    with overridden({"llm": {"socket_read_timeout_seconds": 33}}):
+        llm = _make_default_llm(multi_llm)
+    assert llm._timeout == 33.0
+
+
+def test_remote_server_manager_timeout_follows_policy():
+    from src.model.serving import OpenAIServerManager
+
+    with overridden({"llm": {"remote_total_timeout_seconds": 44}}):
+        m = OpenAIServerManager(tokenizer=None, base_url="http://x", model="m")
+    assert m.timeout_seconds == 44.0
+
+
+def test_local_generation_timeout_policy_and_explicit_none():
+    from src.model.serving import LocalServerManager
+
+    with overridden(
+        {"llm": {"local_generation_timeout_seconds": 50, "local_heartbeat_seconds": 2}}
+    ):
+        m = LocalServerManager(model_path="unused/model", device="cpu")
+    assert (m.generation_timeout_seconds, m.generation_heartbeat_seconds) == (50.0, 2.0)
+
+    with overridden({"llm": {"local_generation_timeout_seconds": 50}}):
+        m_none = LocalServerManager(
+            model_path="unused/model", device="cpu", generation_timeout_seconds=None
+        )
+    assert m_none.generation_timeout_seconds is None
+
+
+def test_sufficiency_and_grounded_retries_follow_policy():
+    from src.agents.search.agentic_rag import AgenticRAGConfig
+    from src.context.models import GroundedGenerationConfig
+
+    with overridden(
+        {"llm": {"sufficiency_timeout_seconds": 2, "grounded_max_retries": 0}}
+    ):
+        assert AgenticRAGConfig().sufficiency_timeout_s == 2.0
+        assert GroundedGenerationConfig().max_retries == 0
+
+
+def test_grounded_clamp_reads_policy():
+    from src.context import (
+        AnswerGenerationRequest,
+        GroundedGenerationConfig,
+        generate_answer,
+    )
+    from tests.unit.test_grounded_generation import SequenceLLM, _bundle, _draft
+
+    llm = SequenceLLM(
+        _draft(("Tomorrow's forecast predicts rain.", ["D1"])),
+        _draft(("FAISS enables vector similarity search.", ["D1"])),
+    )
+    with overridden({"llm": {"grounded_max_retries": 0}}):
+        generate_answer(
+            AnswerGenerationRequest(
+                question="What is FAISS?",
+                context=_bundle(),
+                grounded_generation=GroundedGenerationConfig(max_retries=1),
+            ),
+            llm=llm,
+        )
+    assert len(llm.calls) == 1
