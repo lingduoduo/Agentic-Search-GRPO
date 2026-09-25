@@ -22,6 +22,8 @@ from src.shared_configs.intent import (
     DEFAULT_TOP_K,
 )
 
+from .timeouts import TimeoutPolicies, get_timeout_policies, load_timeout_policies
+
 EnvMapping = Mapping[str, str]
 
 DEFAULT_RETRIEVAL_URL = "http://localhost:8001/retrieve"
@@ -245,6 +247,7 @@ class AppSettings:
     # Neighbors averaged per route, selected jointly with the route margin.
     intent_top_k: int = DEFAULT_TOP_K
     route_clarification: bool = True
+    timeouts: TimeoutPolicies = field(default_factory=get_timeout_policies)
 
     def __post_init__(self) -> None:
         for name in (
@@ -268,14 +271,7 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
     """
 
     source = env if env is not None else os.environ
-    tool_approval_timeout_seconds = get_env_float(
-        source, "TOOL_APPROVAL_TIMEOUT_SECONDS", 60.0
-    )
-    if (
-        not math.isfinite(tool_approval_timeout_seconds)
-        or tool_approval_timeout_seconds <= 0
-    ):
-        raise ValueError("TOOL_APPROVAL_TIMEOUT_SECONDS must be positive.")
+    timeouts = load_timeout_policies(source)
     intent_min_route_margin = get_env_float(
         source, "AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN", DEFAULT_MIN_ROUTE_MARGIN
     )
@@ -372,15 +368,13 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
         search_agent_device=get_env_str(source, "SEARCH_AGENT_DEVICE", "mps"),
         search_agent_server_url=get_env_str(source, "SEARCH_AGENT_SERVER_URL", None),
         tool_agent_parser=get_env_str(source, "TOOL_AGENT_PARSER", "json"),
-        tool_approval_timeout_seconds=tool_approval_timeout_seconds,
+        tool_approval_timeout_seconds=timeouts.tool_loop.approval_timeout_seconds,
         mcp_servers=get_env_str(source, "AGENTIC_SEARCH_MCP_SERVERS", None),
         mcp_token=get_env_str(source, "AGENTIC_SEARCH_MCP_TOKEN", None),
         mcp_agent_exclude=get_env_str(source, "AGENTIC_SEARCH_MCP_AGENT_EXCLUDE", None),
         mcp_user_scoped=get_env_str(source, "AGENTIC_SEARCH_MCP_USER_SCOPED", None),
         tool_agent_max_tokens=get_env_int(source, "TOOL_AGENT_MAX_TOKENS", 1024),
-        generation_timeout_seconds=get_env_float(
-            source, "AGENTIC_SEARCH_GENERATION_TIMEOUT", 120.0
-        ),
+        generation_timeout_seconds=timeouts.llm.local_generation_timeout_seconds,
         intent_index_path=(
             Path(intent_index_path_value) if intent_index_path_value else None
         ),
@@ -391,6 +385,7 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
         route_clarification=get_env_bool(
             source, "AGENTIC_SEARCH_ROUTE_CLARIFICATION", True
         ),
+        timeouts=timeouts,
     )
 
 

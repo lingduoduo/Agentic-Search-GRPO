@@ -30,8 +30,9 @@ pypdf>=6.12.2
 psutil>=5.9.0
 python-docx>=1.1.0
 python-pptx>=1.0.0
-# Backport for TOML-based packaging contract tests on Python 3.10.
-tomli>=2.0.0; python_version < "3.11"
+# Unconditional so the timeouts loader's tomli fallback (the Python 3.10
+# path) is exercised on every CI interpreter, and for TOML packaging tests.
+tomli>=2.0.0
 # Declared because tests/unit/test_docker_stack_contract.py parses
 # docker/docker-compose.yml directly. It previously arrived only as a transitive
 # of starlette/pydantic-settings/pyserini, which is how httpx went undeclared.
