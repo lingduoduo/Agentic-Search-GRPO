@@ -203,6 +203,8 @@ class SearchExperienceSettings:
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
+    # Seconds past that TTL an expired entry answers a failed live call.
+    search_cache_stale: int = 3600
     # Mount the unauthenticated Prometheus GET /metrics. Recording is always on;
     # this only controls exposure. Restrict the route at the network layer.
     metrics_enabled: bool = False
@@ -230,6 +232,7 @@ class SearchExperienceSettings:
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
             follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
+            search_cache_stale=app_settings.services.search_cache_stale_seconds,
             metrics_enabled=_flag("AGENTIC_SEARCH_METRICS_ENABLED"),
         )
 
@@ -1579,7 +1582,9 @@ def create_web_app(
         # Process-local cache behind SearchClient.retrieve, the web providers in
         # search_tool, and RerankHTTPRankingStage. Owned here so nothing is
         # cached in a process that never started the web app.
-        configure_serving_cache(settings.search_cache_ttl)
+        configure_serving_cache(
+            settings.search_cache_ttl, stale_seconds=settings.search_cache_stale
+        )
         try:
             yield
         finally:

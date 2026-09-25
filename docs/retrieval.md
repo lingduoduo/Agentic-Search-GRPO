@@ -307,6 +307,17 @@ different ACLs never share an entry, and every call site still enforces the ACL
 on what it gets back — a hit is checked exactly as a miss is. Hits are copied
 before they are returned, so a caller mutating a result cannot poison later hits.
 
+When the live call fails, an expired entry still inside the grace window
+(`AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS`, default `3600` s past the TTL,
+`0` disables) answers instead, with `metadata["stale"] = True` on every page or
+result. For `search_tool` a failure is a non-empty result where every page is
+an error, a timeout or blank (an open circuit is an error page); an empty
+result is a successful empty search and never falls back, and a mixed result
+is returned as-is. The tool agent's `web_search` cascade reaches SerpAPI
+through `search_tool`, so it shares this. For `SearchClient.retrieve` the
+fallback is all-or-nothing: if any missing query has no stale row, the error is
+raised as before. The rerank cache has no stale fallback.
+
 **Build indexes:**
 
 ```bash

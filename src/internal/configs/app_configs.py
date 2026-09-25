@@ -44,6 +44,9 @@ class ServiceSettings:
     # TTL of the process-local serving cache (retrieval rows, web-provider
     # pages, rerank scores) the web app configures at startup; 0 disables it.
     search_cache_ttl_seconds: int = 300
+    # Seconds past the TTL an expired entry is kept to answer when the live
+    # call fails (served labelled ``stale``); 0 disables the fallback.
+    search_cache_stale_seconds: int = 3600
     retrieval_host: str = "0.0.0.0"
     retrieval_port: int = 8001
     web_host: str = "0.0.0.0"
@@ -285,6 +288,13 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
     intent_index_path_value = get_env_str(
         source, "AGENTIC_SEARCH_INTENT_INDEX_PATH", None
     )
+    search_cache_stale_seconds = get_env_int(
+        source, "AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS", 3600
+    )
+    if search_cache_stale_seconds < 0:
+        raise ValueError(
+            "AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS must not be negative."
+        )
     return AppSettings(
         services=ServiceSettings(
             retrieval_url=get_env_str(
@@ -299,6 +309,7 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
             search_cache_ttl_seconds=get_env_int(
                 source, "AGENTIC_SEARCH_SEARCH_CACHE_TTL", 300
             ),
+            search_cache_stale_seconds=search_cache_stale_seconds,
             retrieval_host=get_env_str(
                 source, "AGENTIC_SEARCH_RETRIEVAL_HOST", "0.0.0.0"
             ),
