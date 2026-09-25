@@ -42,7 +42,7 @@ error text, recovery, or the cascade.
 **Interfaces:**
 - Produces: `SearchPage.is_blank -> bool`, a property.
 
-- [ ] **Step 1: Failing tests.** Extend the `serp_calls` fake so that
+- [x] **Step 1: Failing tests.** Extend the `serp_calls` fake so that
   `query == "timeout"` returns `[SearchPage(error="", timed_out=True)]` and
   `query == "blank"` returns `[SearchPage()]`. Add these tests:
 
@@ -62,11 +62,11 @@ def test_is_blank_only_for_an_empty_page():
     assert not SearchPage(title="t").is_blank
 ```
 
-- [ ] **Step 2: Run.** `.venv/bin/python -m pytest
+- [x] **Step 2: Run.** `.venv/bin/python -m pytest
   tests/unit/test_search_tools_cache.py -q`. Expected: FAIL, because
   `is_blank` is missing and the blank page is cached, so only one call is
   made.
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
 ```python
     @property
@@ -84,7 +84,7 @@ def test_is_blank_only_for_an_empty_page():
     ):
 ```
 
-- [ ] **Step 4: Run again.** Expected: PASS. Then commit.
+- [x] **Step 4: Run again.** Expected: PASS. Then commit.
 
 ### Task 2: Drop blank pages from search documents
 
@@ -92,7 +92,7 @@ def test_is_blank_only_for_an_empty_page():
 - Modify: `src/internal/servers/web/app.py` (`_documents_from_search_pages`)
 - Test: `tests/unit/servers/web/test_hybrid_web_fallback.py`
 
-- [ ] **Step 1: Failing tests.**
+- [x] **Step 1: Failing tests.**
 
 ```python
 @pytest.mark.asyncio
@@ -133,23 +133,23 @@ def test_blank_pages_are_dropped_and_ids_stay_contiguous():
     assert [d.url for d in docs] == ["https://a", "https://b"]
 ```
 
-- [ ] **Step 2: Run.** `.venv/bin/python -m pytest
+- [x] **Step 2: Run.** `.venv/bin/python -m pytest
   tests/unit/servers/web/test_hybrid_web_fallback.py -q`. Expected: FAIL.
   The browser fake raises "must not be called", because the blank doc counts
   as usable, and the dropped-page test fails on its ids.
-- [ ] **Step 3: Implement.** In `_documents_from_search_pages`, iterate over
+- [x] **Step 3: Implement.** In `_documents_from_search_pages`, iterate over
   `[p for p in pages if not p.is_blank]`, so `start_index + offset` stays
   contiguous.
-- [ ] **Step 4: Run again.** Expected: PASS. Then run the hybrid, cache and
+- [x] **Step 4: Run again.** Expected: PASS. Then run the hybrid, cache and
   search suites and commit.
 
 ### Task 3: Verify and ship
 
-- [ ] **Mutation checks.**
+- [x] **Mutation checks.**
   - Remove the blank filter and expect the hybrid tests to go red.
   - Remove `p.is_blank` from the cache guard and expect the cache test to
     go red.
   - Restore both, then delete `__pycache__`.
-- [ ] **Full verification.** Run `.venv/bin/python -m pytest tests/unit/ -q`,
+- [x] **Full verification.** Run `.venv/bin/python -m pytest tests/unit/ -q`,
   then `ruff check . && ruff format --check .`, then `git diff --check`.
-- [ ] **Ship.** Get a fresh review, push, and open the PR.
+- [x] **Ship.** Get a fresh review, push, and open the PR.
