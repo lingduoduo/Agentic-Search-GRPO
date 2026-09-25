@@ -54,7 +54,7 @@
 **Interfaces:**
 - Produces: `estimate_tokens(text: str) -> int`; `DEFAULT_HISTORY_TOKENS = 2500`; `load_working_memory(store, session_id, *, keep_last=MAX_HISTORY_MESSAGES, token_budget: int | None = None, cache=None) -> WorkingMemory`; private `_record_tokens(record) -> int` (used by Task 2).
 
-- [ ] **Step 1: Write the failing tests** (append after `test_default_keep_last_is_forty`; add `estimate_tokens` to the import block)
+- [x] **Step 1: Write the failing tests** (append after `test_default_keep_last_is_forty`; add `estimate_tokens` to the import block)
 
 ```python
 def _seed_sized(store: AgenticSearchStore, sizes: list[int]) -> tuple[str, list]:
@@ -144,12 +144,12 @@ def test_cursor_inside_the_budgeted_tail_ignores_summary(store, cache):
     assert [m.content for m in wm.messages] == [r.content for r in records[7:]]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/memory/test_working_memory.py -q -p no:cacheprovider`
 Expected: collection ERROR — `ImportError: cannot import name 'estimate_tokens'`.
 
-- [ ] **Step 3: Implement** in `working.py`
+- [x] **Step 3: Implement** in `working.py`
 
 Add `import math`. After `MAX_HISTORY_MESSAGES = 40`:
 
@@ -199,12 +199,12 @@ In `load_working_memory`, add the `token_budget: int | None = None` keyword (bet
 
 Docstring: "Return the newest messages -- at most ``keep_last``, and with ``token_budget`` set, only as many as fit its estimate (the newest always) -- prefixed by the stored summary when one covers the dropped prefix." Keep the `cache=None` paragraph and add "``token_budget=None`` is the pure message count."
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/unit/memory/test_working_memory.py -q -p no:cacheprovider`
 Expected: all pass.
 
-- [ ] **Step 5: Commit** — `git add src/internal/memory/working.py tests/unit/memory/test_working_memory.py && git commit -m "Working memory: token-budgeted session tail"`
+- [x] **Step 5: Commit** — `git add src/internal/memory/working.py tests/unit/memory/test_working_memory.py && git commit -m "Working memory: token-budgeted session tail"`
 
 ---
 
@@ -218,7 +218,7 @@ Expected: all pass.
 - Consumes: `_record_tokens`, `_seed_sized` (Task 1).
 - Produces: `_SUMMARY_INPUT_TOKENS = 3000`, `_CLIP_MARKER: str`.
 
-- [ ] **Step 1: Write the failing tests** (append in the compress_session section)
+- [x] **Step 1: Write the failing tests** (append in the compress_session section)
 
 ```python
 # 4000 chars = 1000 tokens + 4 overhead: two records fit the 3000-token input.
@@ -276,12 +276,12 @@ def test_curation_covers_the_bounded_span(store, cache):
     assert load_state(cache, sid).curated_through == records[1].id
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/memory/test_working_memory.py -q -p no:cacheprovider -k "bounded or drains or clipped"`
 Expected: FAIL — `records[2].content` is in the prompt / cursor at `records[19]` after one call / `AttributeError: _CLIP_MARKER`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 After `_SUMMARY_MAX_TOKENS = 400`:
 
@@ -324,9 +324,9 @@ In `compress_session`, immediately before `last_id = pending[-1].id`:
 
 Docstring of `compress_session`: "Summarize the oldest chunk of ``pending`` (up to ``_SUMMARY_INPUT_TOKENS``) into the session's stored summary; the rest drains on later turns."
 
-- [ ] **Step 4: Run** the whole file — all pass.
+- [x] **Step 4: Run** the whole file — all pass.
 
-- [ ] **Step 5: Commit** — `git commit -m "Working memory: bound the summarizer's input to one chunk per call"`
+- [x] **Step 5: Commit** — `git commit -m "Working memory: bound the summarizer's input to one chunk per call"`
 
 ---
 
@@ -342,7 +342,7 @@ Docstring of `compress_session`: "Summarize the oldest chunk of ``pending`` (up 
 - Consumes: `DEFAULT_HISTORY_TOKENS`, `load_working_memory(..., token_budget=...)` (Task 1).
 - Produces: `SearchExperienceSettings.memory_compression: bool = True`, `.memory_compression_direct: bool = False`, `.memory_history_tokens: int = 2500`; `create_chat_router(..., memory_history_tokens: int | None = None)`; `create_tool_router(..., memory_history_tokens: int | None = None)`; `_register_routers(..., memory_compression_direct: bool = False, memory_history_tokens: int | None = None, ...)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `test_web_experience_app.py` — replace `test_memory_compression_flag_defaults_off_and_reads_env` with:
 
@@ -674,12 +674,12 @@ def test_send_tool_compresses_only_when_direct_compression_is_on(
 
 (The `False` case is what `/chat` and `/tool` receive under default settings, proven by the `_register_routers` test; the `True` case is `=1`.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/servers/web/test_web_experience_app.py tests/unit/test_chat_backend.py tests/unit/test_tool_backend.py -q -p no:cacheprovider -k "memory or budget or compress"`
 Expected: FAIL — `TypeError: unexpected keyword 'memory_compression_direct'` / `'memory_history_tokens'`, and the tri-state defaults.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `app.py`: `from src.internal.configs import get_env_int`; import `DEFAULT_HISTORY_TOKENS` from `working`. Fields:
 
@@ -731,9 +731,9 @@ and in `cls(...)`:
 
 `working.py` module docstring: the tail is capped by message count and an estimated-token budget; the dropped turns are summarized a bounded chunk at a time; on by default for `/api/agent`.
 
-- [ ] **Step 4: Run** the three files plus `tests/unit/memory/ tests/unit/test_documented_env_vars.py tests/unit/test_configs.py tests/unit/servers/web/test_loop_runners.py` — all pass.
+- [x] **Step 4: Run** the three files plus `tests/unit/memory/ tests/unit/test_documented_env_vars.py tests/unit/test_configs.py tests/unit/servers/web/test_loop_runners.py` — all pass.
 
-- [ ] **Step 5: Commit** — `git commit -m "Working memory: history token budget on every surface, compression on by default for /api/agent"`
+- [x] **Step 5: Commit** — `git commit -m "Working memory: history token budget on every surface, compression on by default for /api/agent"`
 
 ---
 
@@ -745,16 +745,16 @@ and in `cls(...)`:
 
 No behavior, so no new test: the check is that nothing reads what is deleted.
 
-- [ ] **Step 1:** `git grep -n "COMPRESSION_TRIGGER_RATIO\|COMPRESSION\.md" -- ':!docs/superpowers'` — expect only the three sites above.
-- [ ] **Step 2:** Delete the comment + `COMPRESSION_TRIGGER_RATIO` block in `chat_configs.py`, the `"COMPRESSION_TRIGGER_RATIO": 0.8,` line in `default_config.py`, and `git rm src/internal/chat/COMPRESSION.md`.
-- [ ] **Step 3:** Re-run the grep (expect nothing) and `.venv/bin/python -m pytest tests/unit/test_configs.py tests/unit/test_documented_env_vars.py -q -p no:cacheprovider`.
-- [ ] **Step 4: Commit** — `git commit -m "Remove the dead COMPRESSION_TRIGGER_RATIO config and COMPRESSION.md"`
+- [x] **Step 1:** `git grep -n "COMPRESSION_TRIGGER_RATIO\|COMPRESSION\.md" -- ':!docs/superpowers'` — expect only the three sites above.
+- [x] **Step 2:** Delete the comment + `COMPRESSION_TRIGGER_RATIO` block in `chat_configs.py`, the `"COMPRESSION_TRIGGER_RATIO": 0.8,` line in `default_config.py`, and `git rm src/internal/chat/COMPRESSION.md`.
+- [x] **Step 3:** Re-run the grep (expect nothing) and `.venv/bin/python -m pytest tests/unit/test_configs.py tests/unit/test_documented_env_vars.py -q -p no:cacheprovider`.
+- [x] **Step 4: Commit** — `git commit -m "Remove the dead COMPRESSION_TRIGGER_RATIO config and COMPRESSION.md"`
 
 ---
 
 ### Task 5: Mutation checks and final verification
 
-- [ ] Mutation A: in `_fit_budget` delete `if kept and used > token_budget: break` → `test_token_budget_keeps_newest_records_that_fit` must go red. Restore, `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`, `git diff --stat` clean.
-- [ ] Mutation B: in `compress_session` delete `pending = _bounded_span(pending)` → `test_compress_summarizes_one_bounded_chunk_of_a_backlog` must go red. Restore, clear `__pycache__`, diff clean.
-- [ ] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` — 0 failures.
-- [ ] `ruff check . && ruff format --check .`; `git diff --check origin/main...HEAD`.
+- [x] Mutation A: in `_fit_budget` delete `if kept and used > token_budget: break` → `test_token_budget_keeps_newest_records_that_fit` must go red. Restore, `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`, `git diff --stat` clean.
+- [x] Mutation B: in `compress_session` delete `pending = _bounded_span(pending)` → `test_compress_summarizes_one_bounded_chunk_of_a_backlog` must go red. Restore, clear `__pycache__`, diff clean.
+- [x] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` — 0 failures.
+- [x] `ruff check . && ruff format --check .`; `git diff --check origin/main...HEAD`.
