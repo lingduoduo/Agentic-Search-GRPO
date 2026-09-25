@@ -46,10 +46,10 @@ ALLOWED = {
     # PublicDataError.attempts: how many attempts a raised error reports having
     # made (a bookkeeping default of 1), not the tools.public_data.max_attempts
     # retry-loop policy.
-    "src/internal/tools/public_data/_http.py:67 attempts",
+    "src/internal/tools/public_data/_http.py:68 attempts",
     # _unavailable_result's `retries` parameter: the retry_count to report on an
     # already-decided unavailable outcome (0 = none happened), not a policy default.
-    "src/agents/tool/tool_calling.py:540 retries",
+    "src/agents/tool/tool_calling.py:544 retries",
     # RecoveryState.retries: a per-run counter initialized to 0, not a
     # tool_loop.recovery.max_retries policy default.
     "src/agents/tool/recovery.py:88 retries",
