@@ -25,7 +25,6 @@ _RE_EXPORTS = (
     "ApiToolRegistry",
     "ApiToolSpec",
     "SearchPage",
-    "build_search_tool",
     "fetch_pages_concurrently",
     "fetch_url",
     "format_search_pages",
@@ -38,15 +37,12 @@ _RE_EXPORTS = (
     "ParameterTypeMap",
     "build_search_routing_tool",
     "build_rag_routing_tool",
-    "ChatTool",
 )
 
 _SUBMODULES = (
     "api",
     "base",
-    "built_in_tools",
     "html_text",
-    "interface",
     "knowledge_base",
     "openapi_schema",
     "parsers",

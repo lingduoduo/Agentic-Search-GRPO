@@ -17,7 +17,12 @@ import time
 from typing import Any, Callable
 
 from src.context.retrieval.client import aiohttp
-from src.internal.tools.base import FailureCategory, ToolErrorText, ToolFailure
+from src.internal.tools.base import (
+    FailureCategory,
+    InvalidToolInput,
+    ToolErrorText,
+    ToolFailure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +257,11 @@ def guarded(fn: Callable) -> Callable:
             return json.dumps(await fn(**kwargs))
         except PublicDataError as exc:
             return ToolErrorText(json.dumps({"error": str(exc)}), _classify(exc))
+        except InvalidToolInput as exc:
+            return ToolErrorText(
+                json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
+                ToolFailure(FailureCategory.INVALID_INPUT, str(exc)),
+            )
         except Exception as exc:  # noqa: BLE001 - a tool must never raise
             logger.debug("tool %s failed", getattr(fn, "__name__", "?"), exc_info=True)
             return ToolErrorText(

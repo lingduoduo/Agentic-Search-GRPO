@@ -10,6 +10,7 @@ from src.internal.auth import generate_user_jwt_token
 from src.internal.configs import AppSettings, AuthSettings
 from src.internal.db import UserRecord
 from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
+from src.internal.tools.base import ResultKind, ToolEffect
 from src.internal.tools.registry import tool_registry
 
 _ADMIN = "admin"
@@ -194,7 +195,9 @@ def test_invoke_function_tool_via_http(tmp_path):
             """Double a number."""
             return n * 2
 
-        tool_registry.tool(double)
+        tool_registry.tool(
+            double, effect=ToolEffect.READ_ONLY, result_kind=ResultKind.JSON
+        )
         client = TestClient(_make_app(tmp_path))
         resp = client.post(
             "/admin/tools/double/invoke",
@@ -205,6 +208,31 @@ def test_invoke_function_tool_via_http(tmp_path):
         data = resp.json()
         assert data["errors"] == []
         assert "14" in data["response"]
+    finally:
+        _restore_registry(snap)
+
+
+def test_invoke_reports_a_raising_tool_as_an_error_not_a_500(tmp_path):
+    snap = _clear_registry()
+    try:
+
+        def flaky() -> str:
+            """Fail like an LLM-backed tool whose provider is down."""
+            raise RuntimeError("llm provider down")
+
+        tool_registry.tool(
+            flaky, effect=ToolEffect.READ_ONLY, result_kind=ResultKind.JSON
+        )
+        client = TestClient(_make_app(tmp_path))
+        resp = client.post(
+            "/admin/tools/flaky/invoke",
+            json={"arguments": {}},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["response"] == ""
+        assert data["errors"] == ["unknown: RuntimeError"]
     finally:
         _restore_registry(snap)
 
@@ -285,13 +313,33 @@ def test_list_tools_exposes_agent_callable_and_user_scoped(tmp_path):
         def _scoped() -> str:
             return "ok"
 
-        tool_registry.register(FunctionTool(_plain, name="plain", description="d"))
         tool_registry.register(
-            FunctionTool(_hidden, name="hidden", description="d"),
+            FunctionTool(
+                _plain,
+                name="plain",
+                description="d",
+                effect=ToolEffect.READ_ONLY,
+                result_kind=ResultKind.TEXT,
+            )
+        )
+        tool_registry.register(
+            FunctionTool(
+                _hidden,
+                name="hidden",
+                description="d",
+                effect=ToolEffect.READ_ONLY,
+                result_kind=ResultKind.TEXT,
+            ),
             agent_callable=False,
         )
         tool_registry.register(
-            FunctionTool(_scoped, name="scoped", description="d"),
+            FunctionTool(
+                _scoped,
+                name="scoped",
+                description="d",
+                effect=ToolEffect.READ_ONLY,
+                result_kind=ResultKind.TEXT,
+            ),
             user_scoped=True,
         )
 
@@ -335,12 +383,20 @@ def test_discover_ranks_registered_tools(tmp_path):
 
         tool_registry.register(
             FunctionTool(
-                _weather, name="weather_lookup", description="Look up the weather"
+                _weather,
+                name="weather_lookup",
+                description="Look up the weather",
+                effect=ToolEffect.READ_ONLY,
+                result_kind=ResultKind.TEXT,
             )
         )
         tool_registry.register(
             FunctionTool(
-                _payroll, name="payroll_export", description="Export payroll records"
+                _payroll,
+                name="payroll_export",
+                description="Export payroll records",
+                effect=ToolEffect.READ_ONLY,
+                result_kind=ResultKind.TEXT,
             )
         )
 

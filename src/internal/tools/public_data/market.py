@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from ..base import FunctionTool, ToolEffect
+from ..base import FunctionTool, ResultKind, ToolEffect
 from ._http import PublicDataError, get_json, guarded
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -101,6 +101,8 @@ def build_stock_quote_tool() -> FunctionTool:
         ),
         parameters=_STOCK_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
     )
 
 
@@ -173,6 +175,8 @@ def build_crypto_price_tool() -> FunctionTool:
         ),
         parameters=_CRYPTO_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
     )
 
 
@@ -241,4 +245,6 @@ def build_currency_tool() -> FunctionTool:
         ),
         parameters=_CURRENCY_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
     )

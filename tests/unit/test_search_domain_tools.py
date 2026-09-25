@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from src.internal.tools.search import MultiQueryWebSearchTool, build_search_tool
+from src.internal.tools.search import MultiQueryWebSearchTool
 
 
 @pytest.mark.parametrize("domain", ["general", "academic"])
@@ -39,24 +39,6 @@ def test_invalid_domain_never_dispatches(queries):
                 "i", {"queries": queries, "domain": "unknown"}
             )
         )
-
-
-def test_single_query_domain(monkeypatch):
-    seen = []
-
-    async def fake(query, **kwargs):
-        seen.append(query)
-        return "formatted"
-
-    monkeypatch.setattr("src.internal.tools.search.search_for_tool_string", fake)
-    tool = build_search_tool()
-    assert tool.schema.parameters["properties"]["domain"]["default"] == "general"
-    assert asyncio.run(tool.execute("i", {"query": "patent", "domain": "ip"})) == (
-        "formatted",
-        "formatted",
-        {},
-    )
-    assert seen == ["patent intellectual property"]
 
 
 def test_domain_queries_use_existing_cache(monkeypatch):

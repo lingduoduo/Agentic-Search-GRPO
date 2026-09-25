@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from xml.etree import ElementTree
 
-from ..base import FunctionTool, ToolEffect
+from ..base import FunctionTool, ResultKind, ToolEffect
 from ._http import MAX_CONTENT_CHARS, PublicDataError, get_json, get_text, guarded
 
 WIKIPEDIA_API = "https://{language}.wikipedia.org/w/api.php"
@@ -117,6 +117,8 @@ def build_wikipedia_tool() -> FunctionTool:
         parameters=_WIKIPEDIA_PARAMS,
         effect=ToolEffect.READ_ONLY,
         citeable=True,
+        result_kind=ResultKind.DOCUMENTS,
+        retries_internally=True,
     )
 
 
@@ -194,6 +196,8 @@ def build_arxiv_tool() -> FunctionTool:
         parameters=_ARXIV_PARAMS,
         effect=ToolEffect.READ_ONLY,
         citeable=True,
+        result_kind=ResultKind.DOCUMENTS,
+        retries_internally=True,
     )
 
 
@@ -276,4 +280,6 @@ def build_wayback_tool() -> FunctionTool:
         parameters=_WAYBACK_PARAMS,
         effect=ToolEffect.READ_ONLY,
         citeable=True,
+        result_kind=ResultKind.DOCUMENTS,
+        retries_internally=True,
     )

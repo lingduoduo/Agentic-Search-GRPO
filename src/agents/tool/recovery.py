@@ -41,6 +41,8 @@ class RecoveryPolicy:
         retries_so_far: int,
         budget_left: float,
         uniform: Callable[[float, float], float] = random.uniform,
+        *,
+        retries_internally: bool = False,
     ) -> Decision:
         if failure.category in (
             FailureCategory.INVALID_INPUT,
@@ -52,6 +54,8 @@ class RecoveryPolicy:
             return Decision(Action.ESCALATE)
         if (
             failure.category is FailureCategory.TRANSIENT
+            # declared ownership first; provider_attempts covers tools that report it
+            and not retries_internally
             # The provider already retried: retrying again would multiply attempts.
             and failure.provider_attempts <= 1
             and retries_so_far < self.max_retries

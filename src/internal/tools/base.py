@@ -22,6 +22,18 @@ class ToolEffect(str, Enum):
     UNSPECIFIED = "unspecified"
 
 
+class ResultKind(str, Enum):
+    """What a tool's successful response text is."""
+
+    DOCUMENTS = "documents"  # JSON array of {title, content, url} (string values)
+    JSON = "json"
+    TEXT = "text"
+
+
+class InvalidToolInput(ValueError):
+    """A tool argument is wrong; the model should correct it and call again."""
+
+
 class FailureCategory(str, Enum):
     TRANSIENT = "transient"
     PERMANENT = "permanent"
@@ -97,8 +109,13 @@ class Tool(ABC):
         return False
 
     @property
-    def stopping(self) -> bool:
-        """True if the loop should stop after this tool runs."""
+    def result_kind(self) -> "ResultKind | None":
+        """What a successful response is. None = undeclared (a strict registry rejects it)."""
+        return None
+
+    @property
+    def retries_internally(self) -> bool:
+        """True when the provider already retries transient failures itself."""
         return False
 
     @property
@@ -149,14 +166,16 @@ class FunctionTool(Tool):
         parameters: dict[str, Any] | None = None,
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
-        stopping: bool = False,
+        result_kind: "ResultKind | None" = None,
+        retries_internally: bool = False,
     ) -> None:
         super().__init__()
         self._fn = fn
         self._name = name or fn.__name__
         self._effect = effect
         self._citeable = citeable
-        self._stopping = stopping
+        self._result_kind = result_kind
+        self._retries_internally = retries_internally
         self._schema = ToolSchema(
             name=self._name,
             description=description or (fn.__doc__ or "").strip(),
@@ -180,8 +199,12 @@ class FunctionTool(Tool):
         return self._citeable
 
     @property
-    def stopping(self) -> bool:
-        return self._stopping
+    def result_kind(self) -> "ResultKind | None":
+        return self._result_kind
+
+    @property
+    def retries_internally(self) -> bool:
+        return self._retries_internally
 
     async def execute(
         self, instance_id: str, arguments: dict[str, Any]
@@ -213,7 +236,8 @@ class FunctionTool(Tool):
         name: str | None = None,
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
-        stopping: bool = False,
+        result_kind: "ResultKind | None" = None,
+        retries_internally: bool = False,
     ) -> Callable:
         """Decorator factory that wraps a function as a FunctionTool."""
 
@@ -225,7 +249,8 @@ class FunctionTool(Tool):
                 parameters=parameters,
                 effect=effect,
                 citeable=citeable,
-                stopping=stopping,
+                result_kind=result_kind,
+                retries_internally=retries_internally,
             )
 
         return decorator

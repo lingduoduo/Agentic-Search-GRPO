@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
-import logging
 
-from .base import FunctionTool, ToolEffect
+from .base import (
+    FailureCategory,
+    FunctionTool,
+    ToolEffect,
+    ToolErrorText,
+    ToolFailure,
+    ResultKind,
+)
 from .search import search_tool
 
-logger = logging.getLogger(__name__)
+# Mirrors search_tool's own default max_retries (src/internal/tools/search.py),
+# so the failure we report reflects the attempts it actually made.
+_SEARCH_ATTEMPTS = 3
 
 _SEARCH_TOOL_PARAMS = {
     "type": "object",
@@ -65,7 +73,14 @@ def build_search_routing_tool(
         ]
         if not results and any(p.error for p in pages):
             errors = [p.error for p in pages if p.error]
-            return json.dumps({"error": errors[0]})
+            return ToolErrorText(
+                json.dumps({"error": errors[0]}),
+                ToolFailure(
+                    FailureCategory.TRANSIENT,
+                    "search backend unavailable",
+                    provider_attempts=_SEARCH_ATTEMPTS,
+                ),
+            )
         return json.dumps(results)
 
     return FunctionTool(
@@ -75,6 +90,8 @@ def build_search_routing_tool(
         parameters=_SEARCH_TOOL_PARAMS,
         effect=ToolEffect.READ_ONLY,
         citeable=True,
+        result_kind=ResultKind.DOCUMENTS,
+        retries_internally=True,
     )
 
 
@@ -88,20 +105,16 @@ def build_rag_routing_tool(
     """FunctionTool that generates a RAG answer."""
 
     async def _execute(query: str) -> str:
-        try:
-            from src.context import answer_with_retrieval
+        from src.context import answer_with_retrieval
 
-            result = await answer_with_retrieval(
-                query,
-                llm=llm,
-                search_url=search_url,
-                top_k=top_k,
-                filters=filters,
-            )
-            return json.dumps({"answer": result.answer, "citations": result.citations})
-        except Exception as exc:
-            logger.error("rag_routing_tool failed: %s", exc, exc_info=True)
-            return json.dumps({"error": str(exc)})
+        result = await answer_with_retrieval(
+            query,
+            llm=llm,
+            search_url=search_url,
+            top_k=top_k,
+            filters=filters,
+        )
+        return json.dumps({"answer": result.answer, "citations": result.citations})
 
     return FunctionTool(
         fn=_execute,
@@ -109,4 +122,5 @@ def build_rag_routing_tool(
         description="Answer a question using retrieval-augmented generation.",
         parameters=_RAG_TOOL_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
     )

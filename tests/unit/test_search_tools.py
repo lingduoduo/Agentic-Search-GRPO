@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from src.internal.tools import ToolEffect
 from src.internal.tools.search import (
     MultiQueryWebSearchTool,
     SearchPage,
-    build_search_tool,
     fetch_pages_concurrently,
     format_search_pages,
     google_custom_search,
@@ -240,26 +238,6 @@ def test_search_for_list_and_tool_string_use_retrieval_client(monkeypatch):
     ]
     assert "Title: FAISS" in text
     assert "Summary: Vector search" in text
-
-
-def test_build_search_tool_wraps_formatted_search(monkeypatch):
-    async def _fake_search_for_tool_string(query, **kwargs):
-        assert query == "faiss"
-        assert kwargs["page_size"] == 3
-        return "formatted"
-
-    monkeypatch.setattr(
-        "src.internal.tools.search.search_for_tool_string",
-        _fake_search_for_tool_string,
-    )
-
-    tool = build_search_tool(page_size=3)
-    assert tool.effect is ToolEffect.READ_ONLY
-    text, raw, meta = asyncio.run(tool.execute("default", {"query": "faiss"}))
-
-    assert text == "formatted"
-    assert raw == "formatted"
-    assert meta == {}
 
 
 def test_search_for_detail_fetches_pages_concurrently(monkeypatch):
@@ -513,7 +491,7 @@ class TestMultiQueryWebSearchTool:
         asyncio.run(tool.execute("inst1", {"queries": ["hello\x00world", "  ok  "]}))
         assert seen == ["hello world", "ok"]
 
-    def test_execute_returns_no_results_string_when_empty(self):
+    def test_execute_returns_empty_json_array_when_empty(self):
         async def _fake(query, **kwargs):
             return []
 
@@ -521,7 +499,7 @@ class TestMultiQueryWebSearchTool:
         result_str, raw, _ = asyncio.run(
             tool.execute("inst1", {"queries": ["nothing"]})
         )
-        assert result_str == "No results found."
+        assert result_str == "[]"
 
     def test_execute_accepts_string_queries(self):
         seen = []

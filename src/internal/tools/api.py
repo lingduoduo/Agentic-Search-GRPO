@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from ...context.retrieval.client import aiohttp
-from .base import Tool, ToolEffect, ToolSchema
+from .base import ResultKind, Tool, ToolEffect, ToolSchema
 
 HTTP_METHODS = {"get", "head", "options", "post", "put", "patch", "delete"}
 _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -94,6 +94,10 @@ class ApiRequestTool(Tool):
         if self._spec.method in {"get", "head", "options"}:
             return ToolEffect.READ_ONLY
         return ToolEffect.SIDE_EFFECTING
+
+    @property
+    def result_kind(self) -> ResultKind:
+        return ResultKind.JSON
 
     async def execute(
         self, instance_id: str, arguments: dict[str, Any]

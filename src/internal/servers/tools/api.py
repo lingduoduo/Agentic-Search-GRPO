@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from src.internal.auth import AuthenticatedUser
 from src.internal.configs import AppSettings
 from src.internal.servers._auth import make_require_admin
+from src.internal.tools.api import ApiToolError
 from src.internal.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,10 @@ class ToolView(BaseModel):
     # one. That distinction is the usual answer to "why did the agent ignore it".
     agent_callable: bool = True
     user_scoped: bool = False
+    effect: str = "unspecified"
+    result_kind: str | None = None
+    citeable: bool = False
+    retries_internally: bool = False
 
 
 class OpenAPIRegisterRequest(BaseModel):
@@ -112,6 +117,16 @@ def create_tools_router(settings: AppSettings) -> APIRouter:
                 req.openapi_json,
                 name=req.name,
                 headers=req.headers or None,
+            )
+        except ApiToolError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            )
+        except ValueError as exc:
+            # A contract violation raised by ToolRegistry.register() itself
+            # (strict mode), not a malformed spec — distinct from ApiToolError.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             )
         except Exception as exc:
             raise HTTPException(
@@ -192,7 +207,11 @@ def create_tools_router(settings: AppSettings) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Tool {name!r} not found.",
             )
-        response_text, raw, errors = await tool_registry.invoke(name, req.arguments)
-        return InvokeResponse(response=response_text, raw=raw, errors=errors)
+        result = await tool_registry.invoke_detailed(name, req.arguments)
+        errors = result.errors
+        if result.failure is not None and not result.response and not errors:
+            # The tool raised: report it instead of a bare 500.
+            errors = [f"{result.failure.category.value}: {result.failure.message}"]
+        return InvokeResponse(response=result.response, raw=result.raw, errors=errors)
 
     return router

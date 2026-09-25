@@ -1,9 +1,4 @@
-"""Agent tool framework: schemas, registry, parsers, and built-in tools.
-
-Also hosts the chat-loop ``ChatTool`` interface (``interface``) and the
-built-in tool name sets (``built_in_tools``), which consumers import as
-submodules.
-"""
+"""Agent tool framework: schemas, registry, parsers, and built-in tools."""
 
 from .base import FunctionTool as FunctionTool
 from .base import Tool as Tool
@@ -12,6 +7,8 @@ from .base import ToolEffect as ToolEffect
 from .base import FailureCategory as FailureCategory
 from .base import ToolFailure as ToolFailure
 from .base import ToolErrorText as ToolErrorText
+from .base import ResultKind as ResultKind
+from .base import InvalidToolInput as InvalidToolInput
 from .parsers import FunctionCall as FunctionCall
 from .parsers import HermesToolParser as HermesToolParser
 from .parsers import JSONToolParser as JSONToolParser
@@ -24,7 +21,6 @@ from .api import ApiToolProviderSpec as ApiToolProviderSpec
 from .api import ApiToolRegistry as ApiToolRegistry
 from .api import ApiToolSpec as ApiToolSpec
 from .search import SearchPage as SearchPage
-from .search import build_search_tool as build_search_tool
 from .search import fetch_pages_concurrently as fetch_pages_concurrently
 from .search import fetch_url as fetch_url
 from .search import format_search_pages as format_search_pages
@@ -42,7 +38,6 @@ from .openapi_schema import ParameterType as ParameterType
 from .openapi_schema import ParameterTypeMap as ParameterTypeMap
 from .routing_tools import build_search_routing_tool as build_search_routing_tool
 from .routing_tools import build_rag_routing_tool as build_rag_routing_tool
-from .interface import ChatTool as ChatTool
 
 from .search import DomainSearch as DomainSearch
 from .search import build_domain_search_tools as build_domain_search_tools

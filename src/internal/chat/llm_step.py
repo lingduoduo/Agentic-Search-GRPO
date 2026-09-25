@@ -23,7 +23,6 @@ from src.internal.chat.citation_processor import DynamicCitationProcessor
 from src.internal.chat.emitter import Emitter
 from src.internal.chat.models import ChatMessageSimple
 from src.internal.chat.models import LlmStepResult
-from src.internal.chat.tool_call_args_streaming import maybe_emit_argument_delta
 from src.internal.servers.query_history.models import MessageType
 from src.internal.document_index.models import SearchDoc
 from src.internal.file_store.models import ChatFileType
@@ -181,9 +180,6 @@ def find_all_json_objects(text: str) -> list[dict[str, Any]]:
                     pass
                 start = -1
     return results
-
-
-from src.internal.chat.tool_call_args_streaming import Parser  # noqa: E402
 
 
 @dataclass
@@ -1257,7 +1253,6 @@ def run_llm_step_pkt_generator(
         )
 
     id_to_tool_call_map: dict[int, dict[str, Any]] = {}
-    arg_parsers: dict[int, Parser] = {}
     reasoning_start = False
     answer_start = False
     accumulated_reasoning = ""
@@ -1460,14 +1455,7 @@ def run_llm_step_pkt_generator(
                 yield from _close_reasoning_if_active()
 
                 for tool_call_delta in delta.tool_calls:
-                    # maybe_emit depends and update being called first and attaching the delta
                     _update_tool_call_with_delta(id_to_tool_call_map, tool_call_delta)
-                    yield from maybe_emit_argument_delta(
-                        tool_calls_in_progress=id_to_tool_call_map,
-                        tool_call_delta=tool_call_delta,
-                        placement=_current_placement(),
-                        parsers=arg_parsers,
-                    )
 
         # Flush any tail text buffered while checking for split "<function_calls" markers.
         filtered_content_tail = xml_tool_call_content_filter.flush()
