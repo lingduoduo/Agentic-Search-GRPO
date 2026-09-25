@@ -156,6 +156,10 @@ def load_working_memory(
 
 _LOCK_KEY = "session_memory:{session_id}:compress"
 _SUMMARY_MAX_TOKENS = 400
+# Estimated tokens of turns one summarizer call may see. A backlog larger than
+# this (the first compression of a long session) drains one chunk per turn.
+_SUMMARY_INPUT_TOKENS = 3000
+_CLIP_MARKER = " [...truncated]"
 _SUMMARY_SYSTEM = (
     "You compress a conversation. Rewrite the prior summary and the new turns "
     "into one concise summary that keeps facts, decisions, user preferences, "
@@ -175,8 +179,27 @@ _tasks: set[asyncio.Task] = set()
 CurateFn = Callable[[list[ChatMessageRecord]], Awaitable[bool]]
 
 
+def _bounded_span(pending: list[ChatMessageRecord]) -> list[ChatMessageRecord]:
+    """The oldest records of ``pending`` that fit ``_SUMMARY_INPUT_TOKENS``,
+    always at least one so the cursor can advance."""
+    used = 0
+    span: list[ChatMessageRecord] = []
+    for record in pending:
+        used += _record_tokens(record)
+        if span and used > _SUMMARY_INPUT_TOKENS:
+            break
+        span.append(record)
+    return span
+
+
+def _clip(text: str) -> str:
+    """Cap one record at the input budget, for the prompt only."""
+    limit = _SUMMARY_INPUT_TOKENS * 4
+    return text if len(text) <= limit else text[:limit] + _CLIP_MARKER
+
+
 def _summary_prompt(prior: str, pending: list[ChatMessageRecord]) -> list[dict]:
-    turns = "\n".join(f"{r.role.upper()}: {r.content}" for r in pending)
+    turns = "\n".join(f"{r.role.upper()}: {_clip(r.content)}" for r in pending)
     return [
         {"role": "system", "content": _SUMMARY_SYSTEM},
         {
@@ -238,7 +261,9 @@ async def compress_session(
     cache: CacheBackend | None = None,
     curate: CurateFn | None = None,
 ) -> bool:
-    """Summarize ``pending`` into the session's stored summary.
+    """Summarize the oldest chunk of ``pending`` (up to
+    ``_SUMMARY_INPUT_TOKENS``) into the session's stored summary; the rest
+    drains on later turns.
 
     Returns True when the state advanced. False means nothing to do, another
     task owns this span or advanced past it while this one ran, or the
@@ -272,6 +297,7 @@ async def compress_session(
             pending = pending[pending_ids.index(state.summarized_through) + 1 :]
             if not pending:
                 return False
+        pending = _bounded_span(pending)
         last_id = pending[-1].id
         text = await asyncio.to_thread(
             _complete, llm, _summary_prompt(state.summary, pending)

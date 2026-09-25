@@ -439,6 +439,61 @@ def test_compress_lock_failure_leaves_state_and_clears_inflight(store, cache):
     assert ok is True
 
 
+# 4000 chars = 1000 tokens + 4 overhead: two records fit the 3000-token input.
+def test_compress_summarizes_one_bounded_chunk_of_a_backlog(store, cache):
+    sid, records = _seed_sized(store, [4000] * 22)
+    wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+    assert len(wm.pending) == 20
+    llm = FakeLLM()
+    assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    turns = llm.prompts[0][-1]["content"]
+    assert records[0].content in turns
+    assert records[1].content in turns
+    assert records[2].content not in turns
+    assert load_state(cache, sid).summarized_through == records[1].id
+
+
+def test_repeated_compression_drains_the_backlog(store, cache):
+    sid, records = _seed_sized(store, [4000] * 22)
+    llm = FakeLLM()
+    for _ in range(10):
+        wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+        assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    assert load_working_memory(store, sid, keep_last=2, cache=cache).pending == []
+    assert load_state(cache, sid).summarized_through == records[19].id
+    assert len(llm.prompts) == 10
+
+
+def test_oversized_single_record_is_clipped_in_the_prompt_only(store, cache):
+    sid, records = _seed_sized(store, [20_000, 40, 40])
+    wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+    llm = FakeLLM()
+    assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    turns = llm.prompts[0][-1]["content"]
+    assert working._CLIP_MARKER in turns
+    assert records[0].content[: working._SUMMARY_INPUT_TOKENS * 4] in turns
+    assert records[0].content not in turns
+    assert store.list_chat_messages(sid)[0].content == records[0].content
+    assert load_state(cache, sid).summarized_through == records[0].id
+
+
+def test_curation_covers_the_bounded_span(store, cache):
+    sid, records = _seed_sized(store, [4000] * 6)
+    seen: list = []
+
+    async def curate(span):
+        seen.append([r.id for r in span])
+        return True
+
+    asyncio.run(
+        compress_session(
+            sid, FakeLLM(), pending=records[:4], cache=cache, curate=curate
+        )
+    )
+    assert seen == [[records[0].id, records[1].id]]
+    assert load_state(cache, sid).curated_through == records[1].id
+
+
 # --- schedule_compression -----------------------------------------------------
 
 
