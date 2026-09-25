@@ -235,3 +235,60 @@ def test_debug_endpoint_is_empty_before_any_request(monkeypatch):
             "auxiliary": {"count": 0},
         },
     }
+
+
+def _prom_requests(method: str, route: str, status: str) -> float:
+    from src.internal.observability.prometheus import REGISTRY
+
+    return (
+        REGISTRY.get_sample_value(
+            "agentic_search_http_requests_total",
+            {"method": method, "route": route, "status": status},
+        )
+        or 0.0
+    )
+
+
+def _prom_app() -> FastAPI:
+    app = FastAPI()
+    add_latency_logging_middleware(
+        app,
+        logging.LoggerAdapter(logging.getLogger("t"), {}),
+        stats=RouteLatencyStats(),
+    )
+
+    @app.get("/prom/items/{item_id}")
+    def item(item_id: str):
+        return {"id": item_id}
+
+    @app.get("/prom/boom")
+    def boom():
+        raise RuntimeError("kaboom")
+
+    return app
+
+
+def test_middleware_counts_requests_under_the_route_template():
+    before = _prom_requests("GET", "/prom/items/{item_id}", "2xx")
+    client = TestClient(_prom_app())
+    client.get("/prom/items/a")
+    client.get("/prom/items/b")
+    assert _prom_requests("GET", "/prom/items/{item_id}", "2xx") == before + 2
+
+
+def test_middleware_records_unmatched_paths_as_one_label():
+    before = _prom_requests("GET", "<unmatched>", "4xx")
+    client = TestClient(_prom_app())
+    client.get("/prom/nope/1")
+    client.get("/prom/nope/2")
+    assert _prom_requests("GET", "<unmatched>", "4xx") == before + 2
+    assert _prom_requests("GET", "/prom/nope/1", "4xx") == 0.0
+
+
+def test_exception_is_counted_as_5xx_and_reraised():
+    before = _prom_requests("GET", "/prom/boom", "5xx")
+    client = TestClient(_prom_app(), raise_server_exceptions=False)
+    assert client.get("/prom/boom").status_code == 500
+    assert _prom_requests("GET", "/prom/boom", "5xx") == before + 1
+    with pytest.raises(RuntimeError, match="kaboom"):
+        TestClient(_prom_app()).get("/prom/boom")

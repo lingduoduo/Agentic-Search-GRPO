@@ -160,6 +160,7 @@ from src.internal.memory.working import (
 )
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
+from src.internal.observability.prometheus import observe_stages
 
 logger = logging.getLogger(__name__)
 
@@ -2121,7 +2122,9 @@ def create_web_app(
                 mode=mode,
             )
         finally:
-            STAGE_LATENCY.record(_stage_metrics.finish_request(stage_token))
+            finished_stages = _stage_metrics.finish_request(stage_token)
+            STAGE_LATENCY.record(finished_stages)
+            observe_stages(finished_stages)
             cap = _capture.active()
             if cap is not None:
                 cap.finish()
