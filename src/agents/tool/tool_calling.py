@@ -39,7 +39,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Awaitable, Callable
@@ -54,6 +54,7 @@ from src.agents.core.base import (
     simple_timer,
 )
 from src.agents.core.state import PerformanceMetrics, TaskStatus, ToolExecutionResult
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools import FailureCategory
 from src.internal.tools.base import Tool, ToolEffect
 from src.internal.tools.parsers import FunctionCall, ToolParser
@@ -225,9 +226,15 @@ class ToolAgentLoopConfig(AgentLoopConfig):
     #   "middle" — keep equal halves from start and end
     tool_response_truncate_side: str = "left"
     tool_parser_format: str = "json"
-    approval_timeout_seconds: float = 60.0
-    escalation_timeout_seconds: float = 120.0
-    max_escalations: int = 3
+    approval_timeout_seconds: float = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.approval_timeout_seconds
+    )
+    escalation_timeout_seconds: float = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.escalation_timeout_seconds
+    )
+    max_escalations: int = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.max_escalations
+    )
 
 
 @register("tool_agent")

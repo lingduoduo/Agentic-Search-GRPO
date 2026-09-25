@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from ..configs.timeouts import get_timeout_policies
 from .base import (
     FailureCategory,
     FunctionTool,
@@ -13,10 +14,6 @@ from .base import (
     ResultKind,
 )
 from .search import search_tool
-
-# Mirrors search_tool's own default max_retries (src/internal/tools/search.py),
-# so the failure we report reflects the attempts it actually made.
-_SEARCH_ATTEMPTS = 3
 
 _SEARCH_TOOL_PARAMS = {
     "type": "object",
@@ -78,7 +75,8 @@ def build_search_routing_tool(
                 ToolFailure(
                     FailureCategory.TRANSIENT,
                     "search backend unavailable",
-                    provider_attempts=_SEARCH_ATTEMPTS,
+                    # search_tool's attempts, read from the same policy it uses
+                    provider_attempts=get_timeout_policies().tools.search_router.max_retries,
                 ),
             )
         return json.dumps(results)

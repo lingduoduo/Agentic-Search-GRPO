@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools import FailureCategory, ToolEffect, ToolFailure
 
 
@@ -29,10 +30,18 @@ class Decision:
 
 @dataclass(frozen=True)
 class RecoveryPolicy:
-    max_retries: int = 2
-    backoff: tuple[float, ...] = (0.5, 1.0)
-    retry_after_cap: float = 4.0
-    retry_budget: float = 10.0
+    max_retries: int = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.recovery.max_retries
+    )
+    backoff: tuple[float, ...] = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.recovery.backoff_seconds
+    )
+    retry_after_cap: float = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.recovery.retry_after_cap_seconds
+    )
+    retry_budget: float = field(
+        default_factory=lambda: get_timeout_policies().tool_loop.recovery.retry_budget_seconds
+    )
 
     def decide(
         self,

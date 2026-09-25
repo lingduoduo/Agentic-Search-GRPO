@@ -242,6 +242,7 @@ Typed dataclasses loaded from environment variables. Key env vars:
 - `AGENTIC_SEARCH_RETRIEVAL_PORT` (default 8000)
 - `AGENTIC_SEARCH_WEB_PORT` (default 8080 in config; run on 7860 by convention)
 - `AGENTIC_SEARCH_WEB_DB_PATH` (default `:memory:`)
+- `AGENTIC_SEARCH_TIMEOUTS_PATH` — partial TOML overriding `src/internal/configs/timeouts.toml` (timeouts/retries; see docs/configuration/timeouts.md)
 
 **Models** (`src/model/`)
 Split by when the training happens. `serving.py` is neither half — it is the

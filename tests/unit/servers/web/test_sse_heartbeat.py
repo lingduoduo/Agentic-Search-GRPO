@@ -85,9 +85,15 @@ def test_a_comment_frame_is_ignored_by_an_sse_reader():
 
 
 def test_heartbeat_is_configurable_and_can_be_disabled(monkeypatch):
+    from src.internal.configs.timeouts import reset_timeout_policies
+
     monkeypatch.setenv("AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS", "0")
     assert heartbeat_seconds() == 0
 
+    # heartbeat_seconds() now reads the process-cached timeout policies, so a
+    # second env change within the same test needs its own fresh read -- the
+    # same reset the autouse fixture applies between tests.
+    reset_timeout_policies()
     monkeypatch.setenv("AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS", "3.5")
     assert heartbeat_seconds() == 3.5
 

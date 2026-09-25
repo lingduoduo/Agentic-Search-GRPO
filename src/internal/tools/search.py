@@ -18,6 +18,7 @@ from urllib.parse import urlunsplit
 from ...context.search import SearchResult
 from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohttp
 from ..cache.serving import serving_cache
+from ..configs.timeouts import get_timeout_policies
 from .base import (
     FailureCategory,
     FunctionTool,
@@ -279,10 +280,12 @@ async def google_custom_search(
     page_size: int = 5,
     api_key: str | None = None,
     cse_id: str | None = None,
-    timeout_seconds: int = 15,
+    timeout_seconds: float | None = None,
 ) -> list[SearchPage]:
     """Search Google Custom Search and return normalized pages."""
 
+    if timeout_seconds is None:
+        timeout_seconds = get_timeout_policies().tools.web_search.google_timeout_seconds
     api_key = api_key or os.getenv("GOOGLE_API_KEY")
     cse_id = cse_id or os.getenv("GOOGLE_CSE_ID")
     if not api_key or not cse_id:
@@ -318,10 +321,14 @@ async def serpapi_search(
     page: int = 1,
     page_size: int = 5,
     api_key: str | None = None,
-    timeout_seconds: int = 15,
+    timeout_seconds: float | None = None,
 ) -> list[SearchPage]:
     """Search SerpAPI Google results and return normalized pages."""
 
+    if timeout_seconds is None:
+        timeout_seconds = (
+            get_timeout_policies().tools.web_search.serpapi_timeout_seconds
+        )
     api_key = api_key or os.getenv("SERPAPI_API_KEY") or os.getenv("SERP_API_KEY")
     if not api_key:
         return [SearchPage(error="SERPAPI_API_KEY or SERP_API_KEY is required.")]
@@ -369,10 +376,12 @@ async def serper_dev_search(
     *,
     page_size: int = 5,
     api_key: str | None = None,
-    timeout_seconds: int = 10,
+    timeout_seconds: float | None = None,
 ) -> list[SearchPage]:
     """Search via Serper.dev (Google results) and return normalized pages."""
 
+    if timeout_seconds is None:
+        timeout_seconds = get_timeout_policies().tools.web_search.serper_timeout_seconds
     api_key = api_key or os.getenv("SERPER_API_KEY")
     if not api_key:
         return [SearchPage(error="SERPER_API_KEY is required.")]
@@ -408,13 +417,18 @@ async def retrieval_search(
     *,
     search_url: str,
     page_size: int = 5,
-    timeout_seconds: int = 10,
-    max_retries: int = 3,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
     fetch_url: str | None = None,
     filters: dict | None = None,
 ) -> list[SearchPage]:
     """Search the repo's /retrieve server and return normalized pages."""
 
+    client_policy = get_timeout_policies().retrieval.client
+    if timeout_seconds is None:
+        timeout_seconds = client_policy.timeout_seconds
+    if max_retries is None:
+        max_retries = client_policy.max_retries
     client = SearchClient(
         SearchClientConfig(
             url=search_url,
@@ -444,8 +458,8 @@ async def search_tool(
     page: int = 1,
     page_size: int = 5,
     search_url: str = DEFAULT_RETRIEVAL_URL,
-    timeout_seconds: int = 15,
-    max_retries: int = 3,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
     fetch_url: str | None = None,
     filters: dict | None = None,
 ) -> list[SearchPage]:
@@ -455,6 +469,11 @@ async def search_tool(
     ``retrieval`` provider; web providers have no ACL metadata and ignore them.
     """
 
+    router_policy = get_timeout_policies().tools.search_router
+    if timeout_seconds is None:
+        timeout_seconds = router_policy.timeout_seconds
+    if max_retries is None:
+        max_retries = router_policy.max_retries
     if provider == "retrieval":
         return await retrieval_search(
             query,
@@ -532,9 +551,13 @@ def make_web_cascade_search(
         search_url: str = DEFAULT_RETRIEVAL_URL,
         page: int = 1,
         page_size: int = 5,
-        timeout_seconds: int = 15,
+        timeout_seconds: float | None = None,
     ) -> list[SearchPage]:
         del provider, search_url  # cascade owns provider selection
+        if timeout_seconds is None:
+            timeout_seconds = (
+                get_timeout_policies().tools.web_search.serpapi_timeout_seconds
+            )
         # Why each leg failed, kept so an unusable cascade can say so. Returning
         # [] renders as "No results found.", which is indistinguishable from a
         # working search over a topic with no hits — it hid a missing key, an
@@ -630,12 +653,16 @@ async def search_for_tool_string(
 
 
 async def fetch_url(
-    url: str, *, max_length: int = 2000, timeout_seconds: int = 15
+    url: str, *, max_length: int = 2000, timeout_seconds: float | None = None
 ) -> str:
     """Fetch readable webpage text with lightweight HTML extraction."""
 
     if not url:
         return ""
+    if timeout_seconds is None:
+        timeout_seconds = (
+            get_timeout_policies().tools.web_search.fetch_page_timeout_seconds
+        )
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         headers = {"User-Agent": DEFAULT_USER_AGENT}
@@ -652,9 +679,13 @@ async def fetch_pages_concurrently(
     pages: list[SearchPage],
     *,
     max_chars: int = 2000,
-    timeout_seconds: int = 10,
+    timeout_seconds: float | None = None,
 ) -> list[SearchPage]:
     """Fetch full page content for each SearchPage that has a URL and no error."""
+    if timeout_seconds is None:
+        timeout_seconds = (
+            get_timeout_policies().tools.web_search.fetch_pages_timeout_seconds
+        )
     fetchable = [p for p in pages if p.url and not p.error]
     results = await asyncio.gather(
         *[
@@ -728,12 +759,16 @@ class MultiQueryWebSearchTool(Tool):
         provider: SearchProvider = "retrieval",
         search_url: str = DEFAULT_RETRIEVAL_URL,
         page_size: int = 5,
-        timeout_seconds: int = 15,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._search_fn = search_fn or search_tool
         self._provider = provider
         self._search_url = search_url
         self._page_size = page_size
+        if timeout_seconds is None:
+            timeout_seconds = (
+                get_timeout_policies().tools.web_search.query_timeout_seconds
+            )
         self._timeout_seconds = timeout_seconds
         self._schema = ToolSchema(
             name="web_search",

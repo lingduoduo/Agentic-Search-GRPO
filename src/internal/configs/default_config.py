@@ -73,7 +73,7 @@ DEFAULT_CONFIG: dict = {
     "DOC_TIME_DECAY": 0.5,
     "CONTEXT_CHUNKS_ABOVE": 1,
     "CONTEXT_CHUNKS_BELOW": 1,
-    "LLM_SOCKET_READ_TIMEOUT": 60,
+    # LLM_SOCKET_READ_TIMEOUT: see src/internal/configs/timeouts.toml (llm.socket_read_timeout_seconds, 120)
     "HYBRID_ALPHA": 0.5,
     "TITLE_CONTENT_RATIO": 0.10,
     "HARD_DELETE_CHATS": "False",

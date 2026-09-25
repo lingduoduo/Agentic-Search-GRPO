@@ -11,6 +11,7 @@ import json as _json
 from pydantic import BaseModel
 
 from src.context.models import ContextDocument
+from src.internal.configs.timeouts import get_timeout_policies
 
 NO_LOCAL_MODEL_MESSAGE = (
     "tool_agent mode requires a local model. "
@@ -212,8 +213,9 @@ async def _run_tool_agent(
             response_length=max_tokens * _ROLLOUT_BUDGET_MULTIPLIER,
             tool_parser_format=resolved.tool_agent_parser,
             approval_timeout_seconds=getattr(
-                resolved, "tool_approval_timeout_seconds", 60.0
-            ),
+                resolved, "tool_approval_timeout_seconds", None
+            )
+            or get_timeout_policies().tool_loop.approval_timeout_seconds,
         ),
     )
     messages = [{"role": m.role, "content": m.content} for m in history] + [

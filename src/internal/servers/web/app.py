@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from src.internal.auth import AuthenticatedUser
 from src.internal.servers._auth import caller_may_use_session, make_require_admin
 from src.internal.configs import AppSettings
+from src.internal.configs import get_timeout_policies
 from src.internal.configs import load_app_settings
 from src.internal.llm.interfaces import LLMConfig
 from src.internal.llm.providers import OpenAICompatibleLLM
@@ -1576,7 +1577,9 @@ def create_web_app(
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
-    app.state.tool_escalation_broker = ToolEscalationBroker()
+    app.state.tool_escalation_broker = ToolEscalationBroker(
+        resolved.timeouts.tool_loop.escalation_timeout_seconds
+    )
     import os as _os
     from src.internal.servers.web.request_capture_store import RequestCaptureStore
 
@@ -2849,6 +2852,7 @@ async def _run_hybrid_search(
     source_provider: str,
     domain: str = "general",
 ) -> _HybridSearchResult:
+    hybrid = get_timeout_policies().retrieval.web_hybrid
     if source_provider == "retrieval":
         # Path A — corpus retrieval with its own query expansion pipeline.
         # Over-fetch so MMR has candidates beyond top_k to diversify from.
@@ -2932,8 +2936,8 @@ async def _run_hybrid_search(
                         provider=provider,
                         search_url=search_url,
                         page_size=top_k,
-                        timeout_seconds=5,
-                        max_retries=1,
+                        timeout_seconds=hybrid.provider_timeout_seconds,
+                        max_retries=hybrid.provider_max_retries,
                         **(
                             {"filters": _filters_payload(filters)}
                             if provider == "retrieval"
@@ -2970,7 +2974,9 @@ async def _run_hybrid_search(
 
     async def _fetch_provider_guarded(provider: str) -> list[ContextDocument]:
         try:
-            return await asyncio.wait_for(_fetch_provider(provider), timeout=8.0)
+            return await asyncio.wait_for(
+                _fetch_provider(provider), timeout=hybrid.provider_wait_seconds
+            )
         except Exception as exc:  # timeout or provider error → mark unreachable
             logger.warning("Provider %s failed/timed out: %s", provider, exc)
             return [_provider_error_doc(provider, str(exc))]

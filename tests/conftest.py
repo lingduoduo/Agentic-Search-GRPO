@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 # The web app's lifespan loads SEARCH_AGENT_MODEL onto the device on every
 # TestClient startup — turning a fast web test file into a multi-minute (or,
 # offline, hanging) run. No test needs the real model: they inject a mock
@@ -41,6 +43,16 @@ def pytest_ignore_collect(collection_path: Path, config) -> bool:  # noqa: ARG00
         ("web", "dist"),
         ("web", "node_modules"),
     }
+
+
+@pytest.fixture(autouse=True)
+def _fresh_timeout_policies():
+    """Policies are cached per process; tests that set env vars must not leak."""
+    from src.internal.configs.timeouts import reset_timeout_policies
+
+    reset_timeout_policies()
+    yield
+    reset_timeout_policies()
 
 
 def pytest_configure(config):

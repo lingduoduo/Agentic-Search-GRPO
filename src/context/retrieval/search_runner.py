@@ -7,6 +7,7 @@ import logging
 from src.context.retrieval.client import SearchClient
 from src.context.retrieval.client import SearchClientConfig
 from src.context.search import SearchResult
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools.search import google_custom_search
 from src.internal.tools.search import serpapi_search
 
@@ -23,11 +24,16 @@ async def run_search(
     request: SearchRequest,
     *,
     search_url: str = "http://localhost:8000/retrieve",
-    timeout_seconds: int = 15,
-    max_retries: int = 3,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
     fetch_url: str | None = None,
 ) -> list[SearchResult]:
     request.validate()
+    runner_policy = get_timeout_policies().retrieval.search_runner
+    if timeout_seconds is None:
+        timeout_seconds = runner_policy.timeout_seconds
+    if max_retries is None:
+        max_retries = runner_policy.max_retries
     if request.provider == SearchType.RETRIEVAL:
         client = SearchClient(
             SearchClientConfig(
@@ -81,8 +87,8 @@ async def build_search_context(
     request: SearchRequest,
     *,
     search_url: str = "http://localhost:8000/retrieve",
-    timeout_seconds: int = 15,
-    max_retries: int = 3,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
     fetch_url: str | None = None,
 ):
     results = await run_search(
@@ -105,8 +111,8 @@ async def build_search_contexts(
     top_k: int = 5,
     filters: SearchFilters | None = None,
     search_url: str = "http://localhost:8000/retrieve",
-    timeout_seconds: int = 15,
-    max_retries: int = 3,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
 ) -> list[SearchContextBundle]:
     """Retrieve for several queries in one request; one bundle per query.
 
@@ -121,6 +127,11 @@ async def build_search_contexts(
     """
     if not queries:
         return []
+    runner_policy = get_timeout_policies().retrieval.search_runner
+    if timeout_seconds is None:
+        timeout_seconds = runner_policy.timeout_seconds
+    if max_retries is None:
+        max_retries = runner_policy.max_retries
     client = SearchClient(
         SearchClientConfig(
             url=search_url,

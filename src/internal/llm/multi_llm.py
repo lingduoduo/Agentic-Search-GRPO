@@ -14,6 +14,7 @@ from src.context.structured_output import (
     StructuredOutputCapability,
     StructuredOutputRequest,
 )
+from src.internal.configs.timeouts import get_timeout_policies
 
 from .constants import LlmProviderNames
 from .interfaces import LLM, LLMConfig, LLMUserIdentity
@@ -56,7 +57,6 @@ logger = logging.getLogger(__name__)
 # Config defaults (can be overridden via environment variables)
 # ---------------------------------------------------------------------------
 GEN_AI_TEMPERATURE = float(os.environ.get("GEN_AI_TEMPERATURE", "0.0"))
-LLM_SOCKET_READ_TIMEOUT = int(os.environ.get("LLM_SOCKET_READ_TIMEOUT", "120"))
 LITELLM_EXTRA_BODY: dict | None = None
 SEND_USER_METADATA_TO_LLM_PROVIDER = (
     os.environ.get("SEND_USER_METADATA_TO_LLM_PROVIDER", "false").lower() == "true"
@@ -316,7 +316,7 @@ class LitellmLLM(LLM):
         # a ReadTimeout is raised.
         self._timeout = timeout
         if timeout is None:
-            self._timeout = LLM_SOCKET_READ_TIMEOUT
+            self._timeout = get_timeout_policies().llm.socket_read_timeout_seconds
 
         self._temperature = GEN_AI_TEMPERATURE if temperature is None else temperature
 

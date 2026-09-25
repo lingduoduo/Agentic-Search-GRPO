@@ -1,0 +1,71 @@
+# Timeout and retry policies for everything an agent request waits on.
+# Operators override any subset with a partial file named by
+# AGENTIC_SEARCH_TIMEOUTS_PATH. Env vars noted below win over both files.
+# Reference: docs/configuration/timeouts.md
+
+[tools.public_data]
+timeout_seconds = 10.0             # one keyless public-data HTTP call
+max_attempts = 3                   # GET only; a POST is never retried
+backoff_seconds = [0.4, 0.8]       # sleep before attempt 2, 3 (last step reused)
+retry_budget_seconds = 15.0        # no new attempt starts after this wall time
+overpass_timeout_seconds = 30.0    # search_nearby_places HTTP call
+overpass_query_timeout_seconds = 25.0  # Overpass server-side [timeout:N]
+
+[tools.web_search]
+google_timeout_seconds = 15.0      # google_custom_search called directly
+serpapi_timeout_seconds = 15.0     # serpapi_search and the cascade SerpAPI leg
+serper_timeout_seconds = 10.0      # serper_dev_search
+fetch_page_timeout_seconds = 15.0  # fetch_url, one page
+fetch_pages_timeout_seconds = 10.0 # fetch_pages_concurrently, per page
+query_timeout_seconds = 15.0       # web_search tool, per query
+
+[tools.search_router]
+timeout_seconds = 15.0             # search_tool, any provider
+max_retries = 3                    # attempts; also the corpus search tool's reported attempts
+
+[tools.openapi]
+timeout_seconds = 15.0             # one OpenAPI-registered tool call
+
+[tools.mcp]
+timeout_seconds = 30.0             # MCP streamable-HTTP request
+sse_read_timeout_seconds = 300.0   # MCP stream read
+
+[retrieval.client]
+timeout_seconds = 10.0             # SearchClient default, retrieval_search, search agents
+max_retries = 3                    # attempts
+backoff_base_seconds = 0.5         # sleep base * 2**attempt between attempts
+
+[retrieval.search_runner]
+timeout_seconds = 15.0             # context retrieval search_runner
+max_retries = 3                    # attempts
+
+[retrieval.web_hybrid]
+provider_timeout_seconds = 5.0     # /api/agent hybrid search, per provider request
+provider_max_retries = 1           # attempts per provider
+provider_wait_seconds = 8.0        # wall clock per provider leg
+
+[rerank]
+timeout_seconds = 10.0             # HTTP cross-encoder reranker call
+
+[llm]
+socket_read_timeout_seconds = 120.0      # max gap between streamed chunks; env LLM_SOCKET_READ_TIMEOUT
+remote_total_timeout_seconds = 120.0     # remote (OpenAI-compatible) server call
+local_generation_timeout_seconds = 120.0 # local generation wall clock, 0 = none; env AGENTIC_SEARCH_GENERATION_TIMEOUT
+local_heartbeat_seconds = 10.0           # local generation progress heartbeat
+sufficiency_timeout_seconds = 5.0        # AgenticRAG sufficiency judge
+grounded_max_retries = 1                 # grounded-answer regenerations, 0 = none
+
+[tool_loop]
+approval_timeout_seconds = 60.0    # wait for a user's tool approval; env TOOL_APPROVAL_TIMEOUT_SECONDS
+escalation_timeout_seconds = 120.0 # wait for a user's failure escalation decision
+max_escalations = 3                # escalations per run before it stops unresolved
+tool_evidence_timeout_seconds = 5.0 # one tool call feeding answer evidence
+
+[tool_loop.recovery]
+max_retries = 2                    # extra attempts after the first, read-only transient only
+backoff_seconds = [0.5, 1.0]       # jittered x U(0.5, 1.5); last step reused
+retry_after_cap_seconds = 4.0      # cap on a provider's Retry-After
+retry_budget_seconds = 10.0        # total retry sleep per run
+
+[sse]
+heartbeat_seconds = 15.0           # keepalive on an idle stream, 0 = off; env AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS

@@ -8,10 +8,12 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+from src.internal.configs.timeouts import get_timeout_policies
 
 from src.agents.core.base import (
     AgentLoopBase,
@@ -135,6 +137,11 @@ class SearchRoundResult:
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("AGENTIC_SEARCH_LOG_LEVEL", "WARN"))
 
+
+def _client_policy():
+    return get_timeout_policies().retrieval.client
+
+
 _TASK_ID_RE = re.compile(r"[^A-Za-z0-9_-]+")
 _TASK_PREFIX_RE = re.compile(r"^\[(?P<task>[^\]]+)\]\s*(?P<query>.+)$")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*•]+|\d+[.)])\s*")
@@ -252,8 +259,12 @@ class SearchAgentLoopConfig(AgentLoopConfig):
     # caller may not read into the model's context. None → unfiltered, as before.
     filters: "SearchFilters | None" = None
     topk: int = 5
-    search_timeout_seconds: int = 10
-    search_max_retries: int = 3
+    search_timeout_seconds: float = field(
+        default_factory=lambda: _client_policy().timeout_seconds
+    )
+    search_max_retries: int = field(
+        default_factory=lambda: _client_policy().max_retries
+    )
     plan_tag: str = "think"
     decision_tag: str = "search_decision"
     subquestions_tag: str = "subquestions"

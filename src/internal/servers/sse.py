@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from collections.abc import AsyncGenerator
 
 from fastapi.responses import StreamingResponse
+
+from src.internal.configs.timeouts import get_timeout_policies
 
 # ``no-cache`` keeps intermediaries from serving a stale stream; nginx reads
 # ``X-Accel-Buffering: no`` as "pass this through as it arrives".
@@ -49,9 +50,11 @@ def heartbeat_seconds() -> float:
     """How long a stream may be silent before it sends a keepalive.
 
     Default 15s, comfortably under the 30-60s idle timeouts intermediaries
-    commonly apply. Zero disables it.
+    commonly apply. Zero disables it. Read from ``sse.heartbeat_seconds`` in
+    the timeout policy file, overridable via
+    ``AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS``.
     """
-    return float(os.environ.get("AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS", "15"))
+    return get_timeout_policies().sse.heartbeat_seconds
 
 
 async def _with_heartbeat(

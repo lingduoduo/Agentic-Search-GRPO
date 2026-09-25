@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -31,11 +31,17 @@ from src.agents.core.base import (
 )
 from src.context.search import AgentContext, citation_prefix
 from src.context.retrieval.client import SearchClient, SearchClientConfig
+from src.internal.configs.timeouts import get_timeout_policies
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
     os.getenv("AGENTIC_SEARCH_LOG_LEVEL", os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 )
+
+
+def _client_policy():
+    return get_timeout_policies().retrieval.client
+
 
 # Only <search> and <answer> are valid in the one-shot tool flow.
 # <plan>, <fetch>, <searches> etc. belong to the multi-turn ReAct path.
@@ -78,8 +84,12 @@ class SingleTurnAgentLoopConfig(AgentLoopConfig):
 
     search_url: str = "http://localhost:8000/retrieve"
     topk: int = 5
-    search_timeout_seconds: int = 10
-    search_max_retries: int = 3
+    search_timeout_seconds: float = field(
+        default_factory=lambda: _client_policy().timeout_seconds
+    )
+    search_max_retries: int = field(
+        default_factory=lambda: _client_policy().max_retries
+    )
     fetch_url: str | None = None
     use_retrieval: bool = True
     # True → classic pre-retrieval RAG (retrieve before first generation).

@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools import FailureCategory
 from src.internal.tools.public_data import _http
 from src.internal.tools.public_data._http import (
@@ -213,7 +214,11 @@ def test_retries_stop_at_the_attempt_cap(monkeypatch):
     with pytest.raises(PublicDataError, match="HTTP 503"):
         asyncio.run(get_json("https://example.org/x"))
 
-    assert len(_SequencedSession.calls) == _http._MAX_ATTEMPTS == 3
+    assert (
+        len(_SequencedSession.calls)
+        == get_timeout_policies().tools.public_data.max_attempts
+        == 3
+    )
 
 
 def test_a_non_transient_status_is_not_retried(monkeypatch):
@@ -256,7 +261,10 @@ def test_no_retry_once_the_elapsed_budget_is_spent(monkeypatch):
     # internals call it too. A non-exhausting fake keeps those calls from
     # consuming the scripted values -- an iterator here raises StopIteration
     # from inside the event loop instead of failing the assertion.
-    scripted = [0.0, _http._RETRY_BUDGET_SECONDS + 1.0]
+    scripted = [
+        0.0,
+        get_timeout_policies().tools.public_data.retry_budget_seconds + 1.0,
+    ]
     monkeypatch.setattr(
         _http.time, "monotonic", lambda: scripted.pop(0) if scripted else 1e9
     )

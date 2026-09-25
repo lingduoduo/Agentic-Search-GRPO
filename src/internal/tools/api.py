@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from ...context.retrieval.client import aiohttp
+from ..configs.timeouts import get_timeout_policies
 from .base import ResultKind, Tool, ToolEffect, ToolSchema
 
 HTTP_METHODS = {"get", "head", "options", "post", "put", "patch", "delete"}
@@ -222,7 +223,9 @@ class ApiToolRegistry:
         provider = self.get_provider(provider_id)
         spec = self.get_tool(provider_id, tool_name)
         request = _build_request(spec, arguments, provider.headers)
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(
+            total=get_timeout_policies().tools.openapi.timeout_seconds
+        )
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.request(**request) as response:
                 response.raise_for_status()
