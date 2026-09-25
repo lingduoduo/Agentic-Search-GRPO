@@ -3069,7 +3069,10 @@ def _documents_from_search_pages(
     entry_point: str = "search_tool",
 ) -> list[ContextDocument]:
     documents: list[ContextDocument] = []
-    for offset, page in enumerate(pages):
+    # A blank page is an empty-message provider timeout: an empty result, not a
+    # "Result N" source that would also count as usable and skip the fallback.
+    real_pages = [page for page in pages if not page.is_blank]
+    for offset, page in enumerate(real_pages):
         index = start_index + offset
         documents.append(
             ContextDocument(
