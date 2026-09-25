@@ -40,3 +40,13 @@ def test_reconfigure_replaces_the_instance():
     serving.configure_serving_cache(30)
     assert serving.serving_cache() is not first
     assert serving.serving_cache().get("k") is None
+
+
+def test_stale_seconds_reach_the_cache():
+    serving.configure_serving_cache(30, stale_seconds=600)
+    assert serving.serving_cache()._stale == 600.0
+
+
+def test_stale_window_defaults_to_off():
+    serving.configure_serving_cache(30)
+    assert serving.serving_cache()._stale == 0.0
