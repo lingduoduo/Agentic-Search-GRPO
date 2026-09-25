@@ -17,6 +17,7 @@ from src.internal.memory.working import (
     SessionMemoryState,
     WorkingMemory,
     compress_session,
+    estimate_tokens,
     load_state,
     load_working_memory,
     save_state,
@@ -182,6 +183,91 @@ def test_default_keep_last_is_forty(store, cache):
     wm = load_working_memory(store, sid, cache=cache)
     assert len(wm.messages) == 40
     assert len(wm.pending) == 5
+
+
+def _seed_sized(store: AgenticSearchStore, sizes: list[int]) -> tuple[str, list]:
+    """Records whose content is exactly ``sizes[i]`` chars and unique per index."""
+    session = store.create_chat_session(title="s")
+    records = [
+        store.add_chat_message(
+            session.id,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"{i}:".ljust(chars, "x"),
+        )
+        for i, chars in enumerate(sizes)
+    ]
+    return session.id, records
+
+
+def test_estimate_tokens_is_ceil_chars_over_four():
+    assert estimate_tokens("") == 0
+    assert estimate_tokens("abcd") == 1
+    assert estimate_tokens("abcde") == 2
+
+
+# 400 chars = 100 tokens + 4 overhead = 104 per record.
+@pytest.mark.parametrize("budget,kept", [(312, 3), (311, 2)])
+def test_token_budget_keeps_newest_records_that_fit(store, cache, budget, kept):
+    sid, records = _seed_sized(store, [400] * 10)
+    wm = load_working_memory(store, sid, token_budget=budget, cache=cache)
+    assert [m.content for m in wm.messages] == [r.content for r in records[-kept:]]
+    assert [r.id for r in wm.pending] == [r.id for r in records[:-kept]]
+
+
+def test_newest_record_is_kept_even_when_over_budget(store, cache):
+    sid, records = _seed_sized(store, [40, 40, 4000])
+    wm = load_working_memory(store, sid, token_budget=100, cache=cache)
+    assert [m.content for m in wm.messages] == [records[-1].content]
+    assert [r.id for r in wm.pending] == [r.id for r in records[:2]]
+
+
+def test_keep_last_still_caps_under_a_generous_budget(store, cache):
+    sid, records = _seed(store, 12)
+    wm = load_working_memory(store, sid, keep_last=10, token_budget=10_000, cache=cache)
+    assert [m.content for m in wm.messages] == [r.content for r in records[2:]]
+    assert [r.id for r in wm.pending] == [r.id for r in records[:2]]
+
+
+@pytest.mark.parametrize("n,keep_last", [(0, 10), (5, 10), (12, 10), (45, 40)])
+def test_no_budget_is_the_plain_message_count(store, cache, n, keep_last):
+    sid, records = _seed_sized(store, [4000] * n)
+    wm = load_working_memory(store, sid, keep_last=keep_last, cache=cache)
+    assert [m.content for m in wm.messages] == [r.content for r in records[-keep_last:]]
+    assert [r.id for r in wm.pending] == [r.id for r in records[:-keep_last]]
+
+
+def test_budget_applies_without_a_cache_and_never_pends(store):
+    sid, records = _seed_sized(store, [400] * 10)
+    wm = load_working_memory(store, sid, token_budget=312, cache=None)
+    assert [m.content for m in wm.messages] == [r.content for r in records[-3:]]
+    assert wm.pending == []
+
+
+def test_empty_session_under_a_budget(store, cache):
+    sid, _ = _seed_sized(store, [])
+    wm = load_working_memory(store, sid, token_budget=100, cache=cache)
+    assert wm == WorkingMemory(messages=[], summary="", pending=[])
+
+
+def test_budget_dropped_prefix_with_cursor_gives_summary_and_pending(store, cache):
+    sid, records = _seed_sized(store, [400] * 10)
+    save_state(
+        cache, sid, SessionMemoryState(summary="S", summarized_through=records[2].id)
+    )
+    wm = load_working_memory(store, sid, token_budget=312, cache=cache)
+    assert wm.messages[0].content == SUMMARY_PREFIX + "S"
+    assert [m.content for m in wm.messages[1:]] == [r.content for r in records[7:]]
+    assert [r.id for r in wm.pending] == [r.id for r in records[3:7]]
+
+
+def test_cursor_inside_the_budgeted_tail_ignores_summary(store, cache):
+    sid, records = _seed_sized(store, [400] * 10)
+    save_state(
+        cache, sid, SessionMemoryState(summary="dup", summarized_through=records[8].id)
+    )
+    wm = load_working_memory(store, sid, token_budget=312, cache=cache)
+    assert wm.summary == ""
+    assert [m.content for m in wm.messages] == [r.content for r in records[7:]]
 
 
 class FakeLLM:
@@ -351,6 +437,61 @@ def test_compress_lock_failure_leaves_state_and_clears_inflight(store, cache):
     # succeed -- proving the failed lock attempt did not leave `_inflight` set.
     ok = asyncio.run(compress_session(sid, llm, pending=records[:2], cache=cache))
     assert ok is True
+
+
+# 4000 chars = 1000 tokens + 4 overhead: two records fit the 3000-token input.
+def test_compress_summarizes_one_bounded_chunk_of_a_backlog(store, cache):
+    sid, records = _seed_sized(store, [4000] * 22)
+    wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+    assert len(wm.pending) == 20
+    llm = FakeLLM()
+    assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    turns = llm.prompts[0][-1]["content"]
+    assert records[0].content in turns
+    assert records[1].content in turns
+    assert records[2].content not in turns
+    assert load_state(cache, sid).summarized_through == records[1].id
+
+
+def test_repeated_compression_drains_the_backlog(store, cache):
+    sid, records = _seed_sized(store, [4000] * 22)
+    llm = FakeLLM()
+    for _ in range(10):
+        wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+        assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    assert load_working_memory(store, sid, keep_last=2, cache=cache).pending == []
+    assert load_state(cache, sid).summarized_through == records[19].id
+    assert len(llm.prompts) == 10
+
+
+def test_oversized_single_record_is_clipped_in_the_prompt_only(store, cache):
+    sid, records = _seed_sized(store, [20_000, 40, 40])
+    wm = load_working_memory(store, sid, keep_last=2, cache=cache)
+    llm = FakeLLM()
+    assert asyncio.run(compress_session(sid, llm, pending=wm.pending, cache=cache))
+    turns = llm.prompts[0][-1]["content"]
+    assert working._CLIP_MARKER in turns
+    assert records[0].content[: working._SUMMARY_INPUT_TOKENS * 4] in turns
+    assert records[0].content not in turns
+    assert store.list_chat_messages(sid)[0].content == records[0].content
+    assert load_state(cache, sid).summarized_through == records[0].id
+
+
+def test_curation_covers_the_bounded_span(store, cache):
+    sid, records = _seed_sized(store, [4000] * 6)
+    seen: list = []
+
+    async def curate(span):
+        seen.append([r.id for r in span])
+        return True
+
+    asyncio.run(
+        compress_session(
+            sid, FakeLLM(), pending=records[:4], cache=cache, curate=curate
+        )
+    )
+    assert seen == [[records[0].id, records[1].id]]
+    assert load_state(cache, sid).curated_through == records[1].id
 
 
 # --- schedule_compression -----------------------------------------------------

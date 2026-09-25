@@ -12,12 +12,6 @@ STOP_STREAM_PAT: str = os.environ.get("STOP_STREAM_PAT", "")
 # Override via the MAX_LLM_CYCLES env var for tool-heavy MCP workflows.
 MAX_LLM_CYCLES: int = int(os.environ.get("MAX_LLM_CYCLES", "6"))
 
-# Trigger context compression when stored history exceeds this fraction of the
-# context window.
-COMPRESSION_TRIGGER_RATIO: float = float(
-    os.environ.get("COMPRESSION_TRIGGER_RATIO", "0.8")
-)
-
 NUM_RETURNED_HITS: int = int(os.environ.get("NUM_RETURNED_HITS", "50"))
 MAX_CHUNKS_FED_TO_CHAT: int = int(os.environ.get("MAX_CHUNKS_FED_TO_CHAT", "25"))
 

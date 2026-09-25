@@ -67,7 +67,6 @@ DEFAULT_CONFIG: dict = {
     # Chat / agent loop
     # -------------------------------------------------------------------------
     "MAX_LLM_CYCLES": 6,
-    "COMPRESSION_TRIGGER_RATIO": 0.8,
     "NUM_RETURNED_HITS": 50,
     "MAX_CHUNKS_FED_TO_CHAT": 25,
     "DOC_TIME_DECAY": 0.5,

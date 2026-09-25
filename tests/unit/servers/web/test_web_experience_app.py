@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from src.context.models import AnswerGenerationResult
@@ -1650,11 +1652,56 @@ def test_real_intent_index_abstention_uses_classifier_fallback(monkeypatch, tmp_
     assert calls == [("chat", "vendor renewal discussion request")]
 
 
-def test_memory_compression_flag_defaults_off_and_reads_env(monkeypatch):
+@pytest.mark.parametrize(
+    "value,agent,direct",
+    [
+        (None, True, False),
+        ("", True, False),
+        ("1", True, True),
+        ("true", True, True),
+        ("YES", True, True),
+        ("0", False, False),
+        ("false", False, False),
+        ("no", False, False),
+        ("on", False, False),
+    ],
+)
+def test_memory_compression_is_tri_state(monkeypatch, value, agent, direct):
+    if value is None:
+        monkeypatch.delenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", raising=False)
+    else:
+        monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", value)
+    settings = SearchExperienceSettings.from_app_settings()
+    assert (settings.memory_compression, settings.memory_compression_direct) == (
+        agent,
+        direct,
+    )
+
+
+def test_memory_defaults_match_between_dataclass_and_env(monkeypatch):
     monkeypatch.delenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", raising=False)
-    assert SearchExperienceSettings.from_app_settings().memory_compression is False
-    monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_COMPRESSION", "true")
-    assert SearchExperienceSettings.from_app_settings().memory_compression is True
+    monkeypatch.delenv("AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS", raising=False)
+    loaded = SearchExperienceSettings.from_app_settings()
+    default = SearchExperienceSettings()
+    for field in (
+        "memory_compression",
+        "memory_compression_direct",
+        "memory_history_tokens",
+    ):
+        assert getattr(loaded, field) == getattr(default, field)
+    assert default.memory_history_tokens == 2500
+
+
+def test_memory_history_tokens_reads_env(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS", "800")
+    assert SearchExperienceSettings.from_app_settings().memory_history_tokens == 800
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc", "1.5"])
+def test_memory_history_tokens_rejects_bad_values(monkeypatch, value):
+    monkeypatch.setenv("AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS", value)
+    with pytest.raises(ValueError, match="AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS"):
+        SearchExperienceSettings.from_app_settings()
 
 
 def test_memory_auto_curate_flag_defaults_off_and_reads_env(monkeypatch):
@@ -1749,7 +1796,10 @@ def test_run_agent_flag_off_ignores_stored_summary(monkeypatch, tmp_path):
     )
 
     app = create_web_app(
-        SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"), store=store
+        SearchExperienceSettings(
+            db_path=tmp_path / "state.sqlite3", memory_compression=False
+        ),
+        store=store,
     )
     TestClient(app).post(
         "/api/agent",
@@ -1812,15 +1862,26 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
     assert scheduled == [(5, True, sentinel_llm, store, None, True)]
 
 
-def test_register_routers_passes_memory_settings_to_chat_and_tool(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("agent,direct", [(True, False), (False, True)])
+def test_register_routers_passes_direct_memory_settings_to_chat_and_tool(
+    monkeypatch, tmp_path, agent, direct
 ):
     seen: dict = {}
 
     def fake_chat_router(
-        store, *, llm=None, memory_compression=False, memory_auto_curate=False
+        store,
+        *,
+        llm=None,
+        memory_compression=False,
+        memory_auto_curate=False,
+        memory_history_tokens=None,
     ):
-        seen["chat"] = (llm, memory_compression, memory_auto_curate)
+        seen["chat"] = (
+            llm,
+            memory_compression,
+            memory_auto_curate,
+            memory_history_tokens,
+        )
         from fastapi import APIRouter
 
         return APIRouter()
@@ -1833,8 +1894,14 @@ def test_register_routers_passes_memory_settings_to_chat_and_tool(
         llm=None,
         memory_compression=False,
         memory_auto_curate=False,
+        memory_history_tokens=None,
     ):
-        seen["tool"] = (llm, memory_compression, memory_auto_curate)
+        seen["tool"] = (
+            llm,
+            memory_compression,
+            memory_auto_curate,
+            memory_history_tokens,
+        )
         from fastapi import APIRouter
 
         return APIRouter()
@@ -1850,12 +1917,83 @@ def test_register_routers_passes_memory_settings_to_chat_and_tool(
     create_web_app(
         SearchExperienceSettings(
             db_path=tmp_path / "s.sqlite3",
-            memory_compression=True,
+            memory_compression=agent,
+            memory_compression_direct=direct,
             memory_auto_curate=True,
+            memory_history_tokens=777,
         ),
         llm=sentinel,
     )
     assert seen == {
-        "chat": (sentinel, True, True),
-        "tool": (sentinel, True, True),
+        "chat": (sentinel, direct, True, 777),
+        "tool": (sentinel, direct, True, 777),
     }
+
+
+class _SummaryLLM:
+    def complete(self, messages, **kwargs):
+        return "S"
+
+
+async def _await(task):
+    return await task
+
+
+def test_run_agent_default_settings_compress_past_the_token_budget(
+    monkeypatch, tmp_path
+):
+    from src.internal.cache.interface import InMemoryCache
+    from src.internal.memory.working import load_state
+    import src.internal.servers.web.app as app_module
+
+    cache = InMemoryCache()
+    monkeypatch.setattr("src.internal.cache.interface._default_cache", cache)
+    captured: list = []
+
+    async def fake_answer(question, *, llm=None, chat_history=None, **kw):
+        captured.append(list(chat_history or []))
+        return _answer_result(question)
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.answer_with_retrieval", fake_answer
+    )
+    scheduled: list = []
+    real_schedule = app_module.schedule_compression
+
+    def spy(wm, **kw):
+        task = real_schedule(wm, **kw)
+        scheduled.append((len(wm.pending), task))
+        return task
+
+    monkeypatch.setattr("src.internal.servers.web.app.schedule_compression", spy)
+
+    store = AgenticSearchStore(tmp_path / "state.sqlite3")
+    session = store.create_chat_session(title="long")
+    # 4000 chars ~ 1004 tokens: the 2500 default keeps 2, the other 8 pend.
+    records = [
+        store.add_chat_message(
+            session.id,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"{i}:".ljust(4000, "x"),
+        )
+        for i in range(10)
+    ]
+    app = create_web_app(
+        SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"),
+        store=store,
+        llm=_SummaryLLM(),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/agent",
+            json={"query": "follow up", "mode": "chat_once", "session_id": session.id},
+        )
+        assert response.status_code == 200
+        assert [pending for pending, _ in scheduled] == [8]
+        task = scheduled[0][1]
+        assert task is not None
+        assert client.portal.call(_await, task) is True
+
+    assert len(captured[0]) == 2
+    # First bounded chunk: the two oldest 1004-token records.
+    assert load_state(cache, session.id).summarized_through == records[1].id

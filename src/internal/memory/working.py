@@ -1,11 +1,14 @@
 """Working memory: the session tail plus a compressed summary of what fell off it.
 
-Every conversational surface used to keep the last N messages and forget the
-rest. This module keeps the same tail and, when turns fall outside it, hands
-them to a background summarizer whose output is prepended to the next turn as
-one system message. Per-session state (the summary and the id of the last
-message it covers) lives in the process's ``CacheBackend`` -- in-memory by
-default, Redis when ``CACHE_BACKEND=redis`` -- so no new dependency is added.
+Every surface sends the newest messages that fit both a message cap and an
+estimated-token budget (``AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS``). When turns
+fall outside that tail they go to a background summarizer, one bounded chunk
+per call, whose output is prepended to the next turn as one system message.
+Summarization is on by default for ``/api/agent`` only; see
+``AGENTIC_SEARCH_MEMORY_COMPRESSION``. Per-session state (the summary and the
+id of the last message it covers) lives in the process's ``CacheBackend`` --
+in-memory by default, Redis when ``CACHE_BACKEND=redis`` -- so no new
+dependency is added.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import asyncio
 import functools
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 
@@ -25,6 +29,10 @@ from src.internal.memory.service import curate_span
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 40
+# Default for AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS: leaves room in the local
+# loops' 4096-token prompt for the system prompt, the summary and the new turn.
+DEFAULT_HISTORY_TOKENS = 2500
+_MESSAGE_OVERHEAD_TOKENS = 4
 SUMMARY_PREFIX = "Earlier in this conversation: "
 SESSION_MEMORY_TTL_SECONDS = 30 * 24 * 3600
 
@@ -82,23 +90,52 @@ class WorkingMemory:
     pending: list[ChatMessageRecord]
 
 
+def estimate_tokens(text: str) -> int:
+    """A rough token count, four characters per token; no tokenizer needed."""
+    return math.ceil(len(text) / 4)
+
+
+def _record_tokens(record: ChatMessageRecord) -> int:
+    return estimate_tokens(record.content) + _MESSAGE_OVERHEAD_TOKENS
+
+
+def _fit_budget(
+    records: list[ChatMessageRecord], token_budget: int
+) -> list[ChatMessageRecord]:
+    """The newest ``records`` whose estimates fit ``token_budget``. The newest
+    one is always kept, even alone over budget: a turn with no history beats
+    a turn that silently loses the message it is answering."""
+    used = 0
+    kept = 0
+    for record in reversed(records):
+        used += _record_tokens(record)
+        if kept and used > token_budget:
+            break
+        kept += 1
+    return records[len(records) - kept :]
+
+
 def load_working_memory(
     store,
     session_id: str,
     *,
     keep_last: int = MAX_HISTORY_MESSAGES,
+    token_budget: int | None = None,
     cache: CacheBackend | None = None,
 ) -> WorkingMemory:
-    """Return the last ``keep_last`` messages, prefixed by the stored summary
-    when one covers the dropped prefix.
+    """Return the newest messages -- at most ``keep_last`` and, with
+    ``token_budget`` set, only as many as fit its estimate (the newest always)
+    -- prefixed by the stored summary when one covers the dropped prefix.
 
-    ``cache=None`` (the flag off) skips state entirely: the result is exactly
-    the tail-slice every surface used before, and ``pending`` is empty so no
-    compression is ever scheduled.
+    ``token_budget=None`` is the pure message count. ``cache=None`` (the flag
+    off) skips state entirely: the result is exactly the tail, and ``pending``
+    is empty so no compression is ever scheduled.
     """
     records = store.list_chat_messages(session_id)
     tail = records[-keep_last:]
-    dropped = records[:-keep_last]
+    if token_budget is not None:
+        tail = _fit_budget(tail, token_budget)
+    dropped = records[: len(records) - len(tail)]
     messages = [ChatMessage(role=r.role, content=r.content) for r in tail]
     if cache is None or not dropped:
         return WorkingMemory(messages=messages, summary="", pending=[])
@@ -122,6 +159,10 @@ def load_working_memory(
 
 _LOCK_KEY = "session_memory:{session_id}:compress"
 _SUMMARY_MAX_TOKENS = 400
+# Estimated tokens of turns one summarizer call may see. A backlog larger than
+# this (the first compression of a long session) drains one chunk per turn.
+_SUMMARY_INPUT_TOKENS = 3000
+_CLIP_MARKER = " [...truncated]"
 _SUMMARY_SYSTEM = (
     "You compress a conversation. Rewrite the prior summary and the new turns "
     "into one concise summary that keeps facts, decisions, user preferences, "
@@ -141,8 +182,27 @@ _tasks: set[asyncio.Task] = set()
 CurateFn = Callable[[list[ChatMessageRecord]], Awaitable[bool]]
 
 
+def _bounded_span(pending: list[ChatMessageRecord]) -> list[ChatMessageRecord]:
+    """The oldest records of ``pending`` that fit ``_SUMMARY_INPUT_TOKENS``,
+    always at least one so the cursor can advance."""
+    used = 0
+    span: list[ChatMessageRecord] = []
+    for record in pending:
+        used += _record_tokens(record)
+        if span and used > _SUMMARY_INPUT_TOKENS:
+            break
+        span.append(record)
+    return span
+
+
+def _clip(text: str) -> str:
+    """Cap one record at the input budget, for the prompt only."""
+    limit = _SUMMARY_INPUT_TOKENS * 4
+    return text if len(text) <= limit else text[:limit] + _CLIP_MARKER
+
+
 def _summary_prompt(prior: str, pending: list[ChatMessageRecord]) -> list[dict]:
-    turns = "\n".join(f"{r.role.upper()}: {r.content}" for r in pending)
+    turns = "\n".join(f"{r.role.upper()}: {_clip(r.content)}" for r in pending)
     return [
         {"role": "system", "content": _SUMMARY_SYSTEM},
         {
@@ -204,7 +264,9 @@ async def compress_session(
     cache: CacheBackend | None = None,
     curate: CurateFn | None = None,
 ) -> bool:
-    """Summarize ``pending`` into the session's stored summary.
+    """Summarize the oldest chunk of ``pending`` (up to
+    ``_SUMMARY_INPUT_TOKENS``) into the session's stored summary; the rest
+    drains on later turns.
 
     Returns True when the state advanced. False means nothing to do, another
     task owns this span or advanced past it while this one ran, or the
@@ -238,6 +300,7 @@ async def compress_session(
             pending = pending[pending_ids.index(state.summarized_through) + 1 :]
             if not pending:
                 return False
+        pending = _bounded_span(pending)
         last_id = pending[-1].id
         text = await asyncio.to_thread(
             _complete, llm, _summary_prompt(state.summary, pending)

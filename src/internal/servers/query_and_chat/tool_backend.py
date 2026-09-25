@@ -69,6 +69,7 @@ def create_tool_router(
     llm=None,
     memory_compression: bool = False,
     memory_auto_curate: bool = False,
+    memory_history_tokens: int | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/tool", tags=["tool"])
 
@@ -119,6 +120,7 @@ def create_tool_router(
             store,
             session_id,
             keep_last=MAX_HISTORY_MESSAGES,
+            token_budget=memory_history_tokens,
             cache=get_cache_backend() if memory_compression else None,
         )
         history = working.messages
