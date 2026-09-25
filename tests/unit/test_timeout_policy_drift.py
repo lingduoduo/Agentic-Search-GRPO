@@ -57,7 +57,7 @@ ALLOWED = {
     # thread notice stop_event after generation finishes, not the
     # llm.local_heartbeat_seconds interval itself (already read from policy a
     # few lines above) and not any other schema key.
-    "src/model/serving.py:611 timeout",
+    "src/model/serving.py:612 timeout",
 }
 
 
