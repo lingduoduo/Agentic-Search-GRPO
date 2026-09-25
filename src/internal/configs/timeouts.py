@@ -153,6 +153,12 @@ class SSEPolicy:
 
 
 @dataclass(frozen=True)
+class CircuitBreakerPolicy:
+    failure_threshold: int
+    open_seconds: float
+
+
+@dataclass(frozen=True)
 class ReadinessPolicy:
     probe_timeout_seconds: float
 
@@ -165,6 +171,7 @@ class TimeoutPolicies:
     llm: LLMPolicy
     tool_loop: ToolLoopPolicy
     sse: SSEPolicy
+    circuit_breaker: CircuitBreakerPolicy
     readiness: ReadinessPolicy
 
 

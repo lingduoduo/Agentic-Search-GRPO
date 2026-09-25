@@ -14,6 +14,7 @@ from src.context.retrieval.client import SearchClient
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
 from src.internal.configs.timeouts import get_timeout_policies
+from src.internal.resilience.circuit_breaker import get_breaker, is_failure_status
 from src.internal.retrieval.acl import acl_allows
 from src.internal.search.process_search_query import weighted_reciprocal_rank_fusion
 
@@ -174,18 +175,31 @@ class RerankHTTPRankingStage:
         )
         ranked = cache.get(cache_key) if cache is not None else None
         if ranked is None:
-            async with httpx.AsyncClient() as client:
-                body = {
-                    "queries": [query],
-                    "documents": [payloads],
-                    "return_scores": True,
-                }
-                if self._send_top_k:
-                    body["rerank_topk"] = top_k
-                response = await client.post(
-                    self._url, json=body, timeout=self._timeout
-                )
-                response.raise_for_status()
+            breaker = get_breaker("rerank")
+            breaker.before_call()  # raises CircuitOpenError while skipped
+            try:
+                async with httpx.AsyncClient() as client:
+                    body = {
+                        "queries": [query],
+                        "documents": [payloads],
+                        "return_scores": True,
+                    }
+                    if self._send_top_k:
+                        body["rerank_topk"] = top_k
+                    response = await client.post(
+                        self._url, json=body, timeout=self._timeout
+                    )
+                    response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if is_failure_status(exc.response.status_code):
+                    breaker.record_failure()
+                else:
+                    breaker.record_success()
+                raise
+            except httpx.HTTPError:
+                breaker.record_failure()
+                raise
+            breaker.record_success()
             ranked = response.json()["result"][0]
             if cache is not None and ranked:
                 cache.set(cache_key, ranked)
