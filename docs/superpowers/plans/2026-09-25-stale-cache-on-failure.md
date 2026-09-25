@@ -61,7 +61,7 @@ Each is pinned by a test in the owning task below (1, 4 → Task 5; 2 → Task 1
 **Interfaces:**
 - Produces: `TTLCache(..., stale_seconds: float = 0.0, ...)`, `TTLCache.get_stale(key) -> Any | None`, `stats()` gains `"stale_hits"`; `configure_serving_cache(ttl_seconds, *, max_entries=1024, stale_seconds=0.0)`.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/unit/cache/test_ttl_cache.py`; add `import pytest`; update the existing stats assertion to include `"stale_hits": 0`)
+- [x] **Step 1: Write the failing tests** (append to `tests/unit/cache/test_ttl_cache.py`; add `import pytest`; update the existing stats assertion to include `"stale_hits": 0`)
 
 ```python
 def test_in_grace_entry_is_a_miss_but_kept_and_served_stale():
@@ -147,9 +147,9 @@ def test_stale_window_defaults_to_off():
     assert serving.serving_cache()._stale == 0.0
 ```
 
-- [ ] **Step 2: Run to verify failure** — `.venv/bin/python -m pytest tests/unit/cache -q -p no:cacheprovider` → FAIL (`unexpected keyword argument 'stale_seconds'`).
+- [x] **Step 2: Run to verify failure** — `.venv/bin/python -m pytest tests/unit/cache -q -p no:cacheprovider` → FAIL (`unexpected keyword argument 'stale_seconds'`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
     def __init__(self, ttl_seconds, *, max_entries=1024, stale_seconds: float = 0.0, clock=time.monotonic):
@@ -191,8 +191,8 @@ def test_stale_window_defaults_to_off():
 
 `stats()` adds `"stale_hits": self._stale_hits`. `configure_serving_cache` passes `stale_seconds` through.
 
-- [ ] **Step 4: Run tests** → PASS.
-- [ ] **Step 5: Commit** — `git add src/internal/cache tests/unit/cache && git commit`.
+- [x] **Step 4: Run tests** → PASS.
+- [x] **Step 5: Commit** — `git add src/internal/cache tests/unit/cache && git commit`.
 
 ### Task 2: Configuration, lifespan, docs
 
@@ -204,7 +204,7 @@ def test_stale_window_defaults_to_off():
 - Consumes: `configure_serving_cache(ttl, stale_seconds=...)`, `TTLCache._stale` (test only).
 - Produces: `ServiceSettings.search_cache_stale_seconds: int = 3600`; `SearchExperienceSettings.search_cache_stale: int = 3600`.
 
-- [ ] **Step 1: Failing tests** (append)
+- [x] **Step 1: Failing tests** (append)
 
 ```python
 def test_stale_window_defaults_to_an_hour():
@@ -235,14 +235,14 @@ def test_lifespan_passes_the_stale_window(tmp_path):
         assert serving.serving_cache()._stale == 900.0
 ```
 
-- [ ] **Step 2: Run** → FAIL (`AttributeError: search_cache_stale_seconds`).
-- [ ] **Step 3: Implement** — `ServiceSettings.search_cache_stale_seconds: int = 3600`; in `load_app_settings` read it with `get_env_int(source, "AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS", 3600)` into a local, raise `ValueError("AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS must not be negative.")` when `< 0`, pass it in. `SearchExperienceSettings.search_cache_stale: int = 3600` mapped in `from_app_settings`; lifespan: `configure_serving_cache(settings.search_cache_ttl, stale_seconds=settings.search_cache_stale)`. Docs row in `docs/configuration.md` after the TTL row:
+- [x] **Step 2: Run** → FAIL (`AttributeError: search_cache_stale_seconds`).
+- [x] **Step 3: Implement** — `ServiceSettings.search_cache_stale_seconds: int = 3600`; in `load_app_settings` read it with `get_env_int(source, "AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS", 3600)` into a local, raise `ValueError("AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS must not be negative.")` when `< 0`, pass it in. `SearchExperienceSettings.search_cache_stale: int = 3600` mapped in `from_app_settings`; lifespan: `configure_serving_cache(settings.search_cache_ttl, stale_seconds=settings.search_cache_stale)`. Docs row in `docs/configuration.md` after the TTL row:
 
 `| AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS | Seconds past the TTL an expired serving-cache entry is kept to answer when the live call fails (a web provider's error, timeout or open circuit; a retrieval-server error); such results carry metadata stale: true. Defaults to 3600, 0 disables the fallback. See [Serving cache](retrieval.md#serving-cache) |`
 
 and a paragraph under `docs/retrieval.md` "Serving cache".
-- [ ] **Step 4: Run** lifespan tests + `tests/unit/test_documented_env_vars.py` → PASS.
-- [ ] **Step 5: Commit.**
+- [x] **Step 4: Run** lifespan tests + `tests/unit/test_documented_env_vars.py` → PASS.
+- [x] **Step 5: Commit.**
 
 ### Task 3: `search_tool` falls back to stale pages
 
@@ -254,7 +254,7 @@ and a paragraph under `docs/retrieval.md` "Serving cache".
 - Consumes: `TTLCache.get_stale`.
 - Produces: on failure `search_tool` returns deep copies of the cached pages with `metadata["stale"] = True`.
 
-- [ ] **Step 1: Failing tests** (append; imports `copy`, `TTLCache`, `SERPAPI_CIRCUIT_OPEN_ERROR`)
+- [x] **Step 1: Failing tests** (append; imports `copy`, `TTLCache`, `SERPAPI_CIRCUIT_OPEN_ERROR`)
 
 ```python
 class _Clock:
@@ -362,8 +362,8 @@ def test_recovery_after_a_stale_fallback_is_fresh_again(serp, stale_cache, clock
     assert fresh[0].metadata == {}
 ```
 
-- [ ] **Step 2: Run** → the fallback tests FAIL (failure pages returned).
-- [ ] **Step 3: Implement** — after the provider call, before the caching guard:
+- [x] **Step 2: Run** → the fallback tests FAIL (failure pages returned).
+- [x] **Step 3: Implement** — after the provider call, before the caching guard:
 
 ```python
     # A failed live lookup (every page an error, timeout or blank; an open
@@ -385,8 +385,8 @@ def test_recovery_after_a_stale_fallback_is_fresh_again(serp, stale_cache, clock
             ]
 ```
 
-- [ ] **Step 4: Run** `tests/unit/test_search_tools_cache.py` → PASS.
-- [ ] **Step 5: Commit.**
+- [x] **Step 4: Run** `tests/unit/test_search_tools_cache.py` → PASS.
+- [x] **Step 5: Commit.**
 
 ### Task 4: The cascade's SerpAPI leg goes through `search_tool`
 
@@ -398,7 +398,7 @@ def test_recovery_after_a_stale_fallback_is_fresh_again(serp, stale_cache, clock
 - Consumes: `search_tool(query, provider="serpapi", page=, page_size=, timeout_seconds=)` and its stale fallback (Task 3).
 - Produces: `make_web_cascade_search(serpapi_fn=None, ...)` — `None` means the default wrapper around `search_tool`; injected `serpapi_fn` unchanged.
 
-- [ ] **Step 1: Failing tests** (append; imports `copy`, `pytest`, `serving`, `TTLCache`)
+- [x] **Step 1: Failing tests** (append; imports `copy`, `pytest`, `serving`, `TTLCache`)
 
 ```python
 @pytest.fixture
@@ -445,8 +445,8 @@ def test_serpapi_failure_with_stale_entry_needs_no_browser(monkeypatch, serp_cal
     assert pages[0].metadata["stale"] is True
 ```
 
-- [ ] **Step 2: Run** → FAIL (`calls == ["q", "q"]` in the first; the default leg bypasses the cache).
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run** → FAIL (`calls == ["q", "q"]` in the first; the default leg bypasses the cache).
+- [x] **Step 3: Implement**
 
 ```python
 async def _serpapi_via_search_tool(query, *, page, page_size, timeout_seconds):
@@ -459,8 +459,8 @@ async def _serpapi_via_search_tool(query, *, page, page_size, timeout_seconds):
 def make_web_cascade_search(*, browser_search_url=None, serpapi_fn=_serpapi_via_search_tool, browser_fn=search_tool):
 ```
 
-- [ ] **Step 4: Run** cascade + domain + timeout-identity + circuit-breaker-site tests → PASS.
-- [ ] **Step 5: Commit.**
+- [x] **Step 4: Run** cascade + domain + timeout-identity + circuit-breaker-site tests → PASS.
+- [x] **Step 5: Commit.**
 
 ### Task 5: `SearchClient.retrieve` falls back to stale rows
 
@@ -472,7 +472,7 @@ def make_web_cascade_search(*, browser_search_url=None, serpapi_fn=_serpapi_via_
 - Consumes: `TTLCache.get_stale`.
 - Produces: on a failed POST with stale rows for every missing query, `retrieve` returns them with each `SearchResult.metadata["stale"] = True`.
 
-- [ ] **Step 1: Failing tests** (append; import `TTLCache`)
+- [x] **Step 1: Failing tests** (append; import `TTLCache`)
 
 ```python
 class _FailingSession(_FakeSession):
@@ -548,8 +548,8 @@ def test_cancellation_never_serves_stale(monkeypatch, posts, stale_cache):
         _run(_client().retrieve(["a"]))
 ```
 
-- [ ] **Step 2: Run** → FAIL (RuntimeError raised instead of stale rows).
-- [ ] **Step 3: Implement** — inside the existing `except BaseException` after `note_retrieval(...)`:
+- [x] **Step 2: Run** → FAIL (RuntimeError raised instead of stale rows).
+- [x] **Step 3: Implement** — inside the existing `except BaseException` after `note_retrieval(...)`:
 
 ```python
             except BaseException as exc:
@@ -574,12 +574,12 @@ def test_cancellation_never_serves_stale(monkeypatch, posts, stale_cache):
                 return results
 ```
 
-- [ ] **Step 4: Run** `tests/unit/test_search_client_cache.py` and the stage-metrics tests → PASS.
-- [ ] **Step 5: Commit.**
+- [x] **Step 4: Run** `tests/unit/test_search_client_cache.py` and the stage-metrics tests → PASS.
+- [x] **Step 5: Commit.**
 
 ### Task 6: Mutation checks and full verification
 
-- [ ] Make `get` delete in-grace entries (`if now >= expires_at + self._stale:` → unconditional delete) → `test_in_grace_entry_is_a_miss_but_kept_and_served_stale` red. Restore, `find . -name __pycache__ -path '*src*' -exec rm -rf {} +`.
-- [ ] Remove the `search_tool` fallback block → `test_failure_after_expiry_serves_stale_pages` red. Restore, clear pycache.
-- [ ] Remove the retrieval fallback (`raise` unconditionally) → `test_failed_post_serves_stale_rows_labelled` red. Restore, clear pycache.
-- [ ] `git diff` shows no residue; `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` → 0 failures; `ruff check . && ruff format --check .`; `git diff --check origin/main...HEAD`.
+- [x] Make `get` delete in-grace entries (`if now >= expires_at + self._stale:` → unconditional delete) → `test_in_grace_entry_is_a_miss_but_kept_and_served_stale` red. Restore, `find . -name __pycache__ -path '*src*' -exec rm -rf {} +`.
+- [x] Remove the `search_tool` fallback block → `test_failure_after_expiry_serves_stale_pages` red. Restore, clear pycache.
+- [x] Remove the retrieval fallback (`raise` unconditionally) → `test_failed_post_serves_stale_rows_labelled` red. Restore, clear pycache.
+- [x] `git diff` shows no residue; `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` → 0 failures; `ruff check . && ruff format --check .`; `git diff --check origin/main...HEAD`.
