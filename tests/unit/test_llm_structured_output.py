@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.context.models import LLMResponse, LLMTimeoutError
+from src.context.models import LLMResponse, LLMTimeoutError, ModelUnavailableError
 from src.context.structured_output import (
     SchemaUnsupportedError,
     StructuredOutputCapability,
@@ -186,11 +186,7 @@ def test_explicit_not_supported_schema_400_is_classified(schema_request, body):
 
 @pytest.mark.parametrize(
     ("status", "body"),
-    [
-        (400, "invalid API key"),
-        (429, "response_format is unsupported"),
-        (500, "json_schema failed"),
-    ],
+    [(400, "invalid API key")],
 )
 def test_other_http_errors_propagate_unchanged(schema_request, status, body):
     llm = configured_llm()
@@ -203,6 +199,21 @@ def test_other_http_errors_propagate_unchanged(schema_request, status, body):
     assert caught.value is error
 
 
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(429, "response_format is unsupported"), (500, "json_schema failed")],
+)
+def test_unavailable_statuses_become_model_unavailable(schema_request, status, body):
+    llm = configured_llm()
+    error = http_error(status, body)
+    response = MagicMock()
+    response.raise_for_status.side_effect = error
+    with patch.object(llm._session, "post", return_value=response):
+        with pytest.raises(ModelUnavailableError) as caught:
+            llm.complete(MESSAGES, structured_output=schema_request)
+    assert caught.value.__cause__ is error
+
+
 def test_timeout_is_normalized_to_llm_timeout_error(schema_request):
     llm = configured_llm()
     error = requests.Timeout("timeout")
@@ -211,13 +222,13 @@ def test_timeout_is_normalized_to_llm_timeout_error(schema_request):
             llm.complete(MESSAGES, structured_output=schema_request)
 
 
-def test_connection_error_propagates_unchanged(schema_request):
+def test_connection_error_becomes_model_unavailable(schema_request):
     llm = configured_llm()
     error = requests.ConnectionError("down")
     with patch.object(llm._session, "post", side_effect=error):
-        with pytest.raises(requests.ConnectionError) as caught:
+        with pytest.raises(ModelUnavailableError) as caught:
             llm.complete(MESSAGES, structured_output=schema_request)
-    assert caught.value is error
+    assert caught.value.__cause__ is error
 
 
 def test_schema_error_is_not_classified_without_structured_request():
@@ -271,7 +282,7 @@ def test_stream_complete_downgrades_on_explicit_unsupported_schema_400(schema_re
 
 def test_stream_complete_other_http_errors_propagate_unchanged(schema_request):
     llm = configured_llm()
-    error = http_error(500, "internal error")
+    error = http_error(400, "invalid API key")
     response = MagicMock()
     response.raise_for_status.side_effect = error
     with patch.object(llm._session, "post", return_value=response):

@@ -18,7 +18,7 @@ from typing import Any
 import requests
 from requests.adapters import HTTPAdapter
 
-from src.context.models import LLMResponse, LLMTimeoutError
+from src.context.models import LLMResponse, LLMTimeoutError, ModelUnavailableError
 from src.internal.observability.stage_metrics import note_generation
 from src.context.structured_output import (
     SchemaUnsupportedError,
@@ -131,6 +131,13 @@ def _is_schema_unsupported_response(response: requests.Response | None) -> bool:
     )
 
 
+def _is_unavailable_status(response: requests.Response | None) -> bool:
+    """5xx or 429: the provider refused service, not the request."""
+    return response is not None and (
+        response.status_code >= 500 or response.status_code == 429
+    )
+
+
 class OpenAICompatibleLLM(LLM):
     """LLM implementation that streams from any OpenAI-compatible endpoint.
 
@@ -211,6 +218,8 @@ class OpenAICompatibleLLM(LLM):
             resp.raise_for_status()
         except requests.Timeout:
             raise LLMTimeoutError("LLM request timed out") from None
+        except requests.ConnectionError as exc:
+            raise ModelUnavailableError("LLM provider is unreachable") from exc
         except requests.HTTPError as exc:
             logger.error(
                 "LLM HTTP error %s from %s: %s",
@@ -218,6 +227,8 @@ class OpenAICompatibleLLM(LLM):
                 self._endpoint,
                 exc.response.text[:500] if exc.response else str(exc),
             )
+            if _is_unavailable_status(exc.response):
+                raise ModelUnavailableError("LLM provider is unavailable") from exc
             raise
 
         try:
@@ -369,11 +380,15 @@ class OpenAICompatibleLLM(LLM):
             resp.raise_for_status()
         except requests.Timeout:
             raise LLMTimeoutError("LLM request timed out") from None
+        except requests.ConnectionError as exc:
+            raise ModelUnavailableError("LLM provider is unreachable") from exc
         except requests.HTTPError as exc:
             if schema_applied and _is_schema_unsupported_response(exc.response):
                 raise SchemaUnsupportedError(
                     "Provider does not support JSON Schema response formatting"
                 ) from None
+            if _is_unavailable_status(exc.response):
+                raise ModelUnavailableError("LLM provider is unavailable") from exc
             raise
         data = resp.json()
         # The request's stage metrics: filed as the answer when called from

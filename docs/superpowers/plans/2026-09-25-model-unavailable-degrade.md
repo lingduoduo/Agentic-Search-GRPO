@@ -25,10 +25,10 @@
 
 ## Deviations from the spec (recorded, minimal)
 
-1. **Existing contract tests change.** Three existing tests pin the old behaviour the spec deliberately reverses and are updated, not deleted:
+1. **Existing contract tests change.** Four existing tests pin the old behaviour the spec deliberately reverses and are updated, not deleted:
    `tests/unit/test_llm_providers.py::test_plain_connection_error_still_propagates` (ConnectionError now becomes `ModelUnavailableError`),
    `tests/unit/test_llm_structured_output.py::test_connection_error_propagates_unchanged` (same),
-   `tests/unit/test_llm_structured_output.py::test_other_http_errors_propagate_unchanged` (its 429 and 500 cases now become `ModelUnavailableError`; the 400 case stays). The circuit-breaker tests that `pytest.raises(RuntimeError, ...)` keep passing unchanged, as the spec says.
+   `tests/unit/test_llm_structured_output.py::test_other_http_errors_propagate_unchanged` (its 429 and 500 cases now become `ModelUnavailableError`; the 400 case stays), and `tests/unit/test_llm_structured_output.py::test_stream_complete_other_http_errors_propagate_unchanged` (found during execution: it used a 500 as its "other" error; now a non-schema 400, which keeps its intent — 5xx on `stream_complete` is covered by the new tests). The circuit-breaker tests that `pytest.raises(RuntimeError, ...)` keep passing unchanged, as the spec says.
 2. **The fallback runs with `llm=None`.** The spec says to reuse `_auto_search_pipeline` "exactly as the `no_llm` path does"; that path has `llm is None`. Passing the request's `llm` would make `_expanded_queries` call the dead model again for query expansion (up to another 30 s timeout per request before degrading). So the arm passes `llm=None`.
 3. **Streaming mid-body errors in the provider are not mapped.** The spec maps `ConnectionError` "in both `complete` and the streaming path". The mapping is placed around the request phase of `stream()` (connect + status), where no text has been yielded yet. A `ConnectionError` raised while iterating an already-open body keeps propagating (it would arrive after tokens were streamed to the client; see Review Focus 5).
 4. **Source provider for the fallback.** Explicit modes never validated `request.source_provider`; the arm normalizes it with `_normalize_source_provider` exactly as the auto path does (default `"auto"`).
