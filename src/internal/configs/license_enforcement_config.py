@@ -28,6 +28,8 @@ LICENSE_ENFORCEMENT_ALLOWED_PREFIXES: frozenset[str] = frozenset(
     {
         "/auth",
         "/health",
+        "/ready",
+        "/metrics",
         "/me",
         "/settings",
         "/license",

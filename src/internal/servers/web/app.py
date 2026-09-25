@@ -161,6 +161,7 @@ from src.internal.memory.working import (
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
 from src.internal.observability.prometheus import observe_stages
+from src.internal.observability.prometheus import render_latest
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,9 @@ class SearchExperienceSettings:
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
+    # Mount the unauthenticated Prometheus GET /metrics. Recording is always on;
+    # this only controls exposure. Restrict the route at the network layer.
+    metrics_enabled: bool = False
 
     @classmethod
     def from_app_settings(
@@ -224,6 +228,7 @@ class SearchExperienceSettings:
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
             follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
+            metrics_enabled=_flag("AGENTIC_SEARCH_METRICS_ENABLED"),
         )
 
 
@@ -1611,6 +1616,13 @@ def create_web_app(
     @app.get("/health")
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
+
+    if settings.metrics_enabled:
+
+        @app.get("/metrics")
+        def metrics() -> Response:
+            body, content_type = render_latest()
+            return Response(body, media_type=content_type)
 
     def _app_shell() -> str:
         if frontend_dist:
