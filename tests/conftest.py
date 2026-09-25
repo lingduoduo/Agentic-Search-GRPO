@@ -13,6 +13,12 @@ import pytest
 os.environ["SEARCH_AGENT_MODEL"] = ""
 os.environ["SEARCH_AGENT_SERVER_URL"] = ""
 os.environ["AGENTIC_SEARCH_SEARCH_DIRECT_SEMANTIC"] = "0"
+# Same mechanism for the remote LLM: a developer's .env key would make
+# create_web_app() build a real client, and with /api/agent summarization on
+# by default a long-history test would send fixture text to the paid provider.
+# Tests that need a key set their own with monkeypatch.
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["GEN_AI_API_KEY"] = ""
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
