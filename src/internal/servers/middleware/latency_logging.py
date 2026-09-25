@@ -36,13 +36,14 @@ class RouteLatencyStats:
     Each bucket keeps its most recent ``max_samples_per_route`` durations, so
     the percentiles describe recent behaviour and memory stays bounded by
     routes x samples. That rolling window is why there is no reset: it is what a
-    reset would be for.
+    reset would be for. Each sample carries its own 5xx flag, so ``errors`` is
+    counted over the same retained samples as ``count`` -- an evicted failure
+    leaves both.
     """
 
     def __init__(self, max_samples_per_route: int = _DEFAULT_MAX_SAMPLES) -> None:
         self._max_samples = max_samples_per_route
-        self._samples: dict[tuple[str, str], deque[float]] = {}
-        self._errors: dict[tuple[str, str], int] = {}
+        self._samples: dict[tuple[str, str], deque[tuple[float, bool]]] = {}
 
     def record(
         self,
@@ -59,10 +60,7 @@ class RouteLatencyStats:
         if bucket is None:
             bucket = deque(maxlen=self._max_samples)
             self._samples[key] = bucket
-            self._errors[key] = 0
-        bucket.append(float(elapsed_ms))
-        if status_code >= 500:
-            self._errors[key] += 1
+        bucket.append((float(elapsed_ms), status_code >= 500))
 
     def snapshot(self) -> list[dict]:
         """One row per route, slowest p95 first. Empty buckets are omitted."""
@@ -70,13 +68,13 @@ class RouteLatencyStats:
         for (method, route), bucket in self._samples.items():
             if not bucket:
                 continue
-            ordered = sorted(bucket)
+            ordered = sorted(elapsed for elapsed, _ in bucket)
             rows.append(
                 {
                     "method": method,
                     "route": route,
                     "count": len(ordered),
-                    "errors": self._errors.get((method, route), 0),
+                    "errors": sum(is_error for _, is_error in bucket),
                     "p50_ms": round(_percentile(ordered, 0.50), 3),
                     "p95_ms": round(_percentile(ordered, 0.95), 3),
                     "max_ms": round(ordered[-1], 3),
@@ -123,13 +121,18 @@ def add_latency_logging_middleware(
         try:
             response = await call_next(request)
         except Exception:
-            # Recorded nowhere else: the JSON window only sees responses.
-            observe_request(
-                request.method,
-                _route_template(request) or UNMATCHED_ROUTE,
-                500,
-                time.monotonic() - start_time,
+            # The response never reaches this middleware; the server turns the
+            # exception into a 500 outside it. Record that 500 here, once, in
+            # both the JSON window and Prometheus.
+            elapsed = time.monotonic() - start_time
+            template = _route_template(request)
+            store.record(
+                method=request.method,
+                route=template or request.url.path,
+                status_code=500,
+                elapsed_ms=elapsed * 1000.0,
             )
+            observe_request(request.method, template or UNMATCHED_ROUTE, 500, elapsed)
             raise
         process_time = time.monotonic() - start_time
         # Read the route *after* the handler: routing populates scope["route"].

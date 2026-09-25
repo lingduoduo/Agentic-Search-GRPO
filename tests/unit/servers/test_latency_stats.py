@@ -292,3 +292,45 @@ def test_exception_is_counted_as_5xx_and_reraised():
     assert _prom_requests("GET", "/prom/boom", "5xx") == before + 1
     with pytest.raises(RuntimeError, match="kaboom"):
         TestClient(_prom_app()).get("/prom/boom")
+
+
+def test_an_evicted_server_error_leaves_the_error_count():
+    stats = RouteLatencyStats(max_samples_per_route=2)
+    _record(stats, [1], status_code=500)
+    _record(stats, [2, 3], status_code=200)
+
+    row = stats.snapshot()[0]
+
+    assert row["count"] == 2
+    assert row["errors"] == 0
+
+
+def test_errors_never_exceed_the_retained_count():
+    stats = RouteLatencyStats(max_samples_per_route=3)
+    _record(stats, [1, 2, 3, 4, 5], status_code=500)
+    _record(stats, [6], status_code=200)
+
+    row = stats.snapshot()[0]
+
+    assert row["count"] == 3
+    assert row["errors"] == 2
+
+
+def test_an_escaping_exception_enters_the_window_and_prometheus_once():
+    stats = RouteLatencyStats()
+    app = FastAPI()
+    add_latency_logging_middleware(
+        app, logging.LoggerAdapter(logging.getLogger("t"), {}), stats=stats
+    )
+
+    @app.get("/window/boom")
+    def boom():
+        raise RuntimeError("kaboom")
+
+    before = _prom_requests("GET", "/window/boom", "5xx")
+    response = TestClient(app, raise_server_exceptions=False).get("/window/boom")
+
+    assert response.status_code == 500
+    row = next(r for r in stats.snapshot() if r["route"] == "/window/boom")
+    assert (row["count"], row["errors"]) == (1, 1)
+    assert _prom_requests("GET", "/window/boom", "5xx") == before + 1
