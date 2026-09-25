@@ -35,6 +35,13 @@ def _fake_pipeline(calls: list):
     return fake
 
 
+# What the fake pipeline's one document renders to on /tool.
+EXPECTED_TOOL_ANSWER = (
+    "The tool model is temporarily unavailable, so this answer comes straight "
+    "from a search of your documents.\n\n1. Doc\n   body"
+)
+
+
 def _events(text: str) -> list[dict]:
     return [
         json.loads(line[len("data:") :].strip())
@@ -75,13 +82,13 @@ def test_tool_degrades_to_search_only_answer(monkeypatch):
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["answer"] == "search-only answer"
+    assert data["answer"] == EXPECTED_TOOL_ANSWER
     assert data["degraded"] == "model_unavailable"
     assert data["error"] is None
     assert data["tool_calls"] == [] and data["num_turns"] == 0
     assert _roles(store, data["session_id"]) == ["user", "assistant"]
-    assert store.list_chat_messages(data["session_id"])[-1].content == (
-        "search-only answer"
+    assert (
+        store.list_chat_messages(data["session_id"])[-1].content == EXPECTED_TOOL_ANSWER
     )
 
 
@@ -114,7 +121,7 @@ def test_tool_stream_degrades(monkeypatch):
     events = _events(resp.text)
     assert not [e for e in events if e["type"] == "error"]
     assert [e["type"] for e in events] == ["answer", "done"]
-    assert events[0]["text"] == "search-only answer"
+    assert events[0]["text"] == EXPECTED_TOOL_ANSWER
     done = events[-1]
     assert done["degraded"] == "model_unavailable"
     assert _roles(store, done["session_id"]) == ["user", "assistant"]
@@ -192,10 +199,34 @@ def test_tool_degrade_acl_filters_private_document(monkeypatch):
     data = _send_tool(app, stream=False).json()
 
     assert data["degraded"] == "model_unavailable"
-    # The answer reports a count, not titles: of the two stubbed rows only the
-    # public one may be counted.
-    assert "returned 1 result(s)" in data["answer"]
-    assert "secret" not in data["answer"]
+    # /tool has no Sources panel and no documents field, so the answer itself
+    # must carry what was found -- and only what the caller may read.
+    answer = data["answer"]
+    assert "Public" in answer and "http://r/pub" in answer
+    assert "Private" not in answer and "secret" not in answer
+    assert "Sources panel" not in answer
+
+
+def test_tool_degrade_with_no_documents_says_so(monkeypatch):
+    class _Empty:
+        def __init__(self, config):
+            pass
+
+        async def retrieve_one(self, query, **kwargs):
+            return []
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(TOOL_RUNNER, _unavailable)
+    monkeypatch.setattr("src.context.retrieval.search_runner.SearchClient", _Empty)
+    app, _ = _tool_app()
+
+    data = _send_tool(app, stream=False).json()
+
+    assert data["degraded"] == "model_unavailable"
+    assert "no matching documents" in data["answer"]
+    assert "Sources panel" not in data["answer"]
 
 
 def _chat_app():

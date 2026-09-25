@@ -43,6 +43,13 @@ circuit. Or they use `LocalServerManager`, which does not raise it.
 - **Streaming.** Emit `{"type":"answer","text":...}` and then
   `{"type":"done", ..., "degraded":"model_unavailable"}` in place of the
   `error` event.
+- **The answer text (ruling made during review).** The shared search-only
+  text reports a count and cites `[Dn]` for a Sources panel. `/tool` has
+  neither the panel nor a documents field, and the answer is saved to
+  history. So on `/tool` the degraded answer lists the documents found,
+  each with its title, URL and a snippet of at most 200 characters, under
+  one line saying the tool model is unavailable. When nothing is found it
+  says so.
 - **If the fallback itself raises,** the surface keeps today's error
   behavior: `answer=""` plus `error`, or an SSE error.
 

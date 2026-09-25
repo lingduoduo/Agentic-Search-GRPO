@@ -35,6 +35,31 @@ from src.internal.servers.users.api import resolve_active_user
 
 logger = logging.getLogger(__name__)
 
+_DEGRADED_TOOL_INTRO = (
+    "The tool model is temporarily unavailable, so this answer comes straight "
+    "from a search of your documents."
+)
+_DEGRADED_SNIPPET_CHARS = 200
+
+
+def _degraded_tool_answer(documents: list) -> str:
+    """Render the corpus results into the answer itself: /tool has no Sources
+    panel and no documents field, so a count and [Dn] labels would be empty."""
+    if not documents:
+        return f"{_DEGRADED_TOOL_INTRO} The search found no matching documents."
+    lines = [_DEGRADED_TOOL_INTRO, ""]
+    for index, doc in enumerate(documents, 1):
+        heading = doc.title or "Untitled"
+        if doc.url:
+            heading += f" ({doc.url})"
+        lines.append(f"{index}. {heading}")
+        snippet = " ".join((doc.content or "").split())
+        if snippet:
+            if len(snippet) > _DEGRADED_SNIPPET_CHARS:
+                snippet = snippet[:_DEGRADED_SNIPPET_CHARS].rstrip() + "…"
+            lines.append(f"   {snippet}")
+    return "\n".join(lines)
+
 
 def create_tool_router(
     store: AgenticSearchStore,
@@ -142,7 +167,7 @@ def create_tool_router(
                 _CORPUS_SEARCH_TOP_K,
             )
 
-            answer, *_ = await _auto_search_pipeline(
+            _answer, _citations, documents, *_ = await _auto_search_pipeline(
                 body.message,
                 # Not the model that just failed: query expansion would call it.
                 llm=None,
@@ -156,7 +181,10 @@ def create_tool_router(
                 source_provider="retrieval",
                 extra={"route_degraded": "model_unavailable"},
             )
-            return answer
+            # The shared search-only text points at a Sources panel and cites
+            # [Dn]; /tool has neither, and this answer is saved to history, so
+            # it must carry what was found itself.
+            return _degraded_tool_answer(documents)
 
         if not body.stream:
             try:
