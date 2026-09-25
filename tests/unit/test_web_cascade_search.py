@@ -1,6 +1,10 @@
 import asyncio
+import copy
 
+import pytest
 
+from src.internal.cache import serving
+from src.internal.cache.ttl_cache import TTLCache
 from src.internal.tools.search import SearchPage, make_web_cascade_search
 
 
@@ -127,3 +131,51 @@ def test_seeded_web_search_uses_cascade_not_retrieval():
     # The cascade search_fn is bound; the tool no longer routes to retrieval.
     assert web._search_fn is not None
     assert web._provider != "retrieval" or web._search_fn.__name__ == "_cascade"
+
+
+@pytest.fixture
+def serp_calls(monkeypatch):
+    calls: list = []
+    reply = {"pages": [SearchPage(title="t", summary="s", url="https://x")]}
+
+    async def _fake(query, *, page, page_size, timeout_seconds):
+        calls.append(query)
+        return copy.deepcopy(reply["pages"])
+
+    monkeypatch.setattr("src.internal.tools.search.serpapi_search", _fake)
+    return calls, reply
+
+
+def test_default_serpapi_leg_is_served_from_the_serving_cache(serp_calls):
+    calls, _ = serp_calls
+    serving.configure_serving_cache(60)
+    try:
+        fn = make_web_cascade_search(browser_search_url=None)
+        asyncio.run(fn("q"))
+        pages = asyncio.run(fn("q"))
+    finally:
+        serving.reset_serving_cache()
+    assert calls == ["q"]
+    assert [p.url for p in pages] == ["https://x"]
+
+
+def test_serpapi_failure_with_stale_entry_needs_no_browser(monkeypatch, serp_calls):
+    calls, reply = serp_calls
+    now = [100.0]
+    monkeypatch.setattr(
+        serving, "_cache", TTLCache(60, stale_seconds=3600, clock=lambda: now[0])
+    )
+
+    async def browser(query, **kw):
+        raise AssertionError("browser must not run when a stale SerpAPI result exists")
+
+    fn = make_web_cascade_search(
+        browser_search_url="http://browser/retrieve", browser_fn=browser
+    )
+    asyncio.run(fn("q"))
+    now[0] += 61
+    reply["pages"] = [SearchPage(timed_out=True)]
+    pages = asyncio.run(fn("q"))
+    assert calls == ["q", "q"]
+    assert pages[0].url == "https://x"
+    assert pages[0].metadata["stale"] is True

@@ -615,10 +615,29 @@ def _pages_are_usable(pages: list[SearchPage]) -> bool:
     return any(p.url for p in pages) and not any(p.error for p in pages)
 
 
+async def _serpapi_via_search_tool(
+    query: str,
+    *,
+    page: int = 1,
+    page_size: int = 5,
+    timeout_seconds: float | None = None,
+) -> list[SearchPage]:
+    """The cascade's default SerpAPI leg. Going through ``search_tool`` gives it
+    the serving cache's key, fresh hits and stale fallback; the circuit breaker
+    is still consulted inside ``serpapi_search``."""
+    return await search_tool(
+        query,
+        provider="serpapi",
+        page=page,
+        page_size=page_size,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def make_web_cascade_search(
     *,
     browser_search_url: str | None = None,
-    serpapi_fn=serpapi_search,
+    serpapi_fn=_serpapi_via_search_tool,
     browser_fn=search_tool,
 ):
     """Return a ``search_fn`` that tries SerpAPI, then falls back to the browser
