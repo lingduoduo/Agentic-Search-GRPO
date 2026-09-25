@@ -7,10 +7,11 @@ POST /internal/optimize/fusion-weights  → FusionWeights JSON
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from src.internal.retrieval.bm25_tuner import BM25Tuner
@@ -36,8 +37,9 @@ def _make_service(*_args: Any) -> object:
     return RetrievalService.from_env()
 
 
-def create_optimize_router() -> APIRouter:
-    router = APIRouter(prefix="/internal/optimize")
+def create_optimize_router(require_admin: Callable | None = None) -> APIRouter:
+    deps = [Depends(require_admin)] if require_admin is not None else []
+    router = APIRouter(prefix="/internal/optimize", dependencies=deps)
 
     @router.post("/bm25-tune")
     def bm25_tune(req: BM25TuneRequest) -> dict:
