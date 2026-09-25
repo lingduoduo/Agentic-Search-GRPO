@@ -19,6 +19,11 @@ from ...context.search import SearchResult
 from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohttp
 from ..cache.serving import serving_cache
 from ..configs.timeouts import get_timeout_policies
+from ..resilience.circuit_breaker import (
+    CircuitOpenError,
+    get_breaker,
+    is_failure_status,
+)
 from .base import (
     FailureCategory,
     FunctionTool,
@@ -212,6 +217,9 @@ SearchProvider = Literal["retrieval", "google", "serpapi", "serper"]
 
 GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
 SERPAPI_SEARCH_ENDPOINT = "https://serpapi.com/search.json"
+SERPAPI_CIRCUIT_OPEN_ERROR = (
+    "SerpAPI is temporarily skipped after repeated failures (circuit open)."
+)
 SERPER_DEV_ENDPOINT = "https://google.serper.dev/search"
 DEFAULT_RETRIEVAL_URL = "http://localhost:8000/retrieve"
 DEFAULT_USER_AGENT = (
@@ -333,6 +341,11 @@ async def serpapi_search(
     if not api_key:
         return [SearchPage(error="SERPAPI_API_KEY or SERP_API_KEY is required.")]
 
+    breaker = get_breaker("serpapi")
+    try:
+        breaker.before_call()
+    except CircuitOpenError:
+        return [SearchPage(error=SERPAPI_CIRCUIT_OPEN_ERROR)]
     try:
         data = await _get_json(
             SERPAPI_SEARCH_ENDPOINT,
@@ -346,7 +359,15 @@ async def serpapi_search(
             timeout_seconds=timeout_seconds,
         )
     except Exception as exc:
+        # A 4xx is an answer from a healthy SerpAPI (bad key, bad query).
+        if isinstance(exc, aiohttp.ClientResponseError) and not is_failure_status(
+            exc.status
+        ):
+            breaker.record_success()
+        else:
+            breaker.record_failure()
         return [SearchPage(error=_redact_secret_params(str(exc)))]
+    breaker.record_success()
 
     pages = [
         SearchPage(
