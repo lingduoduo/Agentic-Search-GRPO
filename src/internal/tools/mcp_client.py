@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..configs.timeouts import get_timeout_policies
 from .base import (
     FailureCategory,
     FunctionTool,
@@ -136,7 +137,13 @@ async def _connect(spec: McpServerSpec):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
-    async with streamablehttp_client(spec.url, headers=spec.headers or None) as (
+    policy = get_timeout_policies().tools.mcp
+    async with streamablehttp_client(
+        spec.url,
+        headers=spec.headers or None,
+        timeout=policy.timeout_seconds,
+        sse_read_timeout=policy.sse_read_timeout_seconds,
+    ) as (
         read,
         write,
         _get_session_id,
