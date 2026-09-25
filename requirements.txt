@@ -50,8 +50,10 @@ python-dotenv
 google-api-python-client
 
 # MCP server support.
-mcp>=1.0.0
-fastmcp>=2.0.0
+# mcp 2.x removed mcp.client.streamable_http.streamablehttp_client, which
+# src/internal/tools/mcp_client.py imports; fastmcp 4.x requires mcp 2.x.
+mcp>=1.0.0,<2
+fastmcp>=2.0.0,<4
 jsonschema>=4.18,<5
 
 # Test dependencies. Kept in the baseline because CLAUDE.md documents
