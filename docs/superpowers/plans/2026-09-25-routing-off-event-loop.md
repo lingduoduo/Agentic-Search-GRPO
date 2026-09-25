@@ -41,7 +41,7 @@ loader.
 - Modify `src/internal/servers/web/intent/recognizer.py` (`classify_route`)
 - Test: `tests/unit/test_intent_routing.py`, `tests/unit/test_timeout_policies.py`
 
-- [ ] **Step 1: Failing tests.**
+- [x] **Step 1: Failing tests.**
 
 ```python
 def test_classify_route_bounds_the_llm_call_by_policy():
@@ -77,9 +77,9 @@ def test_classifier_timeout_falls_back_to_rules(monkeypatch):
   `"route_classifier_timeout_seconds": 3.0` to the expected-defaults dict in
   `test_timeout_policies.py`.
 
-- [ ] **Step 2: Run the tests and expect them to fail.** The `LLMPolicy`
+- [x] **Step 2: Run the tests and expect them to fail.** The `LLMPolicy`
   field is missing, and no `timeout_override` is passed.
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
   - Add `route_classifier_timeout_seconds: float` to `LLMPolicy`.
   - Add this line to `[llm]` in `timeouts.toml`:
     `route_classifier_timeout_seconds = 3.0     # /api/agent routing LLM
@@ -88,30 +88,30 @@ def test_classifier_timeout_falls_back_to_rules(monkeypatch):
   - In `classify_route`, call
     `llm.complete([...], temperature=0.0,
     timeout_override=get_timeout_policies().llm.route_classifier_timeout_seconds)`.
-- [ ] **Step 4: Pass, then commit.**
+- [x] **Step 4: Pass, then commit.**
 
 ### Task 2: Off the event loop
 
 **Files:** Modify `src/internal/servers/web/app.py` (`_run_auto_routed`).
 Test: `tests/unit/servers/web/test_agent_router.py`.
 
-- [ ] **Step 1: Failing test.** Patch `app.recognize_intent` with a function
+- [x] **Step 1: Failing test.** Patch `app.recognize_intent` with a function
   that waits on a `threading.Event`, bounded at 5 s. Start `_run_auto_routed`
   as a task. On the same loop, await `asyncio.sleep(0.05)` and check that it
   returns promptly. Then set the event and await the task. On the current
   code the patched function blocks the loop, so the sleeping coroutine can't
   finish before the event is released, and the test fails.
-- [ ] **Step 2: Run the test and expect it to fail.**
-- [ ] **Step 3: Implement.** Change the call to `decision = await
+- [x] **Step 2: Run the test and expect it to fail.**
+- [x] **Step 3: Implement.** Change the call to `decision = await
   asyncio.to_thread(recognize_intent, query, llm=llm,
   explicit_source=explicit_source, settings=app_settings)`.
-- [ ] **Step 4: Pass.** Run the routing, capture, stage and tool-trace
+- [x] **Step 4: Pass.** Run the routing, capture, stage and tool-trace
   suites, then commit.
 
 ### Task 3: Verify
 
-- [ ] **Mutation checks.** Revert the `to_thread` change and expect the
+- [x] **Mutation checks.** Revert the `to_thread` change and expect the
   concurrency test to go red. Drop the `timeout_override` kwarg and expect the
   policy test to go red. Restore both and delete `__pycache__`.
-- [ ] **Full verification.** Run the full unit suite, then ruff, then
+- [x] **Full verification.** Run the full unit suite, then ruff, then
   `git diff --check`. Get a fresh review, then open the PR.
