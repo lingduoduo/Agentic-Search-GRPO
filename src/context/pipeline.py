@@ -433,7 +433,7 @@ async def answer_with_retrieval(
     tool_selector: ToolSelector | None = None,
     max_tool_calls: int = 2,
     max_tool_result_chars: int = 8192,
-    tool_timeout_seconds: float = 5.0,
+    tool_timeout_seconds: float | None = None,
     grounded_generation: GroundedGenerationConfig | None = None,
     evidence_sufficiency: float | None = None,
     user_memory: str | None = None,

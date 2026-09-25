@@ -414,3 +414,106 @@ def test_grounded_clamp_reads_policy():
             llm=llm,
         )
     assert len(llm.calls) == 1
+
+
+def test_tool_loop_config_and_recovery_follow_policy():
+    from src.agents.tool.recovery import RecoveryPolicy
+    from src.agents.tool.tool_calling import ToolAgentLoopConfig
+
+    with overridden(
+        {
+            "tool_loop": {
+                "approval_timeout_seconds": 11,
+                "escalation_timeout_seconds": 22,
+                "max_escalations": 4,
+                "recovery": {
+                    "max_retries": 1,
+                    "backoff_seconds": [0.1],
+                    "retry_budget_seconds": 3,
+                },
+            }
+        }
+    ):
+        cfg = ToolAgentLoopConfig()
+        policy = RecoveryPolicy()
+    assert (
+        cfg.approval_timeout_seconds,
+        cfg.escalation_timeout_seconds,
+        cfg.max_escalations,
+    ) == (11.0, 22.0, 4)
+    assert (policy.max_retries, policy.backoff, policy.retry_budget) == (1, (0.1,), 3.0)
+    assert RecoveryPolicy(max_retries=0).max_retries == 0
+
+
+def test_brokers_follow_policy():
+    from src.internal.servers.web.tool_approval import (
+        ToolApprovalBroker,
+        ToolEscalationBroker,
+    )
+
+    with overridden(
+        {
+            "tool_loop": {
+                "approval_timeout_seconds": 11,
+                "escalation_timeout_seconds": 22,
+            }
+        }
+    ):
+        assert ToolApprovalBroker()._timeout_seconds == 11.0
+        assert ToolEscalationBroker()._timeout_seconds == 22.0
+
+
+def test_escalation_timeout_is_overridable_end_to_end(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.internal.configs import AppSettings, AuthSettings
+    from src.internal.configs.timeouts import TIMEOUTS_PATH_ENV
+    from src.internal.servers.web.app import SearchExperienceSettings, create_web_app
+
+    f = tmp_path / "t.toml"
+    f.write_text("[tool_loop]\nescalation_timeout_seconds = 42\n")
+    monkeypatch.setenv(TIMEOUTS_PATH_ENV, str(f))
+
+    app = create_web_app(
+        SearchExperienceSettings(db_path=tmp_path / "state.sqlite3"),
+        app_settings=AppSettings(auth=AuthSettings(super_users=("admin",))),
+    )
+    with TestClient(app) as client:
+        assert client is not None
+        assert app.state.tool_escalation_broker._timeout_seconds == 42.0
+
+
+def test_tool_evidence_timeout_follows_policy(monkeypatch):
+    import src.context.tool_evidence as te
+    from src.context.tool_evidence import ToolDescriptor, ToolRequest, ToolSafety
+
+    seen = []
+    real_wait_for = asyncio.wait_for
+
+    async def spy(aw, timeout):
+        seen.append(timeout)
+        return await real_wait_for(aw, timeout)
+
+    monkeypatch.setattr(te.asyncio, "wait_for", spy)
+
+    class Registry:
+        def list_tools(self):
+            return [ToolDescriptor(name="t1", safety=ToolSafety.READ_ONLY)]
+
+        async def invoke(self, request):
+            return {"ok": True}
+
+    class Selector:
+        def select(self, query, tools):
+            return [ToolRequest(tool_name="t1")]
+
+    with overridden({"tool_loop": {"tool_evidence_timeout_seconds": 2}}):
+        asyncio.run(te.collect_tool_evidence("q", Registry(), Selector()))
+    assert seen and set(seen) == {2.0}
+
+
+def test_sse_heartbeat_env_still_wins(monkeypatch):
+    from src.internal.servers import sse
+
+    monkeypatch.setenv("AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS", "0")
+    assert sse.heartbeat_seconds() == 0.0

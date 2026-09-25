@@ -14,6 +14,8 @@ from typing import Awaitable, Callable, Protocol
 
 from src.internal.tools.base import ToolEffect
 
+from src.internal.configs.timeouts import get_timeout_policies
+
 from .models import EvidenceSource
 
 # Declared side-effect classification for a registered tool. Alias, not a
@@ -58,7 +60,7 @@ async def collect_tool_evidence(
     selector: ToolSelector,
     *,
     max_calls: int = 2,
-    timeout_seconds: float = 5.0,
+    timeout_seconds: float | None = None,
     max_result_chars: int = 8192,
     status_callback: Callable[[str, str], None] | None = None,
 ) -> list[EvidenceSource]:
@@ -68,6 +70,8 @@ async def collect_tool_evidence(
     ``max_result_chars`` once serialized, and results that cannot be represented
     as JSON are ignored so retrieval-based answering can continue.
     """
+    if timeout_seconds is None:
+        timeout_seconds = get_timeout_policies().tool_loop.tool_evidence_timeout_seconds
     if max_calls < 0:
         raise ValueError("max_calls must be non-negative")
     if timeout_seconds <= 0:

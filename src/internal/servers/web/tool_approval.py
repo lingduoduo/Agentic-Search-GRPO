@@ -16,6 +16,7 @@ from src.agents.tool import (
     ToolApprovalRequest,
     ToolEscalationRequest,
 )
+from src.internal.configs.timeouts import get_timeout_policies
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,9 @@ class ToolApprovalBroker(DecisionBroker):
 
     kind = "approval"
 
-    def __init__(self, timeout_seconds: float = 60.0) -> None:
+    def __init__(self, timeout_seconds: float | None = None) -> None:
+        if timeout_seconds is None:
+            timeout_seconds = get_timeout_policies().tool_loop.approval_timeout_seconds
         super().__init__(
             timeout_seconds,
             expired=ApprovalDecision.EXPIRED,
@@ -292,7 +295,11 @@ class ToolEscalationBroker(DecisionBroker):
 
     kind = "escalation"
 
-    def __init__(self, timeout_seconds: float = 120.0) -> None:
+    def __init__(self, timeout_seconds: float | None = None) -> None:
+        if timeout_seconds is None:
+            timeout_seconds = (
+                get_timeout_policies().tool_loop.escalation_timeout_seconds
+            )
         super().__init__(
             timeout_seconds,
             expired=EscalationDecision.EXPIRED,

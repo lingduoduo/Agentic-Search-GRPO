@@ -1577,7 +1577,9 @@ def create_web_app(
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
-    app.state.tool_escalation_broker = ToolEscalationBroker()
+    app.state.tool_escalation_broker = ToolEscalationBroker(
+        resolved.timeouts.tool_loop.escalation_timeout_seconds
+    )
     import os as _os
     from src.internal.servers.web.request_capture_store import RequestCaptureStore
 
