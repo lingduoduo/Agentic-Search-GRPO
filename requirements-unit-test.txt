@@ -12,6 +12,7 @@ chardet>=3.0
 # it previously arrived only as a transitive of mcp/fastmcp/openai. This is
 # `httpx`, not pydantic's separate `httpx2` successor, which nothing here imports.
 httpx>=0.28.1,<1.0
+prometheus-client>=0.20,<1
 aiohttp==3.9.3
 beautifulsoup4==4.13.4
 numpy==1.26.4
