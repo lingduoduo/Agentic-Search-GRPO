@@ -32,6 +32,8 @@
 2. **Remote LLM transport errors beyond connect/timeout.** Today `generate` converts only `ClientConnectorError`/`asyncio.TimeoutError` to `RuntimeError`; other `aiohttp.ClientError`s (e.g. `ServerDisconnectedError`) propagate unchanged. They now also count as failures (spec: "a transport or connect error"), but their propagation is unchanged.
 3. **Autouse reset fixture lives in `tests/conftest.py`**, beside the existing `_fresh_timeout_policies`, not only in the new test dir: existing SerpAPI/cascade/rerank tests use the same process-wide registry and would otherwise leak state into each other.
 
+4. **Drift-guard allowlist is keyed by line number.** `tests/unit/test_timeout_policy_drift.py` allows serving.py's pre-existing `heartbeat_thread.join(timeout=0.1)` as `"src/model/serving.py:568 timeout"`; Task 6's additions move it to line 611, so that key is updated (the allowlist is not widened).
+
 ## Review Focus
 
 1. **A cancelled half-open probe** (client disconnects mid-request) — the breaker must admit a new probe after `open_seconds`, not fail fast forever — test in Task 2 (`test_unreported_probe_is_replaced_after_open_seconds`).
