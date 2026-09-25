@@ -1348,7 +1348,10 @@ async def _run_auto_routed(
         strategy = forced_route
         extra["route_mechanism"] = "user_selected"
     else:
-        decision = recognize_intent(
+        # Off the event loop: the routing classifier is a blocking LLM call,
+        # and on the loop it would freeze every in-flight request meanwhile.
+        decision = await asyncio.to_thread(
+            recognize_intent,
             query,
             llm=llm,
             explicit_source=explicit_source,

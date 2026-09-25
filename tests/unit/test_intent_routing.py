@@ -166,7 +166,7 @@ def test_recognize_intent_is_unchanged_by_a_none_returning_model(monkeypatch):
     calls = []
 
     class _LLM:
-        def complete(self, messages, temperature=0.0):
+        def complete(self, messages, **kwargs):
             calls.append(messages)
             return "search"
 
@@ -212,7 +212,7 @@ def _write_routing_index(tmp_path):
 
 
 class _ChatLLM:
-    def complete(self, messages, temperature=0.0):
+    def complete(self, messages, **kwargs):
         return "chat"
 
 
@@ -466,3 +466,46 @@ def test_shadow_fields_are_distinct_from_served_fields(tmp_path, monkeypatch):
 def test_shadow_mode_is_off_by_default():
     """Promotion-adjacent machinery must never arrive switched on."""
     assert AppSettings().intent_shadow_mode is False
+
+
+def test_classify_route_bounds_the_llm_call_by_policy():
+    from src.internal.configs.timeouts import (
+        load_timeout_policies,
+        use_timeout_policies,
+    )
+    from src.internal.servers.web.intent.recognizer import classify_route
+
+    seen = []
+
+    class _LLM:
+        def complete(self, messages, **kwargs):
+            seen.append(kwargs.get("timeout_override"))
+            return "search"
+
+    classify_route("where is the reranker timeout", _LLM())
+    policies = load_timeout_policies(
+        {}, overrides={"llm": {"route_classifier_timeout_seconds": 1.5}}
+    )
+    with use_timeout_policies(policies):
+        classify_route("where is the reranker timeout", _LLM())
+    assert seen == [3.0, 1.5]
+
+
+def test_classifier_timeout_falls_back_to_the_rules_router(monkeypatch):
+    from src.context.models import LLMTimeoutError
+
+    monkeypatch.setattr(similarity, "predict_route", lambda q, settings=None: None)
+
+    calls = []
+
+    class _Slow:
+        def complete(self, messages, **kwargs):
+            calls.append(1)
+            raise LLMTimeoutError("LLM request timed out")
+
+    # A query the regex rules and the (patched-out) model leave to the LLM.
+    decision = recognize_intent(
+        "where does the reranker timeout live", llm=_Slow(), explicit_source=False
+    )
+    assert calls == [1]  # the classifier was reached, then timed out
+    assert decision.metadata.get("route_mechanism") in {"heuristic_default", "clarify"}

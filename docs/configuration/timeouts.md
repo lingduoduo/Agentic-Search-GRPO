@@ -144,6 +144,7 @@ behaviour change).
 | `local_generation_timeout_seconds` | 120.0 | local generation wall clock, `0` = none | `AGENTIC_SEARCH_GENERATION_TIMEOUT` |
 | `local_heartbeat_seconds` | 10.0 | local generation progress heartbeat | — |
 | `sufficiency_timeout_seconds` | 5.0 | AgenticRAG sufficiency judge | — |
+| `route_classifier_timeout_seconds` | 3.0 | `/api/agent` routing LLM classifier; on timeout routing falls back to the rules router | — |
 | `grounded_max_retries` | 1 | grounded-answer regenerations, `0` = none | — |
 
 ### `[tool_loop]`
