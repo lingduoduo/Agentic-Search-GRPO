@@ -221,7 +221,6 @@ class ToolRegistry:
         parameters: dict[str, Any] | None = None,
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
-        stopping: bool = False,
         result_kind: ResultKind | None = None,
         retries_internally: bool = False,
     ) -> Any:
@@ -248,7 +247,6 @@ class ToolRegistry:
                 parameters=resolved_params,
                 effect=effect,
                 citeable=citeable,
-                stopping=stopping,
                 result_kind=result_kind,
                 retries_internally=retries_internally,
             )

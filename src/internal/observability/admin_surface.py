@@ -6,13 +6,11 @@ from pydantic import BaseModel, Field
 
 from src.internal.configs import AppSettings
 from src.internal.db import AgenticSearchStore
-from src.internal.tools.built_in_tools import CITEABLE_TOOLS_NAMES
-from src.internal.tools.built_in_tools import STOPPING_TOOLS_NAMES
-from src.internal.tools.built_in_tools import TOOL_NAME_TO_CLASS
+from src.internal.tools import tool_registry
 
-_BUILT_IN_TOOL_COUNT = len(
-    CITEABLE_TOOLS_NAMES | STOPPING_TOOLS_NAMES | set(TOOL_NAME_TO_CLASS)
-)
+
+def citeable_tool_count() -> int:
+    return sum(1 for t in tool_registry.list_tools() if t.citeable)
 
 
 class AdminSurfaceMetric(BaseModel):
@@ -70,7 +68,7 @@ def build_admin_surface_summary(
             ),
             AdminSurfaceMetric(
                 label="Tools/actions",
-                value=str(_BUILT_IN_TOOL_COUNT),
+                value=str(len(tool_registry.list_tools())),
                 detail=f"{active_hooks} active hooks",
             ),
         ],
@@ -117,7 +115,7 @@ def build_admin_surface_summary(
                 tone="good" if active_hooks else "neutral",
                 description="Custom actions, OpenAPI tools, MCP integrations, and policies.",
                 items=[
-                    f"{len(CITEABLE_TOOLS_NAMES)} citeable tools",
+                    f"{citeable_tool_count()} citeable tools",
                     f"{active_hooks}/{len(hooks)} hooks active",
                 ],
             ),

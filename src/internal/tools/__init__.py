@@ -1,9 +1,4 @@
-"""Agent tool framework: schemas, registry, parsers, and built-in tools.
-
-Also hosts the chat-loop ``ChatTool`` interface (``interface``) and the
-built-in tool name sets (``built_in_tools``), which consumers import as
-submodules.
-"""
+"""Agent tool framework: schemas, registry, parsers, and built-in tools."""
 
 from .base import FunctionTool as FunctionTool
 from .base import Tool as Tool
@@ -43,7 +38,6 @@ from .openapi_schema import ParameterType as ParameterType
 from .openapi_schema import ParameterTypeMap as ParameterTypeMap
 from .routing_tools import build_search_routing_tool as build_search_routing_tool
 from .routing_tools import build_rag_routing_tool as build_rag_routing_tool
-from .interface import ChatTool as ChatTool
 
 from .search import DomainSearch as DomainSearch
 from .search import build_domain_search_tools as build_domain_search_tools

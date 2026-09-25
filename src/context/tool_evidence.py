@@ -9,19 +9,16 @@ import json
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 from types import MappingProxyType
 from typing import Awaitable, Callable, Protocol
 
+from src.internal.tools.base import ToolEffect
+
 from .models import EvidenceSource
 
-
-class ToolSafety(str, Enum):
-    """Declared side-effect classification for a registered tool."""
-
-    READ_ONLY = "read_only"
-    SIDE_EFFECTING = "side_effecting"
-    UNSPECIFIED = "unspecified"
+# Declared side-effect classification for a registered tool. Alias, not a
+# separate type: ToolEffect already covers this (identical values).
+ToolSafety = ToolEffect
 
 
 @dataclass(frozen=True)

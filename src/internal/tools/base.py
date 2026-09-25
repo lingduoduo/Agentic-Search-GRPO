@@ -109,11 +109,6 @@ class Tool(ABC):
         return False
 
     @property
-    def stopping(self) -> bool:
-        """True if the loop should stop after this tool runs."""
-        return False
-
-    @property
     def result_kind(self) -> "ResultKind | None":
         """What a successful response is. None = undeclared (a strict registry rejects it)."""
         return None
@@ -171,7 +166,6 @@ class FunctionTool(Tool):
         parameters: dict[str, Any] | None = None,
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
-        stopping: bool = False,
         result_kind: "ResultKind | None" = None,
         retries_internally: bool = False,
     ) -> None:
@@ -180,7 +174,6 @@ class FunctionTool(Tool):
         self._name = name or fn.__name__
         self._effect = effect
         self._citeable = citeable
-        self._stopping = stopping
         self._result_kind = result_kind
         self._retries_internally = retries_internally
         self._schema = ToolSchema(
@@ -204,10 +197,6 @@ class FunctionTool(Tool):
     @property
     def citeable(self) -> bool:
         return self._citeable
-
-    @property
-    def stopping(self) -> bool:
-        return self._stopping
 
     @property
     def result_kind(self) -> "ResultKind | None":
@@ -247,7 +236,6 @@ class FunctionTool(Tool):
         name: str | None = None,
         effect: ToolEffect = ToolEffect.UNSPECIFIED,
         citeable: bool = False,
-        stopping: bool = False,
         result_kind: "ResultKind | None" = None,
         retries_internally: bool = False,
     ) -> Callable:
@@ -261,7 +249,6 @@ class FunctionTool(Tool):
                 parameters=parameters,
                 effect=effect,
                 citeable=citeable,
-                stopping=stopping,
                 result_kind=result_kind,
                 retries_internally=retries_internally,
             )
