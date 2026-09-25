@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 import aiohttp
 import pytest
@@ -417,3 +418,29 @@ def test_remote_llm_breaker_is_per_server(monkeypatch):
         up, calls = _llm(monkeypatch, _Resp(status=200), base_url="http://other")
         assert _call(up, stream=False)
     assert calls == ["http://other/v1/completions"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        asyncio.TimeoutError(),
+        aiohttp.ClientConnectorError(
+            connection_key=MagicMock(), os_error=OSError(61, "refused")
+        ),
+    ],
+    ids=["timeout", "connect"],
+)
+def test_remote_llm_unavailable_paths_raise_model_unavailable(
+    monkeypatch, stream, outcome
+):
+    from src.context.models import ModelUnavailableError
+
+    m, _ = _llm(monkeypatch, outcome)
+    with threshold(1):
+        with pytest.raises(ModelUnavailableError, match="Cannot connect") as first:
+            _call(m, stream)
+        with pytest.raises(ModelUnavailableError, match="circuit open") as second:
+            _call(m, stream)
+    assert isinstance(first.value, RuntimeError)
+    assert isinstance(second.value, RuntimeError)

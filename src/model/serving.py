@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Any, Protocol, runtime_checkable
 
+from src.context.models import ModelUnavailableError
 from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.resilience.circuit_breaker import (
     CircuitOpenError,
@@ -312,19 +313,19 @@ class OpenAIServerManager:
             await session.close()
 
     def _admit(self):
-        """This server's breaker, or RuntimeError while it is being skipped."""
+        """This server's breaker, or ModelUnavailableError while it is being skipped."""
         breaker = get_breaker(f"remote_llm:{self.base_url}")
         try:
             breaker.before_call()
         except CircuitOpenError:
-            raise RuntimeError(
+            raise ModelUnavailableError(
                 f"Inference server at {self.base_url} is temporarily skipped "
                 "after repeated failures (circuit open)."
             ) from None
         return breaker
 
-    def _connect_error(self) -> RuntimeError:
-        return RuntimeError(
+    def _connect_error(self) -> ModelUnavailableError:
+        return ModelUnavailableError(
             f"Cannot connect to inference server at {self.base_url}. "
             f"Start one first, e.g.: mlx_lm.server --model {self.model} --port 8080"
         )
