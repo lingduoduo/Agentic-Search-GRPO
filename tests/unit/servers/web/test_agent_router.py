@@ -690,3 +690,52 @@ def test_recognize_intent_honors_the_clarification_setting():
 
     assert decision.strategy is RouteStrategy.CHAT
     assert decision.clarification is None
+
+
+@pytest.mark.asyncio
+async def test_routing_classifier_does_not_block_the_event_loop(monkeypatch):
+    """recognize_intent may call a slow routing LLM synchronously; it must run
+    off the event loop so other requests keep being served meanwhile."""
+    import asyncio
+    import threading
+    import time
+
+    from src.internal.configs import load_app_settings
+    from src.internal.servers.web.app import _run_auto_routed
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
+
+    release = threading.Event()
+
+    def slow_recognize(query, **kwargs):
+        release.wait(5)  # a blocking classifier call
+        return RouteDecision(RouteStrategy.CHAT)
+
+    async def fake_rag(*args, **kwargs):
+        return "ok", [], [], "chat", {}
+
+    monkeypatch.setattr("src.internal.servers.web.app.recognize_intent", slow_recognize)
+    monkeypatch.setattr("src.internal.servers.web.app._run_agentic_rag", fake_rag)
+
+    task = asyncio.create_task(
+        _run_auto_routed(
+            "where does the reranker timeout live",
+            llm=object(),
+            manager=None,
+            tokenizer=None,
+            search_url="http://retrieval/retrieve",
+            browser_search_url=None,
+            rerank_url=None,
+            top_k=3,
+            filters=None,
+            history=[],
+            resolved=load_app_settings(),
+        )
+    )
+    started = time.monotonic()
+    await asyncio.sleep(0.05)  # another request's work on the same loop
+    loop_was_free = time.monotonic() - started < 1.0
+    release.set()
+    result = await asyncio.wait_for(task, timeout=5)
+
+    assert loop_was_free
+    assert result[0] == "ok"
