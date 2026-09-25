@@ -852,3 +852,13 @@ git commit -m "Add GET /ready: concurrent store ping and retrieval /health probe
 - [ ] **Mutation 2:** make `_check_retrieval` `return _passed()` first; expect `test_ready_503_when_retrieval_unreachable_without_leaking_url` and `test_ready_503_when_retrieval_health_is_not_2xx` RED. Restore, clear `__pycache__`.
 - [ ] **Full suite:** `PYTHONPATH=. python -m pytest -q -p no:cacheprovider` — no failures.
 - [ ] **Lint:** `ruff check . && ruff format --check .` — clean. Commit any formatting fix.
+
+---
+
+## Execution notes
+
+- Task 1's stage-bucket assertion compares against a before-value (`== bucket_before + 1`) rather than `>= 1`, so it cannot pass on observations left by an earlier test.
+- Task 2: `_route_key` had no callers left after the split, so it was removed; its docstring rationale moved onto `_route_template`.
+- Task 4's test imports sit at the top of `test_metrics_ready.py`, not mid-file.
+- Mutation results: removing the success-path `observe_request` turned 3 tests red; forcing `_check_retrieval` to pass turned 3 red; removing the exception-path `observe_request` turned `test_exception_is_counted_as_5xx_and_reraised` red. Each mutation was restored and `__pycache__` cleared.
+- Full suite: 4868 passed, 8 skipped. `ruff check .` and `ruff format --check .` are clean.
