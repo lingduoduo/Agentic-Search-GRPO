@@ -109,7 +109,7 @@ export function ToolAgentView() {
           setTruncated(Boolean(e.truncated));
           setPendingApprovals([]);
           setPendingEscalations([]);
-          patchLastAssistant((t) => ({ ...t, pending: false }));
+          patchLastAssistant((t) => ({ ...t, pending: false, degraded: e.degraded ?? null }));
         } else if (e.type === "error") {
           setError(e.detail);
           setPendingApprovals([]);

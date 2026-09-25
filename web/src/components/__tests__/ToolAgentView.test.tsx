@@ -290,3 +290,57 @@ describe("ToolAgentView tool catalog", () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe("ToolAgentView degraded notice", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  function streamOnce(done: Record<string, unknown>, text = "search-only list") {
+    return (async function* () {
+      yield { type: "answer", text } as const;
+      yield {
+        type: "done",
+        session_id: "s1",
+        tool_calls: [],
+        num_turns: 0,
+        truncated: false,
+        ...done,
+      } as const;
+    })();
+  }
+
+  async function send() {
+    fireEvent.change(screen.getByLabelText("Tool agent message"), {
+      target: { value: "find docs" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+  }
+
+  it("marks a degraded answer with a notice carrying the reason", async () => {
+    vi.spyOn(api, "sendToolMessage").mockImplementation(
+      (() => streamOnce({ degraded: "model_unavailable" })) as never,
+    );
+    render(<ToolAgentView />);
+    await send();
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent("⚠ Model unavailable — degraded answer");
+    expect(notice).toHaveAttribute("title", "model_unavailable");
+  });
+
+  it("shows no notice when done omits degraded", async () => {
+    vi.spyOn(api, "sendToolMessage").mockImplementation((() => streamOnce({})) as never);
+    render(<ToolAgentView />);
+    await send();
+    await screen.findByText("search-only list");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows no notice when done carries degraded: null", async () => {
+    vi.spyOn(api, "sendToolMessage").mockImplementation(
+      (() => streamOnce({ degraded: null })) as never,
+    );
+    render(<ToolAgentView />);
+    await send();
+    await screen.findByText("search-only list");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
