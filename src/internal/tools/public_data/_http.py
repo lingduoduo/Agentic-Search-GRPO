@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable
 
 from src.context.retrieval.client import aiohttp
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.tools.base import (
     FailureCategory,
     InvalidToolInput,
@@ -31,20 +32,15 @@ logger = logging.getLogger(__name__)
 # may still override it (Yahoo rejects non-browser agents).
 USER_AGENT = "AgenticSearch/1.0 (+https://github.com/linghypshen/Agentic-Search)"
 
-DEFAULT_TIMEOUT_SECONDS = 10.0
-
 # Retried because they say "try again", not "no": rate limits and the
 # gateway/unavailable family. Any other 4xx is an answer and repeating it only
 # wastes the turn. Measured need: web.archive.org answers ~2 of 6 identical
 # requests with 503, independent of User-Agent and query parameters.
 _RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
-_MAX_ATTEMPTS = 3
-_RETRY_BACKOFF_SECONDS = (0.4, 0.8)
 # No retry *starts* after this much wall time. The per-call timeout is a
 # parameter, not a constant -- search_nearby_places passes a much longer
 # Overpass budget -- so an attempt cap alone would let one dead host cost three
 # full timeouts inside an agent turn.
-_RETRY_BUDGET_SECONDS = 15.0
 
 # Upper bound on any single document body handed back to the model. Abstracts
 # and article intros are otherwise long enough to crowd out the rollout budget.
@@ -108,9 +104,10 @@ async def _fetch(
     if headers:
         merged.update(headers)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    policy = get_timeout_policies().tools.public_data
     # Only GET. Retrying a write needs an idempotency guarantee this layer
     # cannot make about somebody else's API.
-    attempts = _MAX_ATTEMPTS if method.upper() == "GET" else 1
+    attempts = policy.max_attempts if method.upper() == "GET" else 1
     started = time.monotonic()
     body: str | None = None
     last_error: PublicDataError | None = None
@@ -145,9 +142,10 @@ async def _fetch(
 
         if attempt + 1 >= attempts:
             break
-        if time.monotonic() - started >= _RETRY_BUDGET_SECONDS:
+        if time.monotonic() - started >= policy.retry_budget_seconds:
             break
-        await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+        backoff = policy.backoff_seconds
+        await asyncio.sleep(backoff[min(attempt, len(backoff) - 1)])
 
     if body is None:
         if last_error is not None:
@@ -169,7 +167,7 @@ async def get_json(
     *,
     params: dict | None = None,
     headers: dict | None = None,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
 ) -> Any:
     """GET *url* and parse the response as JSON. Raises PublicDataError."""
     return await _fetch(
@@ -177,7 +175,11 @@ async def get_json(
         url,
         params=params,
         headers=headers,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=(
+            timeout_seconds
+            if timeout_seconds is not None
+            else get_timeout_policies().tools.public_data.timeout_seconds
+        ),
         as_json=True,
     )
 
@@ -187,7 +189,7 @@ async def get_text(
     *,
     params: dict | None = None,
     headers: dict | None = None,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
 ) -> str:
     """GET *url* and return the raw body. Raises PublicDataError."""
     return await _fetch(
@@ -195,7 +197,11 @@ async def get_text(
         url,
         params=params,
         headers=headers,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=(
+            timeout_seconds
+            if timeout_seconds is not None
+            else get_timeout_policies().tools.public_data.timeout_seconds
+        ),
         as_json=False,
     )
 
@@ -205,7 +211,7 @@ async def post_json(
     *,
     data: Any,
     headers: dict | None = None,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
 ) -> Any:
     """POST *data* to *url* and parse the response as JSON."""
     return await _fetch(
@@ -213,7 +219,11 @@ async def post_json(
         url,
         data=data,
         headers=headers,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=(
+            timeout_seconds
+            if timeout_seconds is not None
+            else get_timeout_policies().tools.public_data.timeout_seconds
+        ),
         as_json=True,
     )
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 
+from src.internal.configs.timeouts import get_timeout_policies
+
 from ..base import FunctionTool, ResultKind, ToolEffect
 from ._http import PublicDataError, get_json, guarded, post_json
 
@@ -14,9 +16,6 @@ GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-
-# Overpass queries are slow; give them their own budget.
-OVERPASS_TIMEOUT_SECONDS = 30.0
 
 # The place type is interpolated into an Overpass QL regex. Validate rather
 # than escape: a stray `"]` would otherwise close the tag filter and let the
@@ -285,13 +284,14 @@ async def _search_nearby_places(
     lon = float(longitude)
     radius = max(1, min(int(radius_meters), 10000))
     limit = max(1, min(int(limit), 50))
+    policy = get_timeout_policies().tools.public_data
 
     # Anchored so "cafe" matches amenity=cafe and not every value containing
     # it. The name-substring clause the reference used is dropped: it makes
     # Overpass scan far more elements and routinely times out.
     around = f"(around:{radius},{lat},{lon})"
     overpass_ql = (
-        "[out:json][timeout:25];\n"
+        f"[out:json][timeout:{int(policy.overpass_query_timeout_seconds)}];\n"
         "(\n"
         f'  node["amenity"~"^{place_type}$",i]{around};\n'
         f'  node["shop"~"^{place_type}$",i]{around};\n'
@@ -303,7 +303,7 @@ async def _search_nearby_places(
     payload = await post_json(
         OVERPASS_URL,
         data={"data": overpass_ql},
-        timeout_seconds=OVERPASS_TIMEOUT_SECONDS,
+        timeout_seconds=policy.overpass_timeout_seconds,
     )
     places = []
     for element in (payload.get("elements") or [])[:limit]:
