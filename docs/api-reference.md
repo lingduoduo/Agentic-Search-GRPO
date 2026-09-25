@@ -67,11 +67,17 @@ curl -s -X POST http://localhost:8001/rerank \
 
 **Inspect / hot-reload retrieval config** (admin):
 ```bash
-curl -s http://localhost:8001/api/admin/retrieval/stats
+curl -s http://localhost:8001/api/admin/retrieval/stats \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 curl -s -X PATCH http://localhost:8001/api/admin/retrieval/config \
   -H "Content-Type: application/json" \
-  -d '{"rrf_k": 80, "mmr_lambda": 0.4, "nprobe": 96, "result_cache_ttl": 600}'
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"result_cache_ttl": 600}'
+# → {"applied": ["result_cache_ttl"]}
 ```
+Admin-only (401/403 otherwise), as are the `/internal/search/*` and
+`/internal/optimize/*` routes on this server. RRF `k` and MMR `λ` are fixed when
+the service is built; unknown fields are rejected with 422.
 
 ## Web backend API
 

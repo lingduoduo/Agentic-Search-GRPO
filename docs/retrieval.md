@@ -550,21 +550,24 @@ curl -s -X POST http://localhost:8001/internal/optimize/hnsw-tune \
 # → {"ef_search": 96, "measured_recall": 0.831}
 ```
 
-**Retrieval stats (cache hit rate, latency, throughput):**
+**Retrieval stats (backend, query expansion, result-cache hit rate):**
 ```bash
-curl -s http://localhost:7860/api/admin/retrieval/stats \
+curl -s http://localhost:8001/api/admin/retrieval/stats \
   -H "Authorization: Bearer $TOKEN"
-# → {"result_cache_hit_rate": 0.42, "p99_latency_ms": 112, "throughput_qps": 87, ...}
+# → {"backend": "local", "query_expansion_enabled": "false", "hits": 42, "misses": 58, "hit_rate": 0.42}
+# (the hits/misses/hit_rate keys appear only when RESULT_CACHE_REDIS_URL is set)
 ```
 
-**Hot-reload tunable parameters without restart:**
+**Hot-reload the result-cache TTL without restart:**
 ```bash
-curl -s -X PATCH http://localhost:7860/api/admin/retrieval/config \
+curl -s -X PATCH http://localhost:8001/api/admin/retrieval/config \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"rrf_k": 80, "mmr_lambda": 0.4, "nprobe": 96, "result_cache_ttl": 600}'
-# → {"applied": ["rrf_k", "mmr_lambda", "nprobe", "result_cache_ttl"]}
+  -d '{"result_cache_ttl": 600}'
+# → {"applied": ["result_cache_ttl"]}
 ```
+Admin-only. RRF `k` and MMR `λ` are fixed when the service is built, so the
+endpoint rejects them (and any other unknown field) with 422.
 
 **Enable query expansion and result caching:**
 ```bash
