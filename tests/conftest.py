@@ -55,6 +55,16 @@ def _fresh_timeout_policies():
     reset_timeout_policies()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_circuit_breakers():
+    """Breakers are process-wide; one test's failures must not open another's."""
+    from src.internal.resilience.circuit_breaker import reset_breakers
+
+    reset_breakers()
+    yield
+    reset_breakers()
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "load: marks tests as load/performance tests")
