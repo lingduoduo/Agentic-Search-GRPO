@@ -46,7 +46,7 @@
 - Consumes: `_auto_search_pipeline(query, *, llm, search_url, browser_search_url, rerank_url, top_k, filters, history, source_provider, extra, ...) -> (answer, citations, documents, intent, extra)` from `src.internal.servers.web.app`; `_CORPUS_SEARCH_TOP_K` from `src.internal.servers.web.tool_agent_runner`; `ModelUnavailableError` from `src.context.models`.
 - Produces: `ToolAgentMessageResponse.degraded: str | None = None`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """/tool and /chat degrade when the local model is unavailable."""
@@ -244,12 +244,12 @@ def test_tool_degrade_acl_filters_private_document(monkeypatch):
     assert "secret" not in data["answer"]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_direct_surfaces_degrade.py -q -p no:cacheprovider`
 Expected: the degrade tests FAIL (`answer == ""`, no `degraded` key); `test_tool_other_errors_keep_error[stream]` passes already and `[json]` fails only on the missing `degraded` key.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `models.py`, in `ToolAgentMessageResponse` after `tool_recovery`:
 
@@ -330,9 +330,9 @@ Stream branch (`_gen`), before `except Exception`:
                 )
 ```
 
-- [ ] **Step 4: Run to verify they pass**, plus `tests/unit/test_tool_backend.py`.
+- [x] **Step 4: Run to verify they pass**, plus `tests/unit/test_tool_backend.py`.
 
-- [ ] **Step 5: Commit** — `git add` the three files; message "/tool degrades to a corpus-only search answer when the model is unavailable".
+- [x] **Step 5: Commit** — `git add` the three files; message "/tool degrades to a corpus-only search answer when the model is unavailable".
 
 ### Task 2: `/chat/send-chat-message` unavailable message
 
@@ -345,7 +345,7 @@ Stream branch (`_gen`), before `except Exception`:
 - Consumes: `ModelUnavailableError`.
 - Produces: `CHAT_MODEL_UNAVAILABLE_MESSAGE: str` in `chat_backend`; `ChatMessageResponse.degraded: str | None = None`.
 
-- [ ] **Step 1: Write the failing tests** (append; add `from src.internal.servers.query_and_chat import chat_backend` and `create_chat_router` imports at the top)
+- [x] **Step 1: Write the failing tests** (append; add `from src.internal.servers.query_and_chat import chat_backend` and `create_chat_router` imports at the top)
 
 ```python
 def _chat_app():
@@ -406,9 +406,9 @@ def test_chat_other_errors_keep_error(monkeypatch, stream):
         assert resp.json()["degraded"] is None
 ```
 
-- [ ] **Step 2: Run to verify they fail** (ImportError on `CHAT_MODEL_UNAVAILABLE_MESSAGE` first).
+- [x] **Step 2: Run to verify they fail** (ImportError on `CHAT_MODEL_UNAVAILABLE_MESSAGE` first).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `models.py`, `ChatMessageResponse`: add `degraded: str | None = None`.
 
@@ -451,16 +451,16 @@ Stream (`_gen`), before `except Exception`:
                 )
 ```
 
-- [ ] **Step 4: Run to verify they pass**, plus `tests/unit/test_chat_backend.py`.
+- [x] **Step 4: Run to verify they pass**, plus `tests/unit/test_chat_backend.py`.
 
-- [ ] **Step 5: Commit** — message "/chat answers with a clear unavailable message when the model is down".
+- [x] **Step 5: Commit** — message "/chat answers with a clear unavailable message when the model is down".
 
 ### Task 3: Mutation checks and final verification
 
-- [ ] Remove each of the four new `except ModelUnavailableError` arms in turn; the matching tests must go red. Restore, `find src tests -name __pycache__ -type d -exec rm -rf {} +`.
-- [ ] Add `store.add_chat_message(session_id, role="assistant", content=CHAT_MODEL_UNAVAILABLE_MESSAGE)` to the chat non-stream arm; `test_chat_degrades_with_unavailable_message` must go red. Restore, clear `__pycache__`.
-- [ ] Replace `SearchFilters(access_acl=capabilities.access_acl)` in `_search_only_answer` with `SearchFilters()`; the ACL tests must go red. Restore, clear `__pycache__`.
-- [ ] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider`, `ruff check . && ruff format --check .`, `git diff --check origin/main...HEAD`.
+- [x] Remove each of the four new `except ModelUnavailableError` arms in turn; the matching tests must go red. Restore, `find src tests -name __pycache__ -type d -exec rm -rf {} +`.
+- [x] Add `store.add_chat_message(session_id, role="assistant", content=CHAT_MODEL_UNAVAILABLE_MESSAGE)` to the chat non-stream arm; `test_chat_degrades_with_unavailable_message` must go red. Restore, clear `__pycache__`.
+- [x] Replace `SearchFilters(access_acl=capabilities.access_acl)` in `_search_only_answer` with `SearchFilters()`; the ACL tests must go red. Restore, clear `__pycache__`.
+- [x] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider`, `ruff check . && ruff format --check .`, `git diff --check origin/main...HEAD`.
 
 ## Execution note: streaming /chat wrapper (added during review)
 
