@@ -73,3 +73,6 @@ heartbeat_seconds = 15.0           # keepalive on an idle stream, 0 = off; env A
 [circuit_breaker]
 failure_threshold = 5              # consecutive failures that open a breaker
 open_seconds = 30.0                # how long an open breaker fails fast before one probe
+
+[readiness]
+probe_timeout_seconds = 2.0        # /ready's store ping and retrieval /health probe, each

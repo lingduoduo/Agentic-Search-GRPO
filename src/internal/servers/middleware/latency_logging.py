@@ -18,6 +18,9 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import Response
 
+from src.internal.observability.prometheus import UNMATCHED_ROUTE
+from src.internal.observability.prometheus import observe_request
+
 _DEFAULT_MAX_SAMPLES = 512
 
 
@@ -88,17 +91,18 @@ class RouteLatencyStats:
 ROUTE_LATENCY = RouteLatencyStats()
 
 
-def _route_key(request: Request) -> str:
-    """The matched route template, or the raw path when nothing matched.
+def _route_template(request: Request) -> str | None:
+    """The matched route template, or None when nothing matched.
 
     Recording ``request.url.path`` would give every session id, request id and
     document id its own bucket -- thousands of single-sample rows whose
     percentiles all equal that one sample, in a panel that still looks
-    populated.
+    populated. The JSON window falls back to the raw path when nothing
+    matched; the Prometheus label uses ``UNMATCHED_ROUTE`` instead, because a
+    Prometheus label set never expires.
     """
     route = request.scope.get("route")
-    path_format = getattr(route, "path_format", None) or getattr(route, "path", None)
-    return path_format or request.url.path
+    return getattr(route, "path_format", None) or getattr(route, "path", None)
 
 
 def add_latency_logging_middleware(
@@ -116,14 +120,31 @@ def add_latency_logging_middleware(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         start_time = time.monotonic()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Recorded nowhere else: the JSON window only sees responses.
+            observe_request(
+                request.method,
+                _route_template(request) or UNMATCHED_ROUTE,
+                500,
+                time.monotonic() - start_time,
+            )
+            raise
         process_time = time.monotonic() - start_time
         # Read the route *after* the handler: routing populates scope["route"].
+        template = _route_template(request)
         store.record(
             method=request.method,
-            route=_route_key(request),
+            route=template or request.url.path,
             status_code=response.status_code,
             elapsed_ms=process_time * 1000.0,
+        )
+        observe_request(
+            request.method,
+            template or UNMATCHED_ROUTE,
+            response.status_code,
+            process_time,
         )
         logger.debug(
             "Path: %s - Method: %s - Status Code: %s - Time: %s secs",

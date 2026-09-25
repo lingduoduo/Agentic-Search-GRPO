@@ -159,6 +159,11 @@ class CircuitBreakerPolicy:
 
 
 @dataclass(frozen=True)
+class ReadinessPolicy:
+    probe_timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class TimeoutPolicies:
     tools: ToolsPolicies
     retrieval: RetrievalPolicies
@@ -167,6 +172,7 @@ class TimeoutPolicies:
     tool_loop: ToolLoopPolicy
     sse: SSEPolicy
     circuit_breaker: CircuitBreakerPolicy
+    readiness: ReadinessPolicy
 
 
 def _read_bundled() -> dict[str, Any]:

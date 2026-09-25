@@ -183,3 +183,9 @@ reported under `circuits` by `GET /api/admin/metrics`.
 |---|---|---|
 | `failure_threshold` | 5 | consecutive failures that open a breaker, `>= 1` |
 | `open_seconds` | 30.0 | how long an open breaker fails fast before one probe |
+
+### `[readiness]`
+
+| key | default | bounds |
+|---|---|---|
+| `probe_timeout_seconds` | 2.0 | `GET /ready`'s store ping and its probe of the retrieval server's `/health`, each (they run concurrently) |

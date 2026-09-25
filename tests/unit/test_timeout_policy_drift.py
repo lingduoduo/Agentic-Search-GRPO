@@ -29,6 +29,7 @@ MIGRATED = [
     "src/internal/servers/sse.py",
     "src/internal/servers/web/app.py",
     "src/internal/servers/web/tool_agent_runner.py",
+    "src/internal/servers/web/readiness.py",
 ]
 POLICY_WORDS = (
     "timeout",

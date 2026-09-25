@@ -69,6 +69,7 @@ TODAY = {
     },
     "sse": {"heartbeat_seconds": 15.0},
     "circuit_breaker": {"failure_threshold": 5, "open_seconds": 30.0},
+    "readiness": {"probe_timeout_seconds": 2.0},
 }
 
 

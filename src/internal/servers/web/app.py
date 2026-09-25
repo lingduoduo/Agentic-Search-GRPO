@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from src.internal.servers.sse import sse_frame
 from src.internal.servers.sse import sse_response
@@ -160,6 +160,9 @@ from src.internal.memory.working import (
 )
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
+from src.internal.observability.prometheus import observe_stages
+from src.internal.observability.prometheus import render_latest
+from src.internal.servers.web.readiness import check_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +202,9 @@ class SearchExperienceSettings:
     # Seconds a retrieval row, web-provider page or rerank score stays in the
     # process-local serving cache. 0 disables it. The lifespan configures it.
     search_cache_ttl: int = 300
+    # Mount the unauthenticated Prometheus GET /metrics. Recording is always on;
+    # this only controls exposure. Restrict the route at the network layer.
+    metrics_enabled: bool = False
 
     @classmethod
     def from_app_settings(
@@ -223,6 +229,7 @@ class SearchExperienceSettings:
             memory_auto_curate=_flag("AGENTIC_SEARCH_MEMORY_AUTO_CURATE"),
             follow_up_resolution=_flag("AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION"),
             search_cache_ttl=app_settings.services.search_cache_ttl_seconds,
+            metrics_enabled=_flag("AGENTIC_SEARCH_METRICS_ENABLED"),
         )
 
 
@@ -1611,6 +1618,21 @@ def create_web_app(
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/ready")
+    async def readiness_probe() -> JSONResponse:
+        ready, checks = await check_readiness(db, settings.search_url)
+        return JSONResponse(
+            {"status": "ready" if ready else "not_ready", "checks": checks},
+            status_code=200 if ready else 503,
+        )
+
+    if settings.metrics_enabled:
+
+        @app.get("/metrics")
+        def metrics() -> Response:
+            body, content_type = render_latest()
+            return Response(body, media_type=content_type)
+
     def _app_shell() -> str:
         if frontend_dist:
             return (frontend_dist / "index.html").read_text(encoding="utf-8")
@@ -2121,7 +2143,9 @@ def create_web_app(
                 mode=mode,
             )
         finally:
-            STAGE_LATENCY.record(_stage_metrics.finish_request(stage_token))
+            finished_stages = _stage_metrics.finish_request(stage_token)
+            STAGE_LATENCY.record(finished_stages)
+            observe_stages(finished_stages)
             cap = _capture.active()
             if cap is not None:
                 cap.finish()

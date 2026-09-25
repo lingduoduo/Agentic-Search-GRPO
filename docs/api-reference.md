@@ -25,26 +25,30 @@ curl -s -X POST http://localhost:8001/search \
 #    "retrieval_mode": "hybrid", "executed_queries": ["what is FAISS?"], "latency_ms": 41.2}
 ```
 
-**Per-mode retrieval** (`/internal/search/*` — isolate one retrieval strategy, e.g. for evals):
+**Per-mode retrieval** (`/internal/search/*`, admin-only — isolate one retrieval strategy, e.g. for evals):
 ```bash
 # Sparse (BM25) only
 curl -s -X POST http://localhost:8001/internal/search/sparse \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "vector database", "top_k": 5}'
 # → retrieval_mode: "sparse"
 
 # Dense (embeddings) only
 curl -s -X POST http://localhost:8001/internal/search/dense \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "vector database", "top_k": 5}'
 # → retrieval_mode: "dense"
 
 # Hybrid with explicit fusion/MMR knobs
 curl -s -X POST http://localhost:8001/internal/search/hybrid \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "vector database", "top_k": 5, "over_fetch": 4, "mmr_lambda": 0.5}'
 # → retrieval_mode: "hybrid"
 
 # GraphRAG (entity-graph re-ranking)
 curl -s -X POST http://localhost:8001/internal/search/graph \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "who founded OpenAI", "top_k": 5}'
 # → retrieval_mode: "graph"
 ```
@@ -67,11 +71,17 @@ curl -s -X POST http://localhost:8001/rerank \
 
 **Inspect / hot-reload retrieval config** (admin):
 ```bash
-curl -s http://localhost:8001/api/admin/retrieval/stats
+curl -s http://localhost:8001/api/admin/retrieval/stats \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 curl -s -X PATCH http://localhost:8001/api/admin/retrieval/config \
   -H "Content-Type: application/json" \
-  -d '{"rrf_k": 80, "mmr_lambda": 0.4, "nprobe": 96, "result_cache_ttl": 600}'
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"result_cache_ttl": 600}'
+# → {"applied": ["result_cache_ttl"]}
 ```
+Admin-only (401/403 otherwise), as are the `/internal/search/*` and
+`/internal/optimize/*` routes on this server. RRF `k` and MMR `λ` are fixed when
+the service is built; unknown fields are rejected with 422.
 
 ## Web backend API
 

@@ -1,0 +1,77 @@
+"""Prometheus export of the web app's request and stage latencies.
+
+``ROUTE_LATENCY`` and ``STAGE_LATENCY`` are rolling windows for humans; they
+have no cumulative counters, so an alerting system can derive neither a rate
+nor an error ratio from them. This module records the same events into
+cumulative Prometheus metrics on a dedicated registry, rendered by the opt-in
+``GET /metrics``.
+
+Label values are bounded on purpose: a Prometheus label set never expires, so
+``route`` is the matched template (or ``<unmatched>``), ``status`` the status
+class, and ``method`` a standard method or ``OTHER``.
+"""
+
+from __future__ import annotations
+
+import math
+
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Histogram,
+    generate_latest,
+)
+
+from src.internal.observability.stage_metrics import STAGES, RequestStageMetrics
+
+REGISTRY = CollectorRegistry()
+UNMATCHED_ROUTE = "<unmatched>"
+
+_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+# Agent requests are long, so the default 5 ms..10 s buckets get 30 s and 60 s.
+_HTTP_BUCKETS = (*Histogram.DEFAULT_BUCKETS[:-1], 30.0, 60.0)
+_STAGE_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120)
+
+_REQUESTS = Counter(
+    "agentic_search_http_requests_total",
+    "HTTP requests by method, route template and status class.",
+    ("method", "route", "status"),
+    registry=REGISTRY,
+)
+_REQUEST_SECONDS = Histogram(
+    "agentic_search_http_request_duration_seconds",
+    "HTTP request duration by method and route template.",
+    ("method", "route"),
+    buckets=_HTTP_BUCKETS,
+    registry=REGISTRY,
+)
+_STAGE_SECONDS = Histogram(
+    "agentic_search_stage_duration_seconds",
+    "Per-request time spent in each stage the request used.",
+    ("stage",),
+    buckets=_STAGE_BUCKETS,
+    registry=REGISTRY,
+)
+
+
+def observe_request(method: str, route: str, status_code: int, seconds: float) -> None:
+    if not math.isfinite(seconds):
+        return
+    method = method if method in _METHODS else "OTHER"
+    _REQUESTS.labels(method, route, f"{status_code // 100}xx").inc()
+    _REQUEST_SECONDS.labels(method, route).observe(seconds)
+
+
+def observe_stages(metrics: RequestStageMetrics | None) -> None:
+    """One observation per stage the finished request used."""
+    if metrics is None:
+        return
+    for stage in STAGES:
+        if getattr(metrics, f"{stage}_calls"):
+            seconds = getattr(metrics, f"{stage}_ms") / 1000.0
+            _STAGE_SECONDS.labels(stage).observe(seconds)
+
+
+def render_latest() -> tuple[bytes, str]:
+    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

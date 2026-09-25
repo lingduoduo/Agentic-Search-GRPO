@@ -9,11 +9,14 @@ import logging
 import os
 import time
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from fastapi import Depends, FastAPI
+from pydantic import BaseModel, ConfigDict, Field
+
+from src.internal.configs import AppSettings, load_app_settings
 
 from src.internal.retrieval.backends.base import RetrievalResult
 from src.internal.retrieval.service import RetrievalService
+from src.internal.servers._auth import make_require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,15 @@ class SearchResponse(BaseModel):
     latency_ms: float
 
 
+class RetrievalConfigPatch(BaseModel):
+    """Only what the running service actually applies. RRF k and MMR lambda
+    are fixed when the service is built, so they are not accepted here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result_cache_ttl: int | None = Field(default=None, ge=0)
+
+
 def _to_item(r: RetrievalResult) -> SearchResultItem:
     return SearchResultItem(
         doc_id=r.doc_id,
@@ -51,10 +63,17 @@ def _to_item(r: RetrievalResult) -> SearchResultItem:
     )
 
 
-def create_app(service: RetrievalService | None = None) -> FastAPI:
+def create_app(
+    service: RetrievalService | None = None,
+    app_settings: AppSettings | None = None,
+) -> FastAPI:
     from src.internal.servers.retrieval.eval_router import create_eval_router
 
     _service = service or RetrievalService.from_env()
+    # Everything but /health and /search is operator surface: stats, config,
+    # per-mode eval search, and optimizers that read files the caller names.
+    require_admin = make_require_admin(app_settings or load_app_settings())
+    admin = [Depends(require_admin)]
     _backend_name = os.environ.get("RETRIEVAL_BACKEND", "local")
     app = FastAPI(title="Retrieval Service", version="1.0")
 
@@ -90,20 +109,14 @@ def create_app(service: RetrievalService | None = None) -> FastAPI:
             latency_ms=latency_ms,
         )
 
-    # Internal eval endpoints (no auth in dev; pass require_admin in prod)
-    app.include_router(create_eval_router(_service, require_admin=None))
+    app.include_router(create_eval_router(_service, require_admin=require_admin))
 
     # Optimization admin endpoints
     from src.internal.servers.retrieval.optimize_router import create_optimize_router
 
-    app.include_router(create_optimize_router())
+    app.include_router(create_optimize_router(require_admin=require_admin))
 
-    class RetrievalConfigPatch(BaseModel):
-        rrf_k: int | None = None
-        mmr_lambda: float | None = None
-        result_cache_ttl: int | None = None
-
-    @app.get("/api/admin/retrieval/stats")
+    @app.get("/api/admin/retrieval/stats", dependencies=admin)
     def retrieval_stats() -> dict:
         stats: dict = {
             "backend": _backend_name,
@@ -115,19 +128,12 @@ def create_app(service: RetrievalService | None = None) -> FastAPI:
             stats.update(_service._result_cache.stats())
         return stats
 
-    @app.patch("/api/admin/retrieval/config")
+    @app.patch("/api/admin/retrieval/config", dependencies=admin)
     def patch_config(patch: RetrievalConfigPatch) -> dict:
         applied: list[str] = []
-        if patch.rrf_k is not None:
-            os.environ["RRF_K"] = str(patch.rrf_k)
-            applied.append("rrf_k")
-        if patch.mmr_lambda is not None:
-            os.environ["MMR_LAMBDA"] = str(patch.mmr_lambda)
-            applied.append("mmr_lambda")
         if (
             patch.result_cache_ttl is not None
-            and hasattr(_service, "_result_cache")
-            and _service._result_cache
+            and getattr(_service, "_result_cache", None) is not None
         ):
             _service._result_cache._ttl = patch.result_cache_ttl
             applied.append("result_cache_ttl")
