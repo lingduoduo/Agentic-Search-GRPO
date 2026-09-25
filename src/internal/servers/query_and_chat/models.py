@@ -200,6 +200,9 @@ class ToolAgentMessageResponse(BaseModel):
     # The answer is a fragment: a generation hit the wall-clock stop.
     truncated: bool = False
     tool_recovery: dict | None = None
+    # "model_unavailable": the model was down and `answer` is the corpus-only
+    # search-only fallback.
+    degraded: str | None = None
     error: str | None = None
 
 
@@ -227,6 +230,8 @@ class SendChatMessageRequest(BaseModel):
 class ChatMessageResponse(BaseModel):
     session_id: str
     answer: str
+    # "model_unavailable": the model was down and `answer` is a fixed notice.
+    degraded: str | None = None
     error: str | None = None
 
 

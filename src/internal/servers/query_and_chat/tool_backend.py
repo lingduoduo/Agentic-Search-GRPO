@@ -13,7 +13,7 @@ from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
 
-from src.context.models import SearchFilters
+from src.context.models import ModelUnavailableError, SearchFilters
 from src.internal.access.capabilities import resolve_capabilities
 from src.internal.cache.interface import get_cache_backend
 from src.internal.db import AgenticSearchStore
@@ -34,6 +34,31 @@ from src.internal.servers.query_and_chat.models import (
 from src.internal.servers.users.api import resolve_active_user
 
 logger = logging.getLogger(__name__)
+
+_DEGRADED_TOOL_INTRO = (
+    "The tool model is temporarily unavailable, so this answer comes straight "
+    "from a search of your documents."
+)
+_DEGRADED_SNIPPET_CHARS = 200
+
+
+def _degraded_tool_answer(documents: list) -> str:
+    """Render the corpus results into the answer itself: /tool has no Sources
+    panel and no documents field, so a count and [Dn] labels would be empty."""
+    if not documents:
+        return f"{_DEGRADED_TOOL_INTRO} The search found no matching documents."
+    lines = [_DEGRADED_TOOL_INTRO, ""]
+    for index, doc in enumerate(documents, 1):
+        heading = doc.title or "Untitled"
+        if doc.url:
+            heading += f" ({doc.url})"
+        lines.append(f"{index}. {heading}")
+        snippet = " ".join((doc.content or "").split())
+        if snippet:
+            if len(snippet) > _DEGRADED_SNIPPET_CHARS:
+                snippet = snippet[:_DEGRADED_SNIPPET_CHARS].rstrip() + "…"
+            lines.append(f"   {snippet}")
+    return "\n".join(lines)
 
 
 def create_tool_router(
@@ -135,6 +160,32 @@ def create_tool_router(
                 extra.get("tool_recovery"),
             )
 
+        async def _search_only_answer() -> str:
+            # Lazy for the same cycle as tool_agent_runner above.
+            from src.internal.servers.web.app import _auto_search_pipeline
+            from src.internal.servers.web.tool_agent_runner import (
+                _CORPUS_SEARCH_TOP_K,
+            )
+
+            _answer, _citations, documents, *_ = await _auto_search_pipeline(
+                body.message,
+                # Not the model that just failed: query expansion would call it.
+                llm=None,
+                search_url=search_url,
+                browser_search_url=None,
+                rerank_url=resolved.services.rerank_url,
+                top_k=_CORPUS_SEARCH_TOP_K,
+                filters=SearchFilters(access_acl=capabilities.access_acl),
+                history=history,
+                # Corpus-only: an outage never sends the query to a web provider.
+                source_provider="retrieval",
+                extra={"route_degraded": "model_unavailable"},
+            )
+            # The shared search-only text points at a Sources panel and cites
+            # [Dn]; /tool has neither, and this answer is saved to history, so
+            # it must carry what was found itself.
+            return _degraded_tool_answer(documents)
+
         if not body.stream:
             try:
                 answer, tool_calls, num_turns, truncated, tool_recovery = await _run()
@@ -146,6 +197,19 @@ def create_tool_router(
                     num_turns=num_turns,
                     truncated=truncated,
                     tool_recovery=tool_recovery,
+                )
+            except ModelUnavailableError as exc:
+                logger.warning("Model unavailable, degrading /tool to search: %s", exc)
+                try:
+                    answer = await _search_only_answer()
+                except Exception as fallback_exc:  # noqa: BLE001
+                    logger.exception("Search-only fallback failed: %r", body.message)
+                    return ToolAgentMessageResponse(
+                        session_id=session_id, answer="", error=str(fallback_exc)
+                    )
+                store.add_chat_message(session_id, role="assistant", content=answer)
+                return ToolAgentMessageResponse(
+                    session_id=session_id, answer=answer, degraded="model_unavailable"
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Tool agent failed for: %r", body.message)
@@ -220,6 +284,27 @@ def create_tool_router(
                         "num_turns": num_turns,
                         "truncated": truncated,
                         "tool_recovery": tool_recovery,
+                    }
+                )
+            except ModelUnavailableError as exc:
+                logger.warning("Model unavailable, degrading /tool to search: %s", exc)
+                try:
+                    answer = await _search_only_answer()
+                except Exception as fallback_exc:  # noqa: BLE001
+                    logger.exception("Search-only fallback failed: %r", body.message)
+                    yield sse_frame({"type": "error", "detail": str(fallback_exc)})
+                    return
+                store.add_chat_message(session_id, role="assistant", content=answer)
+                yield sse_frame({"type": "answer", "text": answer})
+                yield sse_frame(
+                    {
+                        "type": "done",
+                        "session_id": session_id,
+                        "tool_calls": [],
+                        "num_turns": 0,
+                        "truncated": False,
+                        "tool_recovery": None,
+                        "degraded": "model_unavailable",
                     }
                 )
             except Exception as exc:  # noqa: BLE001

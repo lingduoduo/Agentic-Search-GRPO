@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi import Request
 
+from src.context.models import ModelUnavailableError
 from src.internal.auth import AuthenticatedUser
 from src.internal.cache.interface import get_cache_backend
 from src.internal.memory.working import (
@@ -39,6 +40,11 @@ from src.internal.servers.users.api import resolve_active_user
 
 logger = logging.getLogger(__name__)
 
+# Plain chat does no retrieval, so an outage has no search answer to fall back to.
+CHAT_MODEL_UNAVAILABLE_MESSAGE = (
+    "The chat model is temporarily unavailable. Please try again in a moment."
+)
+
 
 async def _run_plain_chat(
     message: str,
@@ -47,6 +53,7 @@ async def _run_plain_chat(
     tokenizer,
     history: list,
     on_turn=None,
+    on_token=None,
 ) -> str:
     """Delegate to the plain-chat runner.
 
@@ -68,6 +75,7 @@ async def _run_plain_chat(
         tokenizer=tokenizer,
         history=history,
         on_turn=on_turn,
+        on_token=on_token,
     )
 
 
@@ -251,6 +259,14 @@ def create_chat_router(
                 )
                 store.add_chat_message(session_id, role="assistant", content=answer)
                 return ChatMessageResponse(session_id=session_id, answer=answer)
+            except ModelUnavailableError as exc:
+                logger.warning("Chat model unavailable: %s", exc)
+                # Not persisted: it would pollute later context and summaries.
+                return ChatMessageResponse(
+                    session_id=session_id,
+                    answer=CHAT_MODEL_UNAVAILABLE_MESSAGE,
+                    degraded="model_unavailable",
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Chat failed for: %r", body.message)
                 return ChatMessageResponse(
@@ -296,6 +312,18 @@ def create_chat_router(
                 # rather than silent.
                 yield sse_frame({"type": "answer", "text": answer})
                 yield sse_frame({"type": "done", "session_id": session_id})
+            except ModelUnavailableError as exc:
+                logger.warning("Chat model unavailable: %s", exc)
+                yield sse_frame(
+                    {"type": "answer", "text": CHAT_MODEL_UNAVAILABLE_MESSAGE}
+                )
+                yield sse_frame(
+                    {
+                        "type": "done",
+                        "session_id": session_id,
+                        "degraded": "model_unavailable",
+                    }
+                )
             except Exception as exc:  # noqa: BLE001
                 if not task.done():
                     task.cancel()
