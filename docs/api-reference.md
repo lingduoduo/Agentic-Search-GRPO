@@ -25,26 +25,30 @@ curl -s -X POST http://localhost:8001/search \
 #    "retrieval_mode": "hybrid", "executed_queries": ["what is FAISS?"], "latency_ms": 41.2}
 ```
 
-**Per-mode retrieval** (`/internal/search/*` — isolate one retrieval strategy, e.g. for evals):
+**Per-mode retrieval** (`/internal/search/*`, admin-only — isolate one retrieval strategy, e.g. for evals):
 ```bash
 # Sparse (BM25) only
 curl -s -X POST http://localhost:8001/internal/search/sparse \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "vector database", "top_k": 5}'
 # → retrieval_mode: "sparse"
 
 # Dense (embeddings) only
 curl -s -X POST http://localhost:8001/internal/search/dense \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "vector database", "top_k": 5}'
 # → retrieval_mode: "dense"
 
 # Hybrid with explicit fusion/MMR knobs
 curl -s -X POST http://localhost:8001/internal/search/hybrid \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "vector database", "top_k": 5, "over_fetch": 4, "mmr_lambda": 0.5}'
 # → retrieval_mode: "hybrid"
 
 # GraphRAG (entity-graph re-ranking)
 curl -s -X POST http://localhost:8001/internal/search/graph \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "who founded OpenAI", "top_k": 5}'
 # → retrieval_mode: "graph"
 ```
