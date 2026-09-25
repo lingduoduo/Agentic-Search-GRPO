@@ -54,7 +54,15 @@ def classify_route(query: str, llm: "LLMClient") -> tuple[RouteStrategy | None, 
     from src.context.models import ChatMessage
 
     prompt = _ROUTE_PROMPT.format(user_query=query)
-    response = llm.complete([ChatMessage(role="user", content=prompt)], temperature=0.0)
+    from src.internal.configs.timeouts import get_timeout_policies
+
+    # A one-word label: a slow classifier must hand over to the rules router
+    # quickly rather than hold the request for the provider's 30s default.
+    response = llm.complete(
+        [ChatMessage(role="user", content=prompt)],
+        temperature=0.0,
+        timeout_override=get_timeout_policies().llm.route_classifier_timeout_seconds,
+    )
     content = (
         (response if isinstance(response, str) else response.content).strip().lower()
     )

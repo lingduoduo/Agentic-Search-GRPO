@@ -127,6 +127,7 @@ class LLMPolicy:
     local_generation_timeout_seconds: float
     local_heartbeat_seconds: float
     sufficiency_timeout_seconds: float
+    route_classifier_timeout_seconds: float
     grounded_max_retries: int
 
 

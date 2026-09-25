@@ -53,6 +53,7 @@ TODAY = {
         "local_generation_timeout_seconds": 120.0,
         "local_heartbeat_seconds": 10.0,
         "sufficiency_timeout_seconds": 5.0,
+        "route_classifier_timeout_seconds": 3.0,
         "grounded_max_retries": 1,
     },
     "tool_loop": {
