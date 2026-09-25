@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl
 from urllib.parse import urlencode
@@ -576,6 +576,25 @@ async def search_tool(
             page_size=page_size,
             timeout_seconds=timeout_seconds,
         )
+    # A failed live lookup (every page an error, a timeout or blank; an open
+    # circuit is an error page) is answered from a stale cached copy while one
+    # is inside the grace window. An empty list is a successful empty search.
+    if (
+        cache is not None
+        and pages
+        and all(p.error or p.timed_out or p.is_blank for p in pages)
+    ):
+        stale = cache.get_stale(cache_key)
+        if stale is not None:
+            logger.info(
+                "search_tool: %s failed for %r; serving stale cached pages",
+                provider,
+                query,
+            )
+            return [
+                replace(p, metadata={**p.metadata, "stale": True})
+                for p in copy.deepcopy(stale)
+            ]
     # Never cache an empty or failed lookup: for a web provider that is usually
     # a transient failure, and pinning it for the TTL would hide the recovery.
     # A blank page is an empty-message timeout (str(asyncio.TimeoutError()) is
@@ -596,10 +615,29 @@ def _pages_are_usable(pages: list[SearchPage]) -> bool:
     return any(p.url for p in pages) and not any(p.error for p in pages)
 
 
+async def _serpapi_via_search_tool(
+    query: str,
+    *,
+    page: int = 1,
+    page_size: int = 5,
+    timeout_seconds: float | None = None,
+) -> list[SearchPage]:
+    """The cascade's default SerpAPI leg. Going through ``search_tool`` gives it
+    the serving cache's key, fresh hits and stale fallback; the circuit breaker
+    is still consulted inside ``serpapi_search``."""
+    return await search_tool(
+        query,
+        provider="serpapi",
+        page=page,
+        page_size=page_size,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def make_web_cascade_search(
     *,
     browser_search_url: str | None = None,
-    serpapi_fn=serpapi_search,
+    serpapi_fn=_serpapi_via_search_tool,
     browser_fn=search_tool,
 ):
     """Return a ``search_fn`` that tries SerpAPI, then falls back to the browser
@@ -660,8 +698,14 @@ def make_web_cascade_search(
                         )
                     )
                 else:
-                    # search_tool reports HTTP failures as error pages, not raises.
-                    if browser_pages and all(p.error for p in browser_pages):
+                    # search_tool reports HTTP failures as error pages, not raises,
+                    # and answers a failed live call from stale cached rows. Both
+                    # mean the browser server did not answer: a success here
+                    # would reset (or close) the breaker during an outage.
+                    if browser_pages and all(
+                        p.error or (p.metadata or {}).get("stale")
+                        for p in browser_pages
+                    ):
                         breaker.record_failure()
                     else:
                         breaker.record_success()

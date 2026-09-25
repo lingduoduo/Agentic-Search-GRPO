@@ -162,13 +162,37 @@ class SearchClient:
             started = time.perf_counter()
             try:
                 data = await self._post_json(self.config.url, payload, "retrieve")
-            except BaseException:
+            except BaseException as exc:
                 # A failed retrieval still spent the request's time; file it
                 # so an outage shows up in the retrieval bucket, not nowhere.
                 note_retrieval(
                     elapsed_ms=(time.perf_counter() - started) * 1000.0, docs=0
                 )
-                raise
+                # A failed server is answered from stale cached rows, but only
+                # when every missing query has one: never a mix of stale and
+                # missing. Cancellation is not a failure and always propagates.
+                stale = (
+                    [cache.get_stale(keys[i]) for i in missing]
+                    if cache is not None and isinstance(exc, Exception)
+                    else []
+                )
+                if not stale or any(row is None for row in stale):
+                    raise
+                logger.info(
+                    "SearchClient.retrieve: %s failed; serving %d stale rows",
+                    self.config.url,
+                    len(missing),
+                )
+                for index, row in zip(missing, stale):
+                    rows_by_index[index] = copy.deepcopy(row)
+                results = [
+                    [SearchResult.from_api_item(item) for item in rows_by_index[i]]
+                    for i in range(len(queries))
+                ]
+                for index in missing:
+                    for result in results[index]:
+                        result.metadata["stale"] = True
+                return results
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             rows = data.get("result", data.get("results", []))
             if rows and isinstance(rows[0], dict):

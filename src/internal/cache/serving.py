@@ -15,10 +15,20 @@ from src.internal.cache.ttl_cache import TTLCache
 _cache: TTLCache | None = None
 
 
-def configure_serving_cache(ttl_seconds: float, *, max_entries: int = 1024) -> None:
-    """Enable caching with *ttl_seconds*; a non-positive TTL disables it."""
+def configure_serving_cache(
+    ttl_seconds: float, *, max_entries: int = 1024, stale_seconds: float = 0.0
+) -> None:
+    """Enable caching with *ttl_seconds*; a non-positive TTL disables it.
+
+    *stale_seconds* keeps expired entries that much longer for ``get_stale``,
+    which the consumers read only after their live call failed.
+    """
     global _cache
-    _cache = TTLCache(ttl_seconds, max_entries=max_entries) if ttl_seconds > 0 else None
+    _cache = (
+        TTLCache(ttl_seconds, max_entries=max_entries, stale_seconds=stale_seconds)
+        if ttl_seconds > 0
+        else None
+    )
 
 
 def reset_serving_cache() -> None:

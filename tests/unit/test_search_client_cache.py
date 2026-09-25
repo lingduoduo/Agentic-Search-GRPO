@@ -10,6 +10,7 @@ import pytest
 
 from src.context.retrieval.client import SearchClient, SearchClientConfig
 from src.internal.cache import serving
+from src.internal.cache.ttl_cache import TTLCache
 
 
 class _FakeResponse:
@@ -170,3 +171,80 @@ def test_unconfigured_cache_posts_every_time(posts):
     _run(client.retrieve(["a"]))
     _run(client.retrieve(["a"]))
     assert len(posts) == 2
+
+
+class _FailingSession(_FakeSession):
+    def __init__(self, posts, exc):
+        super().__init__(posts)
+        self._exc = exc
+
+    def post(self, url, json):
+        self._posts.append(json)
+        raise self._exc
+
+
+class _NoBackoff:
+    backoff_base_seconds = 0.0
+    timeout_seconds = 1.0
+    max_retries = 1
+
+
+@pytest.fixture
+def stale_cache(monkeypatch):
+    now = [100.0]
+    cache = TTLCache(60, stale_seconds=3600, clock=lambda: now[0])
+    monkeypatch.setattr(serving, "_cache", cache)
+    return cache, now
+
+
+def _fail_with(monkeypatch, exc):
+    monkeypatch.setattr(
+        "src.context.retrieval.client.aiohttp.ClientSession",
+        lambda *, timeout: _FailingSession([], exc),
+    )
+    monkeypatch.setattr(
+        "src.context.retrieval.client._client_policy", lambda: _NoBackoff()
+    )
+
+
+def test_failed_post_serves_stale_rows_labelled(monkeypatch, posts, stale_cache):
+    cache, now = stale_cache
+    _run(_client().retrieve(["a", "b"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    rows = _run(_client().retrieve(["a", "b"]))
+    assert [row[0].title for row in rows] == ["a", "b"]
+    assert rows[0][0].metadata == {"acl": ["public"], "stale": True}
+    key = ("retrieve", "http://localhost:8001/retrieve", "a", 5, "")  # default topk
+    assert cache.get_stale(key)[0]["document"]["metadata"] == {"acl": ["public"]}
+
+
+def test_one_query_without_a_stale_row_raises(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    with pytest.raises(RuntimeError):
+        _run(_client().retrieve(["a", "b"]))
+
+
+def test_fresh_hits_plus_stale_misses_label_only_the_stale(
+    monkeypatch, posts, stale_cache
+):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _run(_client().retrieve(["b"]))  # b is fresh, a is stale
+    _fail_with(monkeypatch, ConnectionError("down"))
+    rows = _run(_client().retrieve(["a", "b"]))
+    assert rows[0][0].metadata.get("stale") is True
+    assert "stale" not in rows[1][0].metadata
+
+
+def test_cancellation_never_serves_stale(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        _run(_client().retrieve(["a"]))
