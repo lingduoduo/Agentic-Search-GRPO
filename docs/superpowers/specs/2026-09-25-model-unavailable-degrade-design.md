@@ -73,6 +73,16 @@ except ModelUnavailableError as exc:
 - **Where the degradation starts:** the handler re-uses `_auto_search_pipeline`
   exactly as the `no_llm` path does, so ACL and filter enforcement come from
   the same code. It must never skip `_enforce_access`.
+- **The source for the fallback (ruling made during review):**
+  - Explicit modes (`chat_once`, `chat_loop`, `search_agent`, `tool_agent`)
+    degrade with `source_provider="retrieval"`, which is corpus-only. An
+    outage must not send the query to SerpAPI or the browser, which these
+    modes never contact.
+  - Auto mode keeps the request's own `source_provider`, already validated on
+    the auto path.
+  - The provider is resolved before the fallback runs, so a bad value can
+    never turn into a 502.
+  - The corpus path enforces ACLs through `run_search`'s `_apply_filters`.
 - **If the fallback itself raises**, that exception goes through the existing
   502 path. There is no fallback chain.
 - **Coverage:** every mode that reaches this dispatch. That is auto (SEARCH

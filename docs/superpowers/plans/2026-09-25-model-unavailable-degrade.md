@@ -54,7 +54,7 @@
 **Interfaces:**
 - Produces: `src.context.models.ModelUnavailableError(RuntimeError)`, re-exported as `src.context.ModelUnavailableError`; `LLMTimeoutError` now subclasses it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """ModelUnavailableError: the one typed "model is unavailable" error."""
@@ -76,12 +76,12 @@ def test_model_unavailable_error_is_exported_with_llm_timeout_error():
     assert "ModelUnavailableError" in context.__all__
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_model_unavailable_error.py -q -p no:cacheprovider`
 Expected: FAIL with `ImportError: cannot import name 'ModelUnavailableError'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/context/models.py`, replacing the `LLMTimeoutError` class:
 
@@ -97,12 +97,12 @@ class LLMTimeoutError(ModelUnavailableError):
 
 `src/context/__init__.py`: add `from .models import ModelUnavailableError` after `from .models import LLMTimeoutError`, and `"ModelUnavailableError",` after `"LLMTimeoutError",` in `__all__`.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_model_unavailable_error.py tests/unit/test_context_pipeline.py -q -p no:cacheprovider`
 Expected: PASS (existing `except LLMTimeoutError` handlers unaffected).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/context/models.py src/context/__init__.py tests/unit/test_model_unavailable_error.py
@@ -123,7 +123,7 @@ git commit -m "ModelUnavailableError: one typed error for an unavailable model"
 - Consumes: `ModelUnavailableError` (Task 1).
 - Produces: `OpenAICompatibleLLM.complete` / `stream` / `stream_complete` raise `ModelUnavailableError` for connect errors and 5xx/429; 4xx re-raise `requests.HTTPError`; schema-unsupported 400 raises `SchemaUnsupportedError` when a schema was applied.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/unit/test_model_unavailable_error.py`)
+- [x] **Step 1: Write the failing tests** (append to `tests/unit/test_model_unavailable_error.py`)
 
 ```python
 from unittest.mock import MagicMock, patch
@@ -224,12 +224,12 @@ def test_schema_unsupported_400_still_raises_schema_unsupported(call):
 
 (`StructuredOutputRequest` field names: confirm against `tests/unit/test_llm_structured_output.py::schema_request` before running and match it.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_model_unavailable_error.py -q -p no:cacheprovider`
 Expected: connection/5xx/429 cases FAIL (`requests.ConnectionError` / `HTTPError` raised, not `ModelUnavailableError`); 4xx and schema cases PASS already.
 
-- [ ] **Step 3: Implement** in `src/internal/llm/providers.py`
+- [x] **Step 3: Implement** in `src/internal/llm/providers.py`
 
 Import: `from src.context.models import LLMResponse, LLMTimeoutError, ModelUnavailableError`.
 
@@ -328,12 +328,12 @@ def test_connection_error_becomes_model_unavailable(schema_request):
     assert caught.value.__cause__ is error
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_model_unavailable_error.py tests/unit/test_llm_providers.py tests/unit/test_llm_structured_output.py -q -p no:cacheprovider`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/internal/llm/providers.py tests/unit/test_model_unavailable_error.py tests/unit/test_llm_providers.py tests/unit/test_llm_structured_output.py
@@ -352,7 +352,7 @@ git commit -m "LLM provider: connect errors and 5xx/429 raise ModelUnavailableEr
 - Consumes: `ModelUnavailableError` (Task 1).
 - Produces: `OpenAIServerManager.generate` / `generate_stream` raise `ModelUnavailableError` (a `RuntimeError`) on connect error, timeout and open circuit, same messages.
 
-- [ ] **Step 1: Write the failing test** (append to `tests/unit/resilience/test_circuit_breaker_sites.py`)
+- [x] **Step 1: Write the failing test** (append to `tests/unit/resilience/test_circuit_breaker_sites.py`)
 
 ```python
 @pytest.mark.parametrize("stream", [False, True])
@@ -383,12 +383,12 @@ def test_remote_llm_unavailable_paths_raise_model_unavailable(
 
 (`ClientConnectorError(connection_key, os_error)` — if the installed aiohttp's `__str__` needs a real `ConnectionKey`, build it with `MagicMock()` for `connection_key`.)
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/unit/resilience/test_circuit_breaker_sites.py -q -p no:cacheprovider -k model_unavailable`
 Expected: FAIL — plain `RuntimeError` is not `ModelUnavailableError`.
 
-- [ ] **Step 3: Implement** in `src/model/serving.py`
+- [x] **Step 3: Implement** in `src/model/serving.py`
 
 Add `from src.context.models import ModelUnavailableError` to the imports, then:
 
@@ -414,12 +414,12 @@ Add `from src.context.models import ModelUnavailableError` to the imports, then:
 
 No change to `generate` / `generate_stream` bodies or breaker accounting.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/unit/resilience/test_circuit_breaker_sites.py tests/unit/test_model_serving.py tests/unit/test_timeout_policy_sites.py -q -p no:cacheprovider`
 Expected: PASS (existing `pytest.raises(RuntimeError, ...)` tests still pass). Also run `.venv/bin/python -c "import src.model.serving"` to confirm no import cycle.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/model/serving.py tests/unit/resilience/test_circuit_breaker_sites.py
@@ -438,7 +438,7 @@ git commit -m "OpenAIServerManager: connect, timeout and circuit-open raise Mode
 - Consumes: `ModelUnavailableError` (Task 1); `_auto_search_pipeline(query, *, llm, search_url, browser_search_url, rerank_url, top_k, filters, history, source_provider, extra, domain="general", retrieval_query=None) -> (answer, citations, documents, intent, extra)`; `_finalize_response(db, session_id, *, query, answer, citations, documents, intent, hook_metadata, extra, mode)`.
 - Produces: `_dispatch_failure(exc: Exception) -> HTTPException` (502, detail = `str(exc)` or the generic message) used by both the existing arm and the fallback failure.
 
-- [ ] **Step 1: Write the failing tests** (`tests/unit/servers/web/test_model_unavailable_degrade.py`)
+- [x] **Step 1: Write the failing tests** (`tests/unit/servers/web/test_model_unavailable_degrade.py`)
 
 ```python
 """/api/agent degrades to search-only when the model is unavailable."""
@@ -635,12 +635,12 @@ def test_stream_done_event_reports_model_unavailable(monkeypatch, tmp_path):
 
 (The answer text rides the `answer` event; `done` carries `route_degraded` — see `_terminal_events` ~:2476. If the ACL test's documents pass through a different provider set for `"auto"`, keep the assertion — only the stubs change.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/servers/web/test_model_unavailable_degrade.py -q -p no:cacheprovider`
 Expected: degrade/ACL/stream tests FAIL with status 502 (or an `error` event); the two 502 tests PASS already.
 
-- [ ] **Step 3: Implement** in `src/internal/servers/web/app.py`
+- [x] **Step 3: Implement** in `src/internal/servers/web/app.py`
 
 Import: `from src.context.models import ModelUnavailableError` next to the other `src.context.models` imports.
 
@@ -710,12 +710,12 @@ Dispatch block (replacing the current `except Exception` body, adding the arm be
 
 `_auto_search_pipeline` retrieves through `_run_hybrid_search`, whose retrieval leg applies `_enforce_access` — the same code the `no_llm` path trusts; no enforcement is skipped. Because `extra` is a fresh dict built here, an earlier `route_degraded` (e.g. `tool_unavailable`) is replaced only when this arm actually produced the answer.
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/unit/servers/web/test_model_unavailable_degrade.py tests/unit/servers/web/test_web_experience_app.py tests/unit/servers/web/test_sse_streaming.py -q -p no:cacheprovider`
 Expected: PASS (incl. existing `test_agent_other_exception_returns_502_with_message`, `test_agent_no_llm_chat_degrades_to_pipeline`, and auto TOOL degradation tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/internal/servers/web/app.py tests/unit/servers/web/test_model_unavailable_degrade.py
@@ -728,10 +728,10 @@ git commit -m "/api/agent: model unavailable degrades to search-only instead of 
 
 **Files:** none changed permanently.
 
-- [ ] **Step 1: Mutation — remove the arm.** Delete the `except ModelUnavailableError` arm in `app.py`; run `tests/unit/servers/web/test_model_unavailable_degrade.py`. Expected: degrade, ACL and stream tests go RED (502). Restore with `git checkout src/internal/servers/web/app.py`; `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`; re-run → green.
-- [ ] **Step 2: Mutation — map 4xx as unavailable.** Change `_is_unavailable_status` to `return response is not None and response.status_code >= 400`; run `tests/unit/test_model_unavailable_error.py`. Expected: `test_4xx_reraises_http_error` RED (and the schema cases for `_stream_complete`). Restore via `git checkout`, delete `__pycache__`, re-run → green.
-- [ ] **Step 3: Full verification.**
+- [x] **Step 1: Mutation — remove the arm.** Delete the `except ModelUnavailableError` arm in `app.py`; run `tests/unit/servers/web/test_model_unavailable_degrade.py`. Expected: degrade, ACL and stream tests go RED (502). Restore with `git checkout src/internal/servers/web/app.py`; `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`; re-run → green.
+- [x] **Step 2: Mutation — map 4xx as unavailable.** Change `_is_unavailable_status` to `return response is not None and response.status_code >= 400`; run `tests/unit/test_model_unavailable_error.py`. Expected: `test_4xx_reraises_http_error` RED (and the schema cases for `_stream_complete`). Restore via `git checkout`, delete `__pycache__`, re-run → green.
+- [x] **Step 3: Full verification.**
   - `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` → 0 failures (~149 skipped).
   - `ruff check . && ruff format --check .`
   - `git diff --check origin/main...HEAD`
-- [ ] **Step 4: Commit** any formatting fixes: `git commit -am "Format"` (only if ruff changed something).
+- [x] **Step 4: Commit** any formatting fixes: `git commit -am "Format"` (only if ruff changed something).

@@ -2122,6 +2122,14 @@ def create_web_app(
                 raise
             except ModelUnavailableError as exc:
                 logger.warning("Model unavailable, degrading to search-only: %s", exc)
+                # Explicit modes are corpus-only: an outage must not send the
+                # query to an external web provider they never contacted. Auto
+                # mode already validated and uses the request's own choice.
+                degraded_provider = (
+                    _normalize_source_provider(request.source_provider)
+                    if normalized_mode in (None, "auto")
+                    else "retrieval"
+                )
                 try:
                     (
                         answer,
@@ -2140,9 +2148,7 @@ def create_web_app(
                         top_k=top_k,
                         filters=filters,
                         history=history,
-                        source_provider=_normalize_source_provider(
-                            request.source_provider
-                        ),
+                        source_provider=degraded_provider,
                         extra={"route_degraded": "model_unavailable"},
                         domain=domain,
                         retrieval_query=retrieval_query,

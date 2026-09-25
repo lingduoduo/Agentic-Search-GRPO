@@ -91,7 +91,59 @@ def test_degrade_passes_request_scope_and_no_llm(monkeypatch, tmp_path):
     assert call["llm"] is None
     assert call["top_k"] == 3
     assert call["filters"].access_acl  # anonymous is ["public"], never unfiltered
-    assert call["source_provider"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("mode", "runner", "local_model", "requested", "expected"),
+    [
+        # Explicit modes are corpus-only: an outage must not send the query to
+        # an external web provider they never contacted.
+        ("chat_once", "answer_with_retrieval", False, None, "retrieval"),
+        ("chat_loop", "_run_agentic_rag", False, "auto", "retrieval"),
+        ("search_agent", "_run_search_agent", True, "serpapi", "retrieval"),
+        ("tool_agent", "_run_tool_agent", True, None, "retrieval"),
+        # Auto mode keeps the provider the request chose.
+        (None, "_run_agentic_rag", False, None, "auto"),
+        (None, "_run_agentic_rag", False, "retrieval", "retrieval"),
+    ],
+)
+def test_degrade_source_provider_by_mode(
+    monkeypatch, tmp_path, mode, runner, local_model, requested, expected
+):
+    monkeypatch.setattr(
+        f"{APP}.recognize_intent", lambda *a, **k: RouteDecision(RouteStrategy.CHAT)
+    )
+    monkeypatch.setattr(f"{APP}.{runner}", _unavailable)
+    calls: list = []
+    monkeypatch.setattr(f"{APP}._auto_search_pipeline", _fake_pipeline(calls))
+    body = {"query": "explain FAISS"}
+    if mode:
+        body["mode"] = mode
+    if requested:
+        body["source_provider"] = requested
+
+    response = _post(_app(tmp_path), body, local_model=local_model)
+
+    assert response.status_code == 200, response.text
+    assert calls[0]["source_provider"] == expected
+
+
+def test_explicit_mode_with_unknown_source_provider_still_degrades(
+    monkeypatch, tmp_path
+):
+    """Explicit modes never validated source_provider; an outage must not make
+    a request that succeeds with a working model return 502."""
+    monkeypatch.setattr(f"{APP}.answer_with_retrieval", _unavailable)
+    calls: list = []
+    monkeypatch.setattr(f"{APP}._auto_search_pipeline", _fake_pipeline(calls))
+
+    response = _post(
+        _app(tmp_path),
+        {"query": "explain FAISS", "mode": "chat_once", "source_provider": "bogus"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls[0]["source_provider"] == "retrieval"
 
 
 @pytest.mark.parametrize(
@@ -134,37 +186,64 @@ def test_fallback_failure_still_returns_502(monkeypatch, tmp_path):
     assert "retrieval server unreachable" in response.json()["detail"]
 
 
-def test_degraded_documents_are_acl_filtered(monkeypatch, tmp_path):
-    """Real fallback pipeline: a private document never reaches an anonymous caller."""
+def _stub_corpus_with_private_doc(monkeypatch):
+    """Both degrade paths return a public and a private document; only real
+    enforcement code may remove the private one."""
+    from src.context.search import SearchResult
     from src.internal.tools import SearchPage
 
-    monkeypatch.setattr(f"{APP}.answer_with_retrieval", _unavailable)
+    rows = [
+        ("Public", "ok", "http://r/pub", ["public"]),
+        ("Private", "secret", "http://r/priv", ["user:alice"]),
+    ]
 
+    # Auto mode: the hybrid fan-out's retrieval leg goes through search_tool.
     async def fake_search_tool(query, *, provider, search_url, page_size, **kw):
         if provider != "retrieval":
             return []
         return [
-            SearchPage(
-                title="Public",
-                summary="ok",
-                url="http://r/pub",
-                metadata={"acl": ["public"]},
-            ),
-            SearchPage(
-                title="Private",
-                summary="secret",
-                url="http://r/priv",
-                metadata={"acl": ["user:alice"]},
-            ),
+            SearchPage(title=t, summary=c, url=u, metadata={"acl": acl})
+            for t, c, u, acl in rows
         ]
+
+    # Explicit modes: corpus-only retrieval goes through SearchClient.
+    class _Client:
+        def __init__(self, config):
+            pass
+
+        async def retrieve_one(self, query, **kwargs):
+            return [
+                SearchResult(contents=c, title=t, url=u, metadata={"acl": acl})
+                for t, c, u, acl in rows
+            ]
+
+        async def aclose(self):
+            return None
 
     async def no_browser(*args, **kwargs):
         return []
 
     monkeypatch.setattr(f"{APP}.search_tool", fake_search_tool)
+    monkeypatch.setattr("src.context.retrieval.search_runner.SearchClient", _Client)
     monkeypatch.setattr(f"{APP}._run_browser_search", no_browser)
 
-    response = _post(_app(tmp_path), {"query": "q", "mode": "chat_once"})
+
+@pytest.mark.parametrize(
+    ("mode", "runner"),
+    [("chat_once", "answer_with_retrieval"), (None, "_run_agentic_rag")],
+)
+def test_degraded_documents_are_acl_filtered(monkeypatch, tmp_path, mode, runner):
+    """Real fallback pipeline: a private document never reaches an anonymous caller."""
+    monkeypatch.setattr(
+        f"{APP}.recognize_intent", lambda *a, **k: RouteDecision(RouteStrategy.CHAT)
+    )
+    monkeypatch.setattr(f"{APP}.{runner}", _unavailable)
+    _stub_corpus_with_private_doc(monkeypatch)
+    body = {"query": "q"}
+    if mode:
+        body["mode"] = mode
+
+    response = _post(_app(tmp_path), body)
 
     assert response.status_code == 200, response.text
     data = response.json()
