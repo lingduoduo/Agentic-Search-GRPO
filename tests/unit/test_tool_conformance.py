@@ -4,9 +4,19 @@ import json
 import pytest
 
 from src.agents.core.state import TaskStatus
-from src.internal.tools import FailureCategory, ResultKind, ToolErrorText
+from src.internal.tools import (
+    FailureCategory,
+    InvalidToolInput,
+    ResultKind,
+    ToolErrorText,
+)
 from src.internal.tools.registry import validate_tool_contract
-from src.internal.tools.search import MultiQueryWebSearchTool, SearchPage
+from src.internal.tools.search import (
+    DomainSearch,
+    MultiQueryWebSearchTool,
+    SearchPage,
+    build_domain_search_tools,
+)
 
 
 def assert_documents(text: str) -> list[dict]:
@@ -181,3 +191,76 @@ def test_web_search_runs_without_an_approval_callback():
     output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
     trace = [json.loads(line) for line in output.action_trace.splitlines()]
     assert trace[0]["status"] == str(TaskStatus.COMPLETED)
+
+
+def test_domain_tools_conform():
+    tools = {t.name: t for t in build_domain_search_tools(service=DomainSearch())}
+    for tool in tools.values():
+        assert validate_tool_contract(tool, source="function") == [], tool.name
+    assert tools["extract_page"].result_kind is ResultKind.DOCUMENTS
+    assert tools["search_domain"].citeable is False
+    assert all(not t.retries_internally for t in tools.values())
+
+
+def test_search_domain_bad_argument_is_invalid_input_with_the_same_text():
+    tool = {t.name: t for t in build_domain_search_tools(service=DomainSearch())}[
+        "search_domain"
+    ]
+    response, _raw, meta = _run(tool, query="q", max_results="many")
+    assert meta["failure"].category is FailureCategory.INVALID_INPUT
+    assert json.loads(response) == {
+        "error": "InvalidToolInput: max_results must be an integer"
+    }
+
+
+def test_extract_page_dead_link_is_invalid_input():
+    async def fetch(url, max_length):
+        return "[fetch error] 404"
+
+    tool = {
+        t.name: t
+        for t in build_domain_search_tools(service=DomainSearch(fetch_fn=fetch))
+    }["extract_page"]
+    _response, _raw, meta = _run(tool, url="http://dead.example")
+    assert meta["failure"].category is FailureCategory.INVALID_INPUT
+
+
+def _failing_capability(category):
+    """A stand-in for the stock-quote capability whose call fails with *category*."""
+    from src.internal.tools import FunctionTool, ToolEffect, ToolFailure
+    from src.internal.tools.search import iter_capabilities
+
+    tag, capability = next(
+        (t, c) for t, c in iter_capabilities() if c.tool_name == "get_stock_quote"
+    )
+
+    async def fn(**kwargs):
+        return ToolErrorText(
+            json.dumps({"error": "invalid ticker symbol 'APPL'"}),
+            ToolFailure(category, "m"),
+        )
+
+    tool = FunctionTool(
+        fn,
+        name="get_stock_quote",
+        effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        parameters={
+            "type": "object",
+            "properties": {capability.query_parameter: {"type": "string"}},
+        },
+    )
+    return DomainSearch(tools=[tool], web_search_fn=lambda *a, **k: None), tag
+
+
+def test_capability_input_failure_surfaces_as_invalid_input():
+    service, tag = _failing_capability(FailureCategory.INVALID_INPUT)
+    with pytest.raises(InvalidToolInput, match="invalid ticker"):
+        asyncio.run(service.search("APPL", tag=tag))
+
+
+def test_capability_upstream_failure_is_not_invalid_input():
+    service, tag = _failing_capability(FailureCategory.PERMANENT)
+    with pytest.raises(ValueError) as caught:
+        asyncio.run(service.search("APPL", tag=tag))
+    assert not isinstance(caught.value, InvalidToolInput)

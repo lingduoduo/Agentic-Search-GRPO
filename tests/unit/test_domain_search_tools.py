@@ -51,7 +51,7 @@ async def test_tool_registry_supports_all_four_features():
     assert not errors
     items = json.loads(result)["queries"]
     assert items[0]["query"] == "one" and "error" in items[1]
-    assert registry.get("search_domain").citeable
+    assert not registry.get("search_domain").citeable
     assert registry.get("extract_page").citeable
     assert not registry.get("get_sub_domains").citeable
     assert not registry.get("batch_search").citeable
@@ -121,11 +121,11 @@ def test_no_capability_target_is_reachable_two_ways_from_the_agent_menu():
     ("url", "fetched", "error"),
     [
         # Passes the schema's scheme pattern but has no host.
-        ("https://", "unused", "ValueError: url must be an HTTP(S) URL"),
+        ("https://", "unused", "InvalidToolInput: url must be an HTTP(S) URL"),
         (
             "https://dead.test",
             "[fetch error] timeout",
-            "ValueError: [fetch error] timeout",
+            "InvalidToolInput: [fetch error] timeout",
         ),
     ],
 )

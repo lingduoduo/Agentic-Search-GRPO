@@ -25,7 +25,6 @@ _RE_EXPORTS = (
     "ApiToolRegistry",
     "ApiToolSpec",
     "SearchPage",
-    "build_search_tool",
     "fetch_pages_concurrently",
     "fetch_url",
     "format_search_pages",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.internal.tools.base import FunctionTool
 from src.internal.tools.registry import ToolRegistry
-from src.internal.tools.search import MultiQueryWebSearchTool, build_search_tool
+from src.internal.tools.search import MultiQueryWebSearchTool
 
 
 def test_functiontool_defaults_false():
@@ -38,7 +38,6 @@ def test_tool_decorator_threads_flags():
 
 
 def test_real_search_tools_are_citeable():
-    assert build_search_tool().citeable is True
     assert MultiQueryWebSearchTool().citeable is True
     # web_search doesn't stop the loop
     assert MultiQueryWebSearchTool().stopping is False
