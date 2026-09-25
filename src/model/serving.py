@@ -14,6 +14,11 @@ import time
 from typing import Any, Protocol, runtime_checkable
 
 from src.internal.configs.timeouts import get_timeout_policies
+from src.internal.resilience.circuit_breaker import (
+    CircuitOpenError,
+    get_breaker,
+    is_failure_status,
+)
 from src.internal.observability.stage_metrics import note_generation
 from src.internal.servers.web import request_capture as _capture
 
@@ -241,6 +246,14 @@ def _validate_local_runtime_stack(
 # ---------------------------------------------------------------------------
 
 
+def _record_status(breaker, status: int) -> None:
+    """A 5xx or 429 is an unhealthy server; any other status is an answer."""
+    if is_failure_status(status):
+        breaker.record_failure()
+    else:
+        breaker.record_success()
+
+
 class OpenAIServerManager:
     """Calls an OpenAI-compatible /v1/completions endpoint.
 
@@ -298,6 +311,24 @@ class OpenAIServerManager:
         if session is not None and not session.closed:
             await session.close()
 
+    def _admit(self):
+        """This server's breaker, or RuntimeError while it is being skipped."""
+        breaker = get_breaker("remote_llm")
+        try:
+            breaker.before_call()
+        except CircuitOpenError:
+            raise RuntimeError(
+                f"Inference server at {self.base_url} is temporarily skipped "
+                "after repeated failures (circuit open)."
+            ) from None
+        return breaker
+
+    def _connect_error(self) -> RuntimeError:
+        return RuntimeError(
+            f"Cannot connect to inference server at {self.base_url}. "
+            f"Start one first, e.g.: mlx_lm.server --model {self.model} --port 8080"
+        )
+
     async def generate(
         self,
         request_id: str,
@@ -317,6 +348,7 @@ class OpenAIServerManager:
         stop = sampling_params.get("stop")
         if stop is not None:
             payload["stop"] = stop
+        breaker = self._admit()
         started = time.perf_counter()
         try:
             session = self._get_session()
@@ -325,11 +357,16 @@ class OpenAIServerManager:
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+        except aiohttp.ClientResponseError as exc:
+            _record_status(breaker, exc.status)
+            raise
         except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
-            raise RuntimeError(
-                f"Cannot connect to inference server at {self.base_url}. "
-                f"Start one first, e.g.: mlx_lm.server --model {self.model} --port 8080"
-            )
+            breaker.record_failure()
+            raise self._connect_error()
+        except aiohttp.ClientError:
+            breaker.record_failure()
+            raise
+        breaker.record_success()
 
         completion_text = data["choices"][0]["text"]
         completion_ids = list(self.tokenizer.encode(completion_text))
@@ -377,6 +414,7 @@ class OpenAIServerManager:
             payload["stop"] = stop
 
         parts: list[str] = []
+        breaker = self._admit()
         started = time.perf_counter()
         try:
             session = self._get_session()
@@ -401,11 +439,16 @@ class OpenAIServerManager:
                     if text:
                         parts.append(text)
                         await on_token(text)
+        except aiohttp.ClientResponseError as exc:
+            _record_status(breaker, exc.status)
+            raise
         except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
-            raise RuntimeError(
-                f"Cannot connect to inference server at {self.base_url}. "
-                f"Start one first, e.g.: mlx_lm.server --model {self.model} --port 8080"
-            )
+            breaker.record_failure()
+            raise self._connect_error()
+        except aiohttp.ClientError:
+            breaker.record_failure()
+            raise
+        breaker.record_success()
         completion_ids = list(self.tokenizer.encode("".join(parts)))
         note_generation(
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
