@@ -220,6 +220,19 @@ def test_agent_endpoint_persists_stage_metrics_apart_from_pipeline_stages(
     )
     stats = sm.StageLatencyStats()
     monkeypatch.setattr("src.internal.servers.web.app.STAGE_LATENCY", stats)
+    from src.internal.observability.prometheus import REGISTRY as PROM
+
+    def _stage_count(stage):
+        return (
+            PROM.get_sample_value(
+                "agentic_search_stage_duration_seconds_count", {"stage": stage}
+            )
+            or 0.0
+        )
+
+    stage_before = {
+        s: _stage_count(s) for s in ("retrieval", "generation", "auxiliary")
+    }
     store = AgenticSearchStore(tmp_path / "stage-metrics.sqlite3")
     app = create_web_app(SearchExperienceSettings(), store=store)
     response = TestClient(app).post("/api/agent", json={"query": "How do I deploy?"})
@@ -246,6 +259,8 @@ def test_agent_endpoint_persists_stage_metrics_apart_from_pipeline_stages(
     assert snap["retrieval"]["count"] == 1 and snap["retrieval"]["avg_docs"] == 3.0
     assert snap["generation"]["count"] == 1
     assert snap["generation"]["avg_completion_tokens"] == 15.0
+    for stage in ("retrieval", "generation", "auxiliary"):
+        assert _stage_count(stage) == stage_before[stage] + 1
     assert sm.current() is None  # the request scope was closed
     store.close()
 

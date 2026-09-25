@@ -23,8 +23,11 @@ logger = logging.getLogger(__name__)
 # Exact path/method exemptions, with the reason beside each group. "Public"
 # permits anonymous access; session ownership and optional auth still apply.
 PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
-    # Health probes and the signed-out application shell/assets.
+    # Health, readiness and (opt-in, network-restricted) metrics probes, and the
+    # signed-out application shell/assets.
     ("/health", {"GET"}),
+    ("/ready", {"GET"}),
+    ("/metrics", {"GET"}),
     ("/", {"GET"}),
     ("/assist", {"GET"}),
     ("/search", {"GET"}),
