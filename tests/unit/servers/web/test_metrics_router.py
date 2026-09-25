@@ -59,3 +59,23 @@ def test_returns_routes_stages_and_feedback_by_target(monkeypatch):
         "rated": 1,
         "thumbs_up_rate": 0.0,
     }
+
+
+def test_reports_circuit_breakers_once_used():
+    from src.internal.resilience.circuit_breaker import get_breaker
+
+    client = _client(AgenticSearchStore(":memory:"), admin=True)
+    assert client.get("/api/admin/metrics").json()["circuits"] == []
+    get_breaker("serpapi").record_failure()
+
+    body = client.get("/api/admin/metrics").json()
+
+    assert body["circuits"] == [
+        {
+            "name": "serpapi",
+            "state": "closed",
+            "consecutive_failures": 1,
+            "opened_at": None,
+            "retry_in_seconds": 0.0,
+        }
+    ]
