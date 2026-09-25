@@ -238,8 +238,9 @@ def test_tool_degrade_acl_filters_private_document(monkeypatch):
     data = _send_tool(app, stream=False).json()
 
     assert data["degraded"] == "model_unavailable"
-    assert "Public" in data["answer"]
-    assert "Private" not in data["answer"]
+    # The answer reports a count, not titles: of the two stubbed rows only the
+    # public one may be counted.
+    assert "returned 1 result(s)" in data["answer"]
     assert "secret" not in data["answer"]
 ```
 
