@@ -144,6 +144,18 @@ h3 {
   color: #8a5a00;
 }
 
+/* A degraded answer (the model was unavailable) carries the same amber. */
+.degraded-notice {
+  display: inline-block;
+  margin: 6px 0 0;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 750;
+  background: #fdf0d5;
+  color: #8a5a00;
+}
+
 .icon-button,
 .composer button {
   min-height: 42px;

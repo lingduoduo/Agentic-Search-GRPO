@@ -465,6 +465,8 @@ export type ToolStreamEvent =
       num_turns: number;
       // The answer is a fragment: a generation hit the wall-clock stop.
       truncated?: boolean;
+      // Why the answer is a fallback (e.g. "model_unavailable"); absent/null when not.
+      degraded?: string | null;
     }
   | { type: "error"; detail: string };
 
@@ -481,7 +483,8 @@ export interface SendToolMessageBody {
 
 export type ChatStreamEvent =
   | { type: "answer"; text: string }
-  | { type: "done"; session_id: string }
+  // `degraded` names why the answer is a fallback (e.g. "model_unavailable").
+  | { type: "done"; session_id: string; degraded?: string | null }
   | { type: "error"; detail: string };
 
 export interface SendChatMessageBody {
@@ -520,6 +523,7 @@ export interface ConversationTurn {
   toolCalls?: ToolCallTraceView[];
   progress?: string[];
   pending?: boolean;
+  degraded?: string | null;
 }
 
 // Mirrors the GET /api/search-domains payload in

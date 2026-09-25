@@ -20,6 +20,11 @@ export function Transcript({ turns }: { turns: ConversationTurn[] }) {
             <ToolCallTracePanel calls={turn.toolCalls} />
           )}
           {turn.content && <div className="turn__content">{turn.content}</div>}
+          {turn.role === "assistant" && turn.degraded && (
+            <p className="degraded-notice" role="status" title={turn.degraded}>
+              ⚠ Model unavailable — degraded answer
+            </p>
+          )}
         </div>
       ))}
     </div>
