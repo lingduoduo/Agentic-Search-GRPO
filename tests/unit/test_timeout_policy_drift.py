@@ -27,6 +27,8 @@ MIGRATED = [
     "src/context/tool_evidence.py",
     "src/context/pipeline.py",
     "src/internal/servers/sse.py",
+    "src/internal/servers/web/app.py",
+    "src/internal/servers/web/tool_agent_runner.py",
 ]
 POLICY_WORDS = (
     "timeout",
@@ -50,6 +52,11 @@ ALLOWED = {
     # RecoveryState.retries: a per-run counter initialized to 0, not a
     # tool_loop.recovery.max_retries policy default.
     "src/agents/tool/recovery.py:88 retries",
+    # heartbeat_thread.join(timeout=0.1): grace period to let the heartbeat
+    # thread notice stop_event after generation finishes, not the
+    # llm.local_heartbeat_seconds interval itself (already read from policy a
+    # few lines above) and not any other schema key.
+    "src/model/serving.py:568 timeout",
 }
 
 
@@ -70,10 +77,30 @@ def _numeric(node) -> bool:
     )
 
 
+def _call_name(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 def _violations(path: str) -> list[str]:
     tree = ast.parse(pathlib.Path(path).read_text())
     found = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            is_client_timeout = (_call_name(node) or "").endswith("ClientTimeout")
+            for kw in node.keywords:
+                if kw.arg is None:
+                    continue
+                if not (
+                    _is_policy_name(kw.arg) or (kw.arg == "total" and is_client_timeout)
+                ):
+                    continue
+                if _numeric(kw.value):
+                    found.append(f"{path}:{kw.value.lineno} {kw.arg}")
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             args = node.args
             pos = args.posonlyargs + args.args
@@ -117,3 +144,9 @@ def test_guard_catches_a_literal(tmp_path):
     f = tmp_path / "m.py"
     f.write_text("def f(*, timeout_seconds: int = 15):\n    pass\n")
     assert _violations(str(f)) == [f"{f}:1 timeout_seconds"]
+
+
+def test_guard_catches_a_call_site_literal(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import asyncio\nasyncio.wait_for(x, timeout=8.0)\n")
+    assert _violations(str(f)) == [f"{f}:2 timeout"]
