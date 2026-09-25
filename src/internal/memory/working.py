@@ -14,6 +14,7 @@ import asyncio
 import functools
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 
@@ -25,6 +26,10 @@ from src.internal.memory.service import curate_span
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 40
+# Default for AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS: leaves room in the local
+# loops' 4096-token prompt for the system prompt, the summary and the new turn.
+DEFAULT_HISTORY_TOKENS = 2500
+_MESSAGE_OVERHEAD_TOKENS = 4
 SUMMARY_PREFIX = "Earlier in this conversation: "
 SESSION_MEMORY_TTL_SECONDS = 30 * 24 * 3600
 
@@ -82,23 +87,52 @@ class WorkingMemory:
     pending: list[ChatMessageRecord]
 
 
+def estimate_tokens(text: str) -> int:
+    """A rough token count, four characters per token; no tokenizer needed."""
+    return math.ceil(len(text) / 4)
+
+
+def _record_tokens(record: ChatMessageRecord) -> int:
+    return estimate_tokens(record.content) + _MESSAGE_OVERHEAD_TOKENS
+
+
+def _fit_budget(
+    records: list[ChatMessageRecord], token_budget: int
+) -> list[ChatMessageRecord]:
+    """The newest ``records`` whose estimates fit ``token_budget``. The newest
+    one is always kept, even alone over budget: a turn with no history beats
+    a turn that silently loses the message it is answering."""
+    used = 0
+    kept = 0
+    for record in reversed(records):
+        used += _record_tokens(record)
+        if kept and used > token_budget:
+            break
+        kept += 1
+    return records[len(records) - kept :]
+
+
 def load_working_memory(
     store,
     session_id: str,
     *,
     keep_last: int = MAX_HISTORY_MESSAGES,
+    token_budget: int | None = None,
     cache: CacheBackend | None = None,
 ) -> WorkingMemory:
-    """Return the last ``keep_last`` messages, prefixed by the stored summary
-    when one covers the dropped prefix.
+    """Return the newest messages -- at most ``keep_last`` and, with
+    ``token_budget`` set, only as many as fit its estimate (the newest always)
+    -- prefixed by the stored summary when one covers the dropped prefix.
 
-    ``cache=None`` (the flag off) skips state entirely: the result is exactly
-    the tail-slice every surface used before, and ``pending`` is empty so no
-    compression is ever scheduled.
+    ``token_budget=None`` is the pure message count. ``cache=None`` (the flag
+    off) skips state entirely: the result is exactly the tail, and ``pending``
+    is empty so no compression is ever scheduled.
     """
     records = store.list_chat_messages(session_id)
     tail = records[-keep_last:]
-    dropped = records[:-keep_last]
+    if token_budget is not None:
+        tail = _fit_budget(tail, token_budget)
+    dropped = records[: len(records) - len(tail)]
     messages = [ChatMessage(role=r.role, content=r.content) for r in tail]
     if cache is None or not dropped:
         return WorkingMemory(messages=messages, summary="", pending=[])
