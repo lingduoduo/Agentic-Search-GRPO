@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from ..base import FunctionTool, ToolEffect
+from ..base import FunctionTool, ResultKind, ToolEffect
 from ._http import PublicDataError, get_json, guarded, post_json
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -145,6 +145,8 @@ def build_weather_tool() -> FunctionTool:
         ),
         parameters=_WEATHER_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
     )
 
 
@@ -219,6 +221,8 @@ def build_location_tool() -> FunctionTool:
         ),
         parameters=_LOCATION_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        retries_internally=True,
     )
 
 
@@ -336,4 +340,8 @@ def build_nearby_places_tool() -> FunctionTool:
         ),
         parameters=_PLACES_PARAMS,
         effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+        # POSTs to Overpass; _fetch never retries a POST (see _http.py), so
+        # this provider does not retry internally.
+        retries_internally=False,
     )
