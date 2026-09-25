@@ -28,6 +28,10 @@ def serp_calls(monkeypatch) -> list:
             return [SearchPage(error="rate limited")]
         if query == "nothing":
             return []
+        if query == "timeout":  # empty-message provider timeout
+            return [SearchPage(error="", timed_out=True)]
+        if query == "blank":
+            return [SearchPage()]
         return [
             SearchPage(
                 title=query,
@@ -96,3 +100,18 @@ def test_unconfigured_cache_calls_the_provider_every_time(serp_calls):
     _search("faiss")
     _search("faiss")
     assert len(serp_calls) == 2
+
+
+@pytest.mark.parametrize("query", ["timeout", "blank"])
+def test_blank_page_is_not_cached(serp_calls, cache, query):
+    _search(query)
+    _search(query)
+    assert [c[0] for c in serp_calls] == [query, query]
+
+
+def test_is_blank_only_for_an_empty_page():
+    assert SearchPage().is_blank
+    assert SearchPage(timed_out=True).is_blank
+    assert not SearchPage(url="https://x").is_blank
+    assert not SearchPage(error="boom").is_blank
+    assert not SearchPage(title="t").is_blank

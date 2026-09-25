@@ -286,6 +286,12 @@ class SearchPage:
     # path that goes through SearchPage.
     metadata: dict = field(default_factory=dict)
 
+    @property
+    def is_blank(self) -> bool:
+        """No title, summary, URL or error: an empty-message provider timeout,
+        never a real result or an explicit error."""
+        return not (self.title or self.summary or self.url or self.error)
+
     @classmethod
     def from_search_result(cls, result: SearchResult) -> "SearchPage":
         return cls(
@@ -572,7 +578,13 @@ async def search_tool(
         )
     # Never cache an empty or failed lookup: for a web provider that is usually
     # a transient failure, and pinning it for the TTL would hide the recovery.
-    if cache is not None and pages and not any(p.error for p in pages):
+    # A blank page is an empty-message timeout (str(asyncio.TimeoutError()) is
+    # ""), so ``p.error`` alone would pin it as a result for the whole TTL.
+    if (
+        cache is not None
+        and pages
+        and not any(p.error or p.timed_out or p.is_blank for p in pages)
+    ):
         cache.set(cache_key, copy.deepcopy(pages))
     return pages
 
