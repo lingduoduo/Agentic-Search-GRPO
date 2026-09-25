@@ -23,6 +23,7 @@ from src.internal.tools.base import (
     InvalidToolInput,
     ToolErrorText,
     ToolFailure,
+    is_timeout_exception,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class PublicDataError(Exception):
         retry_after: float | None = None,
         transport: bool = False,
         upstream: bool = False,
+        timeout: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -75,6 +77,7 @@ class PublicDataError(Exception):
         self.retry_after = retry_after
         self.transport = transport
         self.upstream = upstream
+        self.timeout = timeout
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -133,7 +136,10 @@ async def _fetch(
         except Exception as exc:
             logger.debug("public data request to %s failed", url, exc_info=True)
             last_error = PublicDataError(
-                f"request to {url} failed: {exc}", transport=True, upstream=True
+                f"request to {url} failed: {exc}",
+                transport=True,
+                upstream=True,
+                timeout=is_timeout_exception(exc),
             )
 
         if attempt + 1 >= attempts:
@@ -250,6 +256,7 @@ def _classify(exc: PublicDataError) -> ToolFailure:
         message,
         retry_after=exc.retry_after,
         provider_attempts=exc.attempts,
+        is_timeout=exc.timeout,
     )
 
 
@@ -276,7 +283,11 @@ def guarded(fn: Callable) -> Callable:
             logger.debug("tool %s failed", getattr(fn, "__name__", "?"), exc_info=True)
             return ToolErrorText(
                 json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
-                ToolFailure(FailureCategory.UNKNOWN, _UNKNOWN_MESSAGE),
+                ToolFailure(
+                    FailureCategory.UNKNOWN,
+                    _UNKNOWN_MESSAGE,
+                    is_timeout=is_timeout_exception(exc),
+                ),
             )
 
     return _wrapped

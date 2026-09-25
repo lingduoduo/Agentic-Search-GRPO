@@ -252,3 +252,150 @@ async def test_async_function_tool():
     response, raw, errors = await reg.invoke("double", {"n": 5})
     assert errors == []
     assert raw == 10
+
+
+def _attempt_snapshot():
+    from src.internal.observability.prometheus import REGISTRY
+
+    return tuple(
+        REGISTRY.get_sample_value(
+            "agentic_search_tool_attempts_total", {"outcome": outcome}
+        )
+        or 0
+        for outcome in ("success", "timeout", "error", "cancelled")
+    )
+
+
+@pytest.mark.parametrize("method", ["invoke", "invoke_detailed"])
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        (None, (1, 0, 0, 0)),
+        ("timeout", (0, 1, 0, 0)),
+        ("connection", (0, 0, 1, 0)),
+        ("error", (0, 0, 1, 0)),
+        ("cancelled", (0, 0, 0, 1)),
+        ("typed", (0, 1, 0, 0)),
+        ("httpx", (0, 1, 0, 0)),
+        ("aiohttp", (0, 1, 0, 0)),
+    ],
+)
+async def test_registry_records_each_execution_outcome(method, failure, expected):
+    import asyncio
+    import aiohttp
+    import httpx
+    from src.internal.tools import ToolErrorText, ToolFailure, FailureCategory
+
+    errors = {
+        "timeout": asyncio.TimeoutError(),
+        "connection": ConnectionError(),
+        "error": ValueError(),
+        "cancelled": asyncio.CancelledError(),
+        "httpx": httpx.ReadTimeout("slow"),
+        "aiohttp": aiohttp.ServerTimeoutError(),
+    }
+    registry = ToolRegistry()
+
+    @registry.tool()
+    async def lookup() -> str:
+        if failure == "typed":
+            return ToolErrorText(
+                "failed",
+                ToolFailure(FailureCategory.TRANSIENT, "slow", is_timeout=True),
+            )
+        if failure:
+            raise errors[failure]
+        return "ok"
+
+    before = _attempt_snapshot()
+    if failure == "cancelled" or (method == "invoke" and failure in errors):
+        with pytest.raises(type(errors[failure])):
+            await getattr(registry, method)("lookup", {})
+    else:
+        result = await getattr(registry, method)("lookup", {})
+        if method == "invoke_detailed" and failure in {
+            "timeout",
+            "httpx",
+            "aiohttp",
+            "typed",
+        }:
+            assert result.failure.is_timeout is True
+            assert result.failure.category == FailureCategory.TRANSIENT
+    assert tuple(b - a for a, b in zip(before, _attempt_snapshot())) == expected
+
+
+@pytest.mark.parametrize("method", ["invoke", "invoke_detailed"])
+async def test_registry_rejected_calls_are_not_attempts(method):
+    registry = ToolRegistry()
+
+    @registry.tool()
+    async def lookup(required: int) -> str:
+        return "ok"
+
+    before = _attempt_snapshot()
+    await getattr(registry, method)("missing", {})
+    await getattr(registry, method)("lookup", {})
+    assert _attempt_snapshot() == before
+
+
+@pytest.mark.parametrize(
+    "phase,failure,expected",
+    [
+        ("create", RuntimeError, (0, 0, 1, 0)),
+        ("release", RuntimeError, (0, 0, 1, 0)),
+        ("release", TimeoutError, (0, 1, 0, 0)),
+    ],
+)
+@pytest.mark.parametrize("method", ["invoke", "invoke_detailed"])
+async def test_registry_lifecycle_failures_propagate_once(
+    monkeypatch, phase, failure, expected, method
+):
+    registry = ToolRegistry()
+    events = []
+
+    @registry.tool()
+    async def lookup() -> str:
+        events.append("execute")
+        return "ok"
+
+    tool = registry.get("lookup")
+
+    async def create():
+        events.append("create")
+        if phase == "create":
+            raise failure()
+        return "instance"
+
+    async def release(instance):
+        events.append("release")
+        assert instance == "instance"
+        raise failure()
+
+    monkeypatch.setattr(tool, "create", create)
+    monkeypatch.setattr(tool, "release", release)
+    before = _attempt_snapshot()
+    with pytest.raises(failure):
+        await getattr(registry, method)("lookup", {})
+    assert events == (
+        ["create"] if phase == "create" else ["create", "execute", "release"]
+    )
+    assert tuple(b - a for a, b in zip(before, _attempt_snapshot())) == expected
+
+
+async def test_registry_cancelled_release_counts_cancellation(monkeypatch):
+    import asyncio
+
+    registry = ToolRegistry()
+
+    @registry.tool()
+    async def lookup() -> str:
+        raise TimeoutError()
+
+    async def release(instance):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(registry.get("lookup"), "release", release)
+    before = _attempt_snapshot()
+    with pytest.raises(asyncio.CancelledError):
+        await registry.invoke_detailed("lookup", {})
+    assert tuple(b - a for a, b in zip(before, _attempt_snapshot())) == (0, 0, 0, 1)

@@ -450,3 +450,114 @@ def test_loop_does_not_retry_a_tool_that_retries_internally():
     output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
     assert len(calls) == 1
     assert output.tool_recovery["degraded"] == ["lookup"]
+
+
+def _tool_run_snapshot(outcome):
+    from src.internal.observability.prometheus import REGISTRY
+
+    return tuple(
+        REGISTRY.get_sample_value(name, {"agent": "tool", "outcome": outcome}) or 0
+        for name in (
+            "agentic_search_agent_runs_total",
+            "agentic_search_agent_decision_rounds_count",
+            "agentic_search_agent_decision_rounds_sum",
+        )
+    )
+
+
+def test_tool_run_counts_generations_not_parallel_calls():
+    for response, rounds in [("done", 1), (CALL, 2), (f"[{CALL},{CALL}]", 2)]:
+        tool, _ = _flaky(0)
+        loop, _ = _loop([tool], [response, "done"])
+        before = _tool_run_snapshot("completed")
+        asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+        after = _tool_run_snapshot("completed")
+        assert tuple(b - a for a, b in zip(before, after)) == (1, 1, rounds)
+
+
+def test_tool_run_failure_metrics(monkeypatch):
+    import pytest
+
+    for failure, outcome, rounds in [
+        ("prompt", "error", 0),
+        ("generation", "error", 1),
+        ("cancelled", "cancelled", 1),
+    ]:
+        loop, manager = _loop([], ["done"])
+        before = _tool_run_snapshot(outcome)
+
+        def bad_prompt(*args, **kwargs):
+            raise RuntimeError("prompt failed")
+
+        async def bad_generation(*args, **kwargs):
+            if failure == "cancelled":
+                raise asyncio.CancelledError()
+            raise RuntimeError("generation failed")
+
+        if failure == "prompt":
+            monkeypatch.setattr(loop, "_build_prompt_ids_with_tools_sync", bad_prompt)
+        else:
+            monkeypatch.setattr(manager, "generate", bad_generation)
+        with pytest.raises(
+            asyncio.CancelledError if outcome == "cancelled" else RuntimeError
+        ):
+            asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+        after = _tool_run_snapshot(outcome)
+        assert tuple(b - a for a, b in zip(before, after)) == (1, 1, rounds)
+
+
+def test_timeout_retry_is_two_attempts_with_recovery():
+    from src.internal.observability.prometheus import REGISTRY
+
+    def values():
+        return tuple(
+            REGISTRY.get_sample_value(
+                "agentic_search_tool_attempts_total", {"outcome": outcome}
+            )
+            or 0
+            for outcome in ("success", "timeout", "error", "cancelled")
+        )
+
+    calls = []
+
+    @FunctionTool.from_fn(name="lookup", effect=ToolEffect.READ_ONLY)
+    async def lookup():
+        calls.append(1)
+        if len(calls) == 1:
+            raise asyncio.TimeoutError()
+        return "ok"
+
+    loop, _ = _loop([lookup], [CALL, "done"])
+    before = values()
+    output = asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    assert tuple(b - a for a, b in zip(before, values())) == (1, 1, 0, 0)
+    assert _trace(output)[0]["retry_count"] == 1
+    assert _trace(output)[0]["status"] == str(TaskStatus.COMPLETED)
+
+
+def test_denied_approval_is_not_a_tool_attempt():
+    from src.internal.observability.prometheus import REGISTRY
+
+    def values():
+        return tuple(
+            REGISTRY.get_sample_value(
+                "agentic_search_tool_attempts_total", {"outcome": outcome}
+            )
+            or 0
+            for outcome in ("success", "timeout", "error", "cancelled")
+        )
+
+    tool, calls = _writer(99)
+    tokenizer = _Tokenizer()
+    manager = _Manager(tokenizer, [SEND, "done"])
+    loop = ToolAgentLoop(
+        tokenizer, manager, [tool], ToolAgentLoopConfig(response_length=8192)
+    )
+
+    async def deny(request):
+        return ApprovalDecision.DENY
+
+    before = values()
+    asyncio.run(loop.run([{"role": "user", "content": "go"}], {}, on_approval=deny))
+    assert calls == []
+    assert values() == before

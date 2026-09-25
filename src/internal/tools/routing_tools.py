@@ -69,14 +69,16 @@ def build_search_routing_tool(
             if not p.error
         ]
         if not results and any(p.error for p in pages):
-            errors = [p.error for p in pages if p.error]
+            failed = [p for p in pages if p.error]
             return ToolErrorText(
-                json.dumps({"error": errors[0]}),
+                json.dumps({"error": failed[0].error}),
                 ToolFailure(
                     FailureCategory.TRANSIENT,
                     "search backend unavailable",
                     # search_tool's attempts, read from the same policy it uses
                     provider_attempts=get_timeout_policies().tools.search_router.max_retries,
+                    # An explicit timeout outranks a generic failure (spec).
+                    is_timeout=any(p.timed_out for p in failed),
                 ),
             )
         return json.dumps(results)

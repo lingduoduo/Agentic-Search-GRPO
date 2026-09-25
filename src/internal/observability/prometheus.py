@@ -75,3 +75,45 @@ def observe_stages(metrics: RequestStageMetrics | None) -> None:
 
 def render_latest() -> tuple[bytes, str]:
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+
+
+_AGENT_RUNS = Counter(
+    "agentic_search_agent_runs_total",
+    "Terminated search and tool agent runs by outcome.",
+    ("agent", "outcome"),
+    registry=REGISTRY,
+)
+_AGENT_ROUNDS = Histogram(
+    "agentic_search_agent_decision_rounds",
+    "Attempted model generations per terminated agent run.",
+    ("agent", "outcome"),
+    buckets=(0, 1, 2, 3, 5, 8, 13, 21, 34, 55),
+    registry=REGISTRY,
+)
+_TOOL_ATTEMPTS = Counter(
+    "agentic_search_tool_attempts_total",
+    "Validated registry execution lifecycles by terminal outcome.",
+    ("outcome",),
+    registry=REGISTRY,
+)
+
+
+def observe_agent_run(agent: str, outcome: str, rounds: int) -> None:
+    """Record once when a run terminates, including errors and cancellation."""
+    if agent not in {"search", "tool"} or outcome not in {
+        "completed",
+        "error",
+        "cancelled",
+    }:
+        raise ValueError("Unknown agent metric label")
+    if type(rounds) is not int or rounds < 0:
+        raise ValueError("Decision rounds must be a nonnegative integer")
+    _AGENT_RUNS.labels(agent, outcome).inc()
+    _AGENT_ROUNDS.labels(agent, outcome).observe(rounds)
+
+
+def observe_tool_attempt(outcome: str) -> None:
+    """Count an execution lifecycle, excluding lookup/validation failures."""
+    if outcome not in {"success", "timeout", "error", "cancelled"}:
+        raise ValueError("Unknown tool outcome")
+    _TOOL_ATTEMPTS.labels(outcome).inc()

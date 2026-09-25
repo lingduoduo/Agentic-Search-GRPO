@@ -13,6 +13,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from src.internal.observability.agent_metrics import (
+    record_decision_round,
+    track_agent_run,
+)
 from src.internal.configs.timeouts import get_timeout_policies
 
 from src.agents.core.base import (
@@ -843,6 +847,7 @@ class SearchAgentLoop(AgentLoopBase):
             }
         )
         prompt_ids = await self.build_prompt_ids(working_messages)
+        record_decision_round()
         response_ids = await self.generate_response_ids(
             prompt_ids=prompt_ids,
             sampling_params=sampling_params,
@@ -1121,6 +1126,7 @@ class SearchAgentLoop(AgentLoopBase):
             prompt_ids = await self.build_prompt_ids(working_messages)
 
         with simple_timer(f"generate_turn_{turn}", metrics):
+            record_decision_round()
             response_ids = await self.generate_response_ids(
                 prompt_ids=prompt_ids,
                 sampling_params=sampling_params,
@@ -1679,6 +1685,7 @@ class SearchAgentLoop(AgentLoopBase):
             )
         return cfg.plan_obs_template
 
+    @track_agent_run("search")
     async def run(
         self,
         messages: list[dict[str, Any]],

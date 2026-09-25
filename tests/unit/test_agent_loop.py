@@ -606,6 +606,7 @@ class FakeSearchClient:
 
 
 def test_search_agent_loop_supports_plan_parallel_search_and_research_rounds():
+    before = _agent_metric_snapshot("search", "completed")
     tokenizer = DummyTokenizerWithEncode()
     responses = [
         tokenizer.encode(
@@ -650,6 +651,9 @@ def test_search_agent_loop_supports_plan_parallel_search_and_research_rounds():
     assert output.context.num_searches == 3
     assert output.context.queries == ["first query", "second query", "refined query"]
     assert output.num_turns == 4
+
+    after = _agent_metric_snapshot("search", "completed")
+    assert tuple(b - a for a, b in zip(before, after)) == (1, 1, 4)
 
 
 def test_search_agent_loop_auto_searches_when_model_emits_no_action():
@@ -2389,6 +2393,7 @@ def test_adaptive_budget_raises_limit_for_multiple_subquestions():
 
 def test_deadend_forces_answer_from_evidence():
     """Dead-end after one good search round: forced-answer is emitted from evidence."""
+    before = _agent_metric_snapshot("search", "completed")
     tokenizer = DummyTokenizerWithEncode()
     # Turn 1: search round (evidence collected)
     # Turn 2: no recognised action → dead-end (no_action exit)
@@ -2435,9 +2440,13 @@ def test_deadend_forces_answer_from_evidence():
     assert out.metrics["search_budget_exhausted_without_answer"] == 0.0
     assert out.metrics["answer_when_evidence_insufficient"] == 0.0
 
+    after = _agent_metric_snapshot("search", "completed")
+    assert tuple(b - a for a, b in zip(before, after)) == (1, 1, 3)
+
 
 def test_deadend_with_no_evidence_does_not_fabricate():
     """Dead-end with no search rounds: forced-answer opt-out (never fabricate)."""
+    before = _agent_metric_snapshot("search", "completed")
     tokenizer = DummyTokenizerWithEncode()
     # Immediate format errors, no search → agent_ctx.num_rounds == 0
     responses = [
@@ -2462,6 +2471,9 @@ def test_deadend_with_no_evidence_does_not_fabricate():
     )
 
     assert out.metrics["forced_final_answer"] == 0.0
+
+    after = _agent_metric_snapshot("search", "completed")
+    assert tuple(b - a for a, b in zip(before, after)) == (1, 1, 2)
 
 
 def test_budget_exhausted_forces_answer():
@@ -2916,3 +2928,62 @@ def test_handle_no_action_below_limit_reprompts_continue():
     assert d.control is TurnControl.CONTINUE
     assert d.consecutive_rejections == 1
     assert len(msgs) == 1  # a re-prompt was appended
+
+
+def _agent_metric_snapshot(agent, outcome):
+    from src.internal.observability.prometheus import REGISTRY
+
+    return tuple(
+        REGISTRY.get_sample_value(name, {"agent": agent, "outcome": outcome}) or 0
+        for name in (
+            "agentic_search_agent_runs_total",
+            "agentic_search_agent_decision_rounds_count",
+            "agentic_search_agent_decision_rounds_sum",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "failure,rounds", [(None, 1), ("prompt", 0), ("generation", 1), ("cancelled", 1)]
+)
+def test_search_run_metrics_cover_terminal_outcomes(monkeypatch, failure, rounds):
+    tokenizer = DummyTokenizerWithEncode()
+    manager = DummyServerManager([tokenizer.encode("<answer>Done</answer>")])
+    loop = SearchAgentLoop(
+        tokenizer,
+        manager,
+        search_config=SearchAgentLoopConfig(
+            require_sufficient_evidence_before_answer=False
+        ),
+    )
+    loop._search_client = FakeSearchClient({})
+    outcome = (
+        "completed"
+        if failure is None
+        else "cancelled"
+        if failure == "cancelled"
+        else "error"
+    )
+    before = _agent_metric_snapshot("search", outcome)
+
+    async def fail(*args, **kwargs):
+        if failure == "cancelled":
+            raise asyncio.CancelledError()
+        raise RuntimeError("unavailable")
+
+    if failure == "prompt":
+        monkeypatch.setattr(loop, "build_prompt_ids", fail)
+    elif failure:
+        monkeypatch.setattr(manager, "generate", fail)
+    if failure:
+        with pytest.raises(
+            asyncio.CancelledError if failure == "cancelled" else RuntimeError
+        ):
+            asyncio.run(loop.run([{"role": "user", "content": "go"}], {}))
+    else:
+        assert (
+            asyncio.run(loop.run([{"role": "user", "content": "go"}], {})).num_turns
+            == 1
+        )
+    after = _agent_metric_snapshot("search", outcome)
+    assert tuple(b - a for a, b in zip(before, after)) == (1, 1, rounds)
