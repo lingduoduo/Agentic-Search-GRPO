@@ -230,6 +230,8 @@ class SendChatMessageRequest(BaseModel):
 class ChatMessageResponse(BaseModel):
     session_id: str
     answer: str
+    # "model_unavailable": the model was down and `answer` is a fixed notice.
+    degraded: str | None = None
     error: str | None = None
 
 

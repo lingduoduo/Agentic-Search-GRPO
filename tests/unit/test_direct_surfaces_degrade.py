@@ -11,6 +11,11 @@ from fastapi.testclient import TestClient
 from src.context.models import ContextDocument, ModelUnavailableError
 from src.internal.configs import load_app_settings
 from src.internal.db import AgenticSearchStore
+from src.internal.servers.query_and_chat import chat_backend
+from src.internal.servers.query_and_chat.chat_backend import (
+    CHAT_MODEL_UNAVAILABLE_MESSAGE,
+    create_chat_router,
+)
 from src.internal.servers.query_and_chat.tool_backend import create_tool_router
 
 APP = "src.internal.servers.web.app"
@@ -191,3 +196,61 @@ def test_tool_degrade_acl_filters_private_document(monkeypatch):
     # public one may be counted.
     assert "returned 1 result(s)" in data["answer"]
     assert "secret" not in data["answer"]
+
+
+def _chat_app():
+    store = AgenticSearchStore(":memory:")
+    app = FastAPI()
+    app.include_router(create_chat_router(store))
+    app.state.search_agent_manager = object()
+    app.state.search_agent_tokenizer = object()
+    return app, store
+
+
+def _send_chat(app, *, stream: bool):
+    return TestClient(app).post(
+        "/chat/send-chat-message", json={"message": "hello", "stream": stream}
+    )
+
+
+def test_chat_degrades_with_unavailable_message(monkeypatch):
+    monkeypatch.setattr(chat_backend, "_run_plain_chat", _unavailable)
+    app, store = _chat_app()
+
+    data = _send_chat(app, stream=False).json()
+
+    assert data["answer"] == CHAT_MODEL_UNAVAILABLE_MESSAGE
+    assert data["degraded"] == "model_unavailable"
+    assert data["error"] is None
+    # The message is not content: only the user turn is stored.
+    assert _roles(store, data["session_id"]) == ["user"]
+
+
+def test_chat_stream_degrades(monkeypatch):
+    monkeypatch.setattr(chat_backend, "_run_plain_chat", _unavailable)
+    app, store = _chat_app()
+
+    events = _events(_send_chat(app, stream=True).text)
+
+    assert [e["type"] for e in events] == ["answer", "done"]
+    assert events[0]["text"] == CHAT_MODEL_UNAVAILABLE_MESSAGE
+    assert events[1]["degraded"] == "model_unavailable"
+    assert _roles(store, events[1]["session_id"]) == ["user"]
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["json", "stream"])
+def test_chat_other_errors_keep_error(monkeypatch, stream):
+    async def explode(*args, **kwargs):
+        raise ValueError("bad input format")
+
+    monkeypatch.setattr(chat_backend, "_run_plain_chat", explode)
+    app, _ = _chat_app()
+
+    resp = _send_chat(app, stream=stream)
+
+    if stream:
+        assert _events(resp.text)[-1] == {"type": "error", "detail": "bad input format"}
+    else:
+        assert resp.json()["answer"] == ""
+        assert resp.json()["error"] == "bad input format"
+        assert resp.json()["degraded"] is None
