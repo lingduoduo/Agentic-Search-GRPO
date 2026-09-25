@@ -241,3 +241,100 @@ def test_mcp_client_passes_policy_timeouts(monkeypatch):
 async def _enter_and_exit(cm):
     async with cm as value:
         return value
+
+
+def test_search_client_config_defaults_follow_policy():
+    from src.context.retrieval.client import SearchClientConfig
+
+    with overridden(
+        {"retrieval": {"client": {"timeout_seconds": 7, "max_retries": 2}}}
+    ):
+        cfg = SearchClientConfig(url="http://x")
+    assert (cfg.timeout_seconds, cfg.max_retries) == (7.0, 2)
+    assert SearchClientConfig(url="http://x", timeout_seconds=1).timeout_seconds == 1
+
+
+def test_search_runner_defaults_follow_policy(monkeypatch):
+    from src.context.enums import SearchType
+    from src.context.models import SearchRequest
+    from src.context.retrieval import search_runner
+
+    configs = []
+
+    class FakeSearchClient:
+        def __init__(self, config):
+            configs.append(config)
+
+        async def retrieve_one(self, *a, **k):
+            return []
+
+        async def retrieve(self, queries, *a, **k):
+            return [[] for _ in queries]
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(search_runner, "SearchClient", FakeSearchClient)
+    request = SearchRequest(query="q", provider=SearchType.RETRIEVAL, top_k=3)
+    with overridden(
+        {"retrieval": {"search_runner": {"timeout_seconds": 4, "max_retries": 2}}}
+    ):
+        asyncio.run(search_runner.run_search(request))
+        asyncio.run(search_runner.build_search_context(request))
+        asyncio.run(search_runner.build_search_contexts(["q"]))
+    assert configs and all(
+        (c.timeout_seconds, c.max_retries) == (4.0, 2) for c in configs
+    )
+
+
+def test_agent_search_configs_follow_client_policy():
+    from src.agents.generation.single_turn import SingleTurnAgentLoopConfig
+    from src.agents.search.search import SearchAgentLoopConfig
+
+    with overridden(
+        {"retrieval": {"client": {"timeout_seconds": 7, "max_retries": 2}}}
+    ):
+        for cfg in (SearchAgentLoopConfig(), SingleTurnAgentLoopConfig()):
+            assert (cfg.search_timeout_seconds, cfg.search_max_retries) == (7.0, 2)
+
+
+def test_rerank_stage_timeout_follows_policy():
+    from src.internal.search.stages import RerankHTTPRankingStage
+
+    with overridden({"rerank": {"timeout_seconds": 2}}):
+        stage = RerankHTTPRankingStage("http://r", document_contents=lambda c: "")
+    assert stage._timeout == 2.0
+
+
+def test_web_hybrid_uses_policy(monkeypatch):
+    from src.internal.servers.web import app
+
+    seen = []
+
+    async def fake_search_tool(query, *, provider, **kwargs):
+        seen.append((kwargs.get("timeout_seconds"), kwargs.get("max_retries")))
+        return []
+
+    monkeypatch.setattr(app, "search_tool", fake_search_tool)
+
+    async def _run():
+        return await app._run_hybrid_search(
+            "q",
+            llm=None,
+            search_url="http://retrieval",
+            browser_search_url=None,
+            rerank_url=None,
+            top_k=3,
+            filters=None,
+            source_provider="serpapi",
+        )
+
+    with overridden(
+        {
+            "retrieval": {
+                "web_hybrid": {"provider_timeout_seconds": 3, "provider_max_retries": 2}
+            }
+        }
+    ):
+        asyncio.run(_run())
+    assert seen and all(s == (3.0, 2) for s in seen)

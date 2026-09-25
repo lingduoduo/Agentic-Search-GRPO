@@ -23,15 +23,20 @@ import copy
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from urllib.parse import urlparse, urlunparse
 
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.observability.stage_metrics import note_retrieval
 
 logger = logging.getLogger(__name__)
+
+
+def _client_policy():
+    return get_timeout_policies().retrieval.client
 
 
 class _LazyAiohttp:
@@ -51,8 +56,10 @@ aiohttp = _LazyAiohttp()
 class SearchClientConfig:
     url: str
     topk: int = 5
-    timeout_seconds: int = 10
-    max_retries: int = 3
+    timeout_seconds: float = field(
+        default_factory=lambda: _client_policy().timeout_seconds
+    )
+    max_retries: int = field(default_factory=lambda: _client_policy().max_retries)
     # Explicit /fetch endpoint. When None, derived from url by replacing /retrieve with /fetch.
     fetch_url: str | None = None
 
@@ -102,7 +109,9 @@ class SearchClient:
                 if self._session is session:
                     await self.aclose()
                 if attempt < self.config.max_retries - 1:
-                    await asyncio.sleep(0.5 * (2**attempt))
+                    await asyncio.sleep(
+                        _client_policy().backoff_base_seconds * (2**attempt)
+                    )
 
         raise RuntimeError(
             f"SearchClient.{action} failed after {self.config.max_retries} retries "

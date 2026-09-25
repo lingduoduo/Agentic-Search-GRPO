@@ -13,6 +13,7 @@ from src.context import ChatMessage, ContextDocument
 from src.context.retrieval.client import SearchClient
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
+from src.internal.configs.timeouts import get_timeout_policies
 from src.internal.retrieval.acl import acl_allows
 from src.internal.search.process_search_query import weighted_reciprocal_rank_fusion
 
@@ -136,12 +137,16 @@ class RerankHTTPRankingStage:
         self,
         rerank_url: str,
         *,
-        timeout: float = 10.0,
+        timeout: float | None = None,
         document_contents: Callable[[SearchResult], str] | None = None,
         send_top_k: bool = True,
     ) -> None:
         self._url = f"{rerank_url.rstrip('/')}/rerank"
-        self._timeout = timeout
+        self._timeout = (
+            timeout
+            if timeout is not None
+            else get_timeout_policies().rerank.timeout_seconds
+        )
         self._document_contents = document_contents or (
             lambda candidate: candidate.contents
         )
