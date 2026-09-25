@@ -100,7 +100,7 @@ SerpAPI key is the example.
 | `serpapi` | `serpapi_search`: `before_call` after the key check; success or failure around `_get_json` | returns `[SearchPage(error="SerpAPI is temporarily skipped after repeated failures (circuit open).")]`. The cascade already treats error pages as a failed leg and moves on to the browser without waiting. |
 | `browser_search` | `make_web_cascade_search`'s browser leg | appends a `SearchPage(error="Browser search is temporarily skipped after repeated failures (circuit open).")` failure and skips the call |
 | `rerank` | `RerankHTTPRankingStage.rank`, around the HTTP post (a cache hit touches no breaker) | raises `CircuitOpenError`. `DefaultRankingStage.rank` gains an `except CircuitOpenError` arm before its generic one that sets `rerank_status = "circuit_open"`, `degraded = True`. |
-| `remote_llm` | remote `generate` and `generate_stream` | raises `RuntimeError(f"Inference server at {base_url} is temporarily skipped after repeated failures (circuit open).")`, the same exception type callers already handle for a down server |
+| `remote_llm:<base_url>` (one per server, so one down server never skips another) | remote `generate` and `generate_stream` | raises `RuntimeError(f"Inference server at {base_url} is temporarily skipped after repeated failures (circuit open).")`, the same exception type callers already handle for a down server |
 
 `CircuitOpenError` subclasses `RuntimeError`, so any caller's broad handler
 keeps working.

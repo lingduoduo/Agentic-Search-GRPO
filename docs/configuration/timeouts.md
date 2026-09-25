@@ -173,7 +173,7 @@ behaviour change).
 ### `[circuit_breaker]`
 
 One policy for every serving-dependency breaker (`serpapi`, `browser_search`,
-`rerank`, `remote_llm`; see `src/internal/resilience/circuit_breaker.py`).
+`rerank`, `remote_llm:<base_url>` (one per inference server); see `src/internal/resilience/circuit_breaker.py`).
 A breaker opens after `failure_threshold` consecutive failures — a transport
 error, a timeout, HTTP 5xx or 429 — and then fails fast for `open_seconds`
 before letting one probe call through. Breaker state is per process and is

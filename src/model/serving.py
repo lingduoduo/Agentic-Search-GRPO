@@ -313,7 +313,7 @@ class OpenAIServerManager:
 
     def _admit(self):
         """This server's breaker, or RuntimeError while it is being skipped."""
-        breaker = get_breaker("remote_llm")
+        breaker = get_breaker(f"remote_llm:{self.base_url}")
         try:
             breaker.before_call()
         except CircuitOpenError:

@@ -300,7 +300,7 @@ class _Resp:
         return {"choices": [{"text": "ok"}], "usage": {}}
 
 
-def _llm(monkeypatch, outcome):
+def _llm(monkeypatch, outcome, base_url="http://llm"):
     """A remote manager whose session.post raises ``outcome`` or returns it."""
     from src.model.serving import OpenAIServerManager
 
@@ -315,7 +315,7 @@ def _llm(monkeypatch, outcome):
                 raise outcome
             return outcome
 
-    m = OpenAIServerManager(tokenizer=_Tokenizer(), base_url="http://llm", model="m")
+    m = OpenAIServerManager(tokenizer=_Tokenizer(), base_url=base_url, model="m")
     monkeypatch.setattr(m, "_get_session", lambda: _Session())
     return m, calls
 
@@ -357,12 +357,12 @@ def test_remote_llm_5xx_and_429_count(monkeypatch, stream):
             for _ in range(2):
                 with pytest.raises(aiohttp.ClientResponseError):
                     _call(m, stream)
-        assert get_breaker("remote_llm").snapshot().state == "open"
+        assert get_breaker("remote_llm:http://llm").snapshot().state == "open"
 
 
 @pytest.mark.parametrize("stream", [False, True])
 def test_remote_llm_4xx_is_reraised_and_not_a_failure(monkeypatch, stream):
-    get_breaker("remote_llm").record_failure()
+    get_breaker("remote_llm:http://llm").record_failure()
     m, calls = _llm(monkeypatch, _Resp(status=400))
     with threshold(2):
         for _ in range(3):
@@ -370,7 +370,7 @@ def test_remote_llm_4xx_is_reraised_and_not_a_failure(monkeypatch, stream):
                 _call(m, stream)
             assert info.value.status == 400
     assert len(calls) == 3
-    snap = get_breaker("remote_llm").snapshot()
+    snap = get_breaker("remote_llm:http://llm").snapshot()
     assert (snap.state, snap.consecutive_failures) == ("closed", 0)
 
 
@@ -380,20 +380,20 @@ def test_remote_llm_other_transport_error_counts(monkeypatch):
         for _ in range(2):
             with pytest.raises(aiohttp.ServerDisconnectedError):
                 _call(m, False)
-    assert get_breaker("remote_llm").snapshot().state == "open"
+    assert get_breaker("remote_llm:http://llm").snapshot().state == "open"
 
 
 def test_remote_llm_success_resets(monkeypatch):
-    get_breaker("remote_llm").record_failure()
+    get_breaker("remote_llm:http://llm").record_failure()
     m, _ = _llm(monkeypatch, _Resp())
     assert _call(m, False) == [1, 1]
     stream_m, _ = _llm(
         monkeypatch,
         _Resp(lines=[b'data: {"choices": [{"text": "hi"}]}', b"data: [DONE]"]),
     )
-    get_breaker("remote_llm").record_failure()
+    get_breaker("remote_llm:http://llm").record_failure()
     assert _call(stream_m, True) == [1, 1]
-    assert get_breaker("remote_llm").snapshot().consecutive_failures == 0
+    assert get_breaker("remote_llm:http://llm").snapshot().consecutive_failures == 0
 
 
 def test_stream_callback_error_is_not_a_failure(monkeypatch):
@@ -406,4 +406,14 @@ def test_stream_callback_error_is_not_a_failure(monkeypatch):
     with threshold(1):
         with pytest.raises(ConnectionResetError):
             asyncio.run(m.generate_stream("r", [1], {}, on_token))
-    assert get_breaker("remote_llm").snapshot().consecutive_failures == 0
+    assert get_breaker("remote_llm:http://llm").snapshot().consecutive_failures == 0
+
+
+def test_remote_llm_breaker_is_per_server(monkeypatch):
+    down, _ = _llm(monkeypatch, asyncio.TimeoutError())
+    with threshold(1):
+        with pytest.raises(RuntimeError, match="Cannot connect"):
+            _call(down, stream=False)
+        up, calls = _llm(monkeypatch, _Resp(status=200), base_url="http://other")
+        assert _call(up, stream=False)
+    assert calls == ["http://other/v1/completions"]
