@@ -5,8 +5,8 @@ Every agent-facing timeout and retry count is read from one place:
 `src/internal/configs/timeouts.toml`, deep-merges an optional operator file,
 applies four legacy env vars, validates the result, and caches a frozen
 `TimeoutPolicies` tree for the process. Sites call `get_timeout_policies()` at
-construct or call time — never at import time — so an override always takes
-effect on the next call.
+construct or call time — never at import time. The file and env vars are read
+once per process, on first use; changing either needs a restart.
 
 ## Precedence
 
@@ -21,10 +21,10 @@ Highest to lowest:
 ## Operator override file
 
 Set `AGENTIC_SEARCH_TIMEOUTS_PATH` to a TOML file containing only the keys you
-want to change; every key you omit keeps the bundled default. An unknown key,
-a missing key inside a table you do provide, or a value that fails validation
-raises at load time and names the offending key — it never silently falls
-back.
+want to change; every key you omit keeps the bundled default, including keys
+omitted from a table you do provide. An unknown key (such as a typo) or a value
+that fails validation raises at load time and names the offending key — it
+never silently falls back.
 
 ```toml
 # /etc/agentic/timeouts.toml — only the keys you change
