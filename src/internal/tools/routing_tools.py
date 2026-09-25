@@ -77,7 +77,8 @@ def build_search_routing_tool(
                     "search backend unavailable",
                     # search_tool's attempts, read from the same policy it uses
                     provider_attempts=get_timeout_policies().tools.search_router.max_retries,
-                    is_timeout=all(p.timed_out for p in failed),
+                    # An explicit timeout outranks a generic failure (spec).
+                    is_timeout=any(p.timed_out for p in failed),
                 ),
             )
         return json.dumps(results)

@@ -76,8 +76,15 @@ agent error percentage, average decision rounds, and tool timeout percentage.
   - `httpx.TimeoutException`;
   - a typed `ToolFailure(is_timeout=True)`, which adapters set when they catch
     such an exception themselves.
-- **The corpus and web search tools** report `timeout` only when *every* error
-  page they received timed out.
+- **The corpus and web search tools** report `timeout` when *any* error page
+  they received timed out. An explicit timeout outranks a generic failure,
+  including the web cascade's "no browser fallback is configured" advisory
+  page.
+- **Known blind spot:** a provider timeout whose exception has an empty message
+  (`asyncio.TimeoutError()`, from SerpAPI, Google or retrieval) produces an
+  error page with empty text. Existing code reads that as an empty successful
+  result, so the attempt counts as `success`. Tool recovery depends on this
+  today, so changing it is outside this metric's scope.
 - **Not tool timeouts:** approval waits and escalation waits.
 
 ### Missing series and zero denominators

@@ -217,13 +217,6 @@ logger = logging.getLogger(__name__)
 SearchProvider = Literal["retrieval", "google", "serpapi", "serper"]
 
 
-def _error_text(exc: BaseException) -> str:
-    """``str(asyncio.TimeoutError())`` is empty, and an error page with an empty
-    ``error`` reads as a successful empty result everywhere ``page.error`` is
-    tested -- so fall back to the exception type."""
-    return str(exc) or type(exc).__name__
-
-
 def _timed_out(exc: BaseException) -> bool:
     """Timeout identity from the exception type, including a retry wrapper's
     cause (SearchClient raises RuntimeError ``from`` its last attempt)."""
@@ -337,7 +330,7 @@ async def google_custom_search(
     except Exception as exc:
         return [
             SearchPage(
-                error=_redact_secret_params(_error_text(exc)),
+                error=_redact_secret_params(str(exc)),
                 timed_out=_timed_out(exc),
             )
         ]
@@ -396,7 +389,7 @@ async def serpapi_search(
             breaker.record_failure()
         return [
             SearchPage(
-                error=_redact_secret_params(_error_text(exc)),
+                error=_redact_secret_params(str(exc)),
                 timed_out=_timed_out(exc),
             )
         ]
@@ -452,8 +445,7 @@ async def serper_dev_search(
                 response.raise_for_status()
                 data = await response.json()
     except Exception as exc:
-        err = _error_text(exc)
-        err = err.replace(api_key, "[REDACTED]") if api_key else err
+        err = str(exc).replace(api_key, "[REDACTED]") if api_key else str(exc)
         return [SearchPage(error=_redact_secret_params(err), timed_out=_timed_out(exc))]
 
     results = data.get("organic") or []
@@ -503,7 +495,7 @@ async def retrieval_search(
     except Exception as exc:
         return [
             SearchPage(
-                error=_redact_secret_params(_error_text(exc)),
+                error=_redact_secret_params(str(exc)),
                 timed_out=_timed_out(exc),
             )
         ]
@@ -939,7 +931,10 @@ class MultiQueryWebSearchTool(Tool):
             failure = ToolFailure(
                 FailureCategory.UNKNOWN,
                 "web search unavailable",
-                is_timeout=all(p.timed_out for p in errors),
+                # An explicit timeout outranks a generic failure (spec), and
+                # the cascade adds a non-exception advisory page when no
+                # browser fallback is configured -- the default.
+                is_timeout=any(p.timed_out for p in errors),
             )
             return (
                 ToolErrorText(json.dumps({"error": errors[0].error}), failure),

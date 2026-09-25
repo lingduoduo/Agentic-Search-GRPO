@@ -95,8 +95,20 @@ def test_serpapi_error_page_keeps_timeout_identity(monkeypatch, exc, timed_out):
 
     monkeypatch.setattr(search_mod, "_get_json", fake_get_json)
     pages = asyncio.run(search_mod.serpapi_search("q", api_key="k"))
-    assert pages[0].error
     assert pages[0].timed_out is timed_out
+
+
+def test_error_page_text_is_unchanged_by_timeout_tracking(monkeypatch):
+    """Metrics must not change recovery (spec). ``str(asyncio.TimeoutError())``
+    is empty, and today an empty error page reads as an empty success -- which
+    web_search's recovery depends on. Changing that is a separate decision."""
+
+    async def fake_get_json(*args, **kwargs):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(search_mod, "_get_json", fake_get_json)
+    pages = asyncio.run(search_mod.serpapi_search("q", api_key="k"))
+    assert pages[0].error == ""
 
 
 @pytest.mark.parametrize(
@@ -138,11 +150,11 @@ async def _invoke(tool, arguments):
     ("pages", "timed_out"),
     [
         ([SearchPage(error="a", timed_out=True)], True),
-        ([SearchPage(error="a", timed_out=True), SearchPage(error="b")], False),
+        ([SearchPage(error="a", timed_out=True), SearchPage(error="b")], True),
         ([SearchPage(error="b")], False),
     ],
 )
-async def test_corpus_search_tool_is_timeout_only_when_every_error_timed_out(
+async def test_corpus_search_tool_is_timeout_when_any_error_timed_out(
     monkeypatch, pages, timed_out
 ):
     async def fake_search_tool(*args, **kwargs):
@@ -164,12 +176,26 @@ async def test_corpus_search_tool_is_timeout_only_when_every_error_timed_out(
         ([SearchPage(error="b")], False),
     ],
 )
-async def test_web_search_tool_is_timeout_only_when_every_error_timed_out(
-    pages, timed_out
-):
+async def test_web_search_tool_is_timeout_when_any_error_timed_out(pages, timed_out):
     async def fake(query, *, provider, search_url, page_size, timeout_seconds):
         return pages
 
     result = await _invoke(MultiQueryWebSearchTool(search_fn=fake), {"queries": ["q"]})
     assert result.failure.category is FailureCategory.UNKNOWN
     assert result.failure.is_timeout is timed_out
+
+
+async def test_default_cascade_timeout_is_a_timeout_despite_the_advisory_page():
+    """No browser URL (the default) adds a non-exception advisory error page;
+    an explicit timeout still takes precedence (spec: tool timeout rate)."""
+
+    async def serpapi_timed_out(query, **kwargs):
+        return [SearchPage(error="Timeout on reading data", timed_out=True)]
+
+    cascade = search_mod.make_web_cascade_search(
+        browser_search_url=None, serpapi_fn=serpapi_timed_out
+    )
+    result = await _invoke(
+        MultiQueryWebSearchTool(search_fn=cascade), {"queries": ["q"]}
+    )
+    assert result.failure.is_timeout is True
