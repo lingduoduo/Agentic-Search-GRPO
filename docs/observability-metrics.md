@@ -1,9 +1,10 @@
 # Operational metrics
 
-The web backend records Prometheus metrics for HTTP traffic, agent runs and
-tool calls. This page defines each metric, what it covers and what it does not,
-and the PromQL for the five operator questions: QPS, HTTP error percentage,
-agent error percentage, average decision rounds, and tool timeout percentage.
+The web backend records Prometheus metrics for HTTP traffic, agent runs,
+tool calls and stale cache serves. This page defines each metric, what it
+covers and what it does not, and the PromQL for the five operator questions:
+QPS, HTTP error percentage, agent error percentage, average decision rounds,
+and tool timeout percentage.
 
 ## Export
 
@@ -30,6 +31,7 @@ agent error percentage, average decision rounds, and tool timeout percentage.
 | `agentic_search_agent_runs_total` | counter | `agent` (`search`, `tool`), `outcome` (`completed`, `error`, `cancelled`) | One per terminated agent loop run |
 | `agentic_search_agent_decision_rounds` | histogram (buckets `0,1,2,3,5,8,13,21,34,55,+Inf`) | `agent`, `outcome` | Attempted model generations per terminated run; one observation per run, same labels as the run counter |
 | `agentic_search_tool_attempts_total` | counter | `outcome` (`success`, `timeout`, `error`, `cancelled`) | One per validated tool-registry execution |
+| `agentic_search_stale_cache_serves_total` | counter | `source` (`web`, `retrieval`) | One per failed live lookup answered from a stale serving-cache entry |
 
 ### Semantics and coverage
 
@@ -87,7 +89,18 @@ agent error percentage, average decision rounds, and tool timeout percentage.
   today, so changing it is outside this metric's scope.
 - **Not tool timeouts:** approval waits and escalation waits.
 
-### Missing series and zero denominators
+**Stale cache serves.**
+- `source="web"` is the `search_tool` fallback for a web provider;
+  `source="retrieval"` is the `SearchClient.retrieve` fallback
+  ([serving cache](retrieval.md#serving-cache)).
+- Counted once per call that the fallback answers, not once per page or row:
+  a three-query retrieval batch served stale is `1`.
+- A failure with no usable stale entry is not counted; it is returned or
+  raised as before.
+- A stale serve hides an outage from every other metric: the tool call that
+  received it counts as `success`. Alert on this rate, not on its absence
+  from the error ratios.
+
 
 - A labelled series appears only after its first observation. A fresh process,
   or one that has never had a tool time out, exports no
@@ -160,6 +173,13 @@ separately.
 100 * (sum(rate(agentic_search_tool_attempts_total{outcome="timeout"}[5m])) or vector(0))
 /
 sum(rate(agentic_search_tool_attempts_total{outcome=~"success|timeout|error"}[5m]))
+```
+
+**Stale-serve rate by source.** Nonzero means a provider or the retrieval
+server is failing and the cache is covering for it.
+
+```promql
+sum by (source) (rate(agentic_search_stale_cache_serves_total[5m]))
 ```
 
 The by-agent numerators zero-fill with `0 * <denominator-shaped series>`

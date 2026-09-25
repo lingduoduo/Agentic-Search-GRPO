@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.internal.observability.prometheus import (
     REGISTRY,
     UNMATCHED_ROUTE,
     observe_request,
     observe_stages,
+    observe_stale_serve,
     render_latest,
 )
 from src.internal.observability.stage_metrics import RequestStageMetrics
@@ -111,3 +114,21 @@ def test_render_latest_is_text_exposition_with_metric_names():
         assert name in text
     # The dedicated registry carries no default process/python collectors.
     assert "python_gc_objects_collected_total" not in text
+
+
+def _stale(source: str) -> float:
+    return _value("agentic_search_stale_cache_serves_total", {"source": source})
+
+
+@pytest.mark.parametrize("source", ["web", "retrieval"])
+def test_observe_stale_serve_counts_by_source(source):
+    before = {s: _stale(s) for s in ("web", "retrieval")}
+    observe_stale_serve(source)
+    for s in ("web", "retrieval"):
+        assert _stale(s) == before[s] + (1 if s == source else 0)
+
+
+def test_observe_stale_serve_rejects_an_unknown_source():
+    with pytest.raises(ValueError):
+        observe_stale_serve("rerank")
+    assert _stale("rerank") == 0.0

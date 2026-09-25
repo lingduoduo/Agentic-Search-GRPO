@@ -117,3 +117,18 @@ def observe_tool_attempt(outcome: str) -> None:
     if outcome not in {"success", "timeout", "error", "cancelled"}:
         raise ValueError("Unknown tool outcome")
     _TOOL_ATTEMPTS.labels(outcome).inc()
+
+
+_STALE_SERVES = Counter(
+    "agentic_search_stale_cache_serves_total",
+    "Failed live lookups answered from a stale serving-cache entry, by source.",
+    ("source",),
+    registry=REGISTRY,
+)
+
+
+def observe_stale_serve(source: str) -> None:
+    """Count one fallback that served stale rows (once per call, not per row)."""
+    if source not in {"web", "retrieval"}:
+        raise ValueError("Unknown stale-serve source")
+    _STALE_SERVES.labels(source).inc()
