@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from src.internal.servers.sse import sse_frame
 from src.internal.servers.sse import sse_response
@@ -162,6 +162,7 @@ from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
 from src.internal.observability.prometheus import observe_stages
 from src.internal.observability.prometheus import render_latest
+from src.internal.servers.web.readiness import check_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -1616,6 +1617,14 @@ def create_web_app(
     @app.get("/health")
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ready")
+    async def readiness_probe() -> JSONResponse:
+        ready, checks = await check_readiness(db, settings.search_url)
+        return JSONResponse(
+            {"status": "ready" if ready else "not_ready", "checks": checks},
+            status_code=200 if ready else 503,
+        )
 
     if settings.metrics_enabled:
 

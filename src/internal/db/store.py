@@ -158,6 +158,10 @@ class AgenticSearchStore:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
+    def ping(self) -> None:
+        """Raise unless the connection can run a query (the readiness probe)."""
+        self._conn.execute("SELECT 1").fetchone()
+
     def _configure_connection(self) -> None:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA busy_timeout = 5000")

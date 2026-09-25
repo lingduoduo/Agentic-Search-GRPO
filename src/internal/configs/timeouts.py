@@ -153,6 +153,11 @@ class SSEPolicy:
 
 
 @dataclass(frozen=True)
+class ReadinessPolicy:
+    probe_timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class TimeoutPolicies:
     tools: ToolsPolicies
     retrieval: RetrievalPolicies
@@ -160,6 +165,7 @@ class TimeoutPolicies:
     llm: LLMPolicy
     tool_loop: ToolLoopPolicy
     sse: SSEPolicy
+    readiness: ReadinessPolicy
 
 
 def _read_bundled() -> dict[str, Any]:

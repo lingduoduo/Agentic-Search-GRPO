@@ -69,3 +69,6 @@ retry_budget_seconds = 10.0        # total retry sleep per run
 
 [sse]
 heartbeat_seconds = 15.0           # keepalive on an idle stream, 0 = off; env AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS
+
+[readiness]
+probe_timeout_seconds = 2.0        # /ready's retrieval /health probe

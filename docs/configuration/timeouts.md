@@ -169,3 +169,9 @@ behaviour change).
 | key | default | bounds | env override |
 |---|---|---|---|
 | `heartbeat_seconds` | 15.0 | keepalive on an idle stream, `0` = off | `AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS` |
+
+### `[readiness]`
+
+| key | default | bounds |
+|---|---|---|
+| `probe_timeout_seconds` | 2.0 | `GET /ready`'s probe of the retrieval server's `/health` |
