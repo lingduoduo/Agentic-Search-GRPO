@@ -264,3 +264,62 @@ def test_capability_upstream_failure_is_not_invalid_input():
     with pytest.raises(ValueError) as caught:
         asyncio.run(service.search("APPL", tag=tag))
     assert not isinstance(caught.value, InvalidToolInput)
+
+
+def test_mcp_client_tool_conforms_as_unspecified_text():
+    from types import SimpleNamespace
+
+    from src.internal.tools.mcp_client import McpServerSpec, _build_tool
+
+    remote = SimpleNamespace(
+        name="remote_op", description="d", inputSchema={"type": "object"}
+    )
+    tool = _build_tool(McpServerSpec(name="srv", url="http://mcp"), remote)
+    assert validate_tool_contract(tool, source="mcp") == []
+    assert (tool.effect.value, tool.result_kind) == ("unspecified", ResultKind.TEXT)
+
+
+def test_openapi_tool_declares_json():
+    from src.internal.tools.api import ApiRequestTool
+
+    assert (
+        ApiRequestTool.result_kind.fget(object.__new__(ApiRequestTool))
+        is ResultKind.JSON
+    )
+
+
+class _Store:
+    def add_user_memory(self, user_id, content):
+        return None
+
+    def update_user_memory(self, user_id, memory_id, content):
+        return None
+
+    def delete_user_memory(self, user_id, memory_id):
+        return False
+
+
+def test_memory_tools_conform_and_type_their_failures():
+    from src.internal.memory.tools import build_memory_registry
+
+    registry, _counts, _schemas = build_memory_registry(_Store(), "u1")
+    for tool in registry.list_tools():
+        assert validate_tool_contract(tool, source="function") == [], tool.name
+        assert tool.result_kind is ResultKind.TEXT
+    for name, args in (
+        ("add_memory", {"content": ""}),
+        ("update_memory", {"memory_id": "m", "content": "c"}),
+        ("delete_memory", {"memory_id": "m"}),
+    ):
+        outcome = asyncio.run(registry.invoke_detailed(name, args))
+        assert outcome.failure.category is FailureCategory.INVALID_INPUT, name
+
+
+def test_memory_invoke_text_is_unchanged_for_not_found():
+    from src.internal.memory.tools import build_memory_registry
+
+    registry, _counts, _schemas = build_memory_registry(_Store(), "u1")
+    response, _raw, errors = asyncio.run(
+        registry.invoke("delete_memory", {"memory_id": "m"})
+    )
+    assert (response, errors) == ("memory not found", [])

@@ -33,7 +33,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from .base import FailureCategory, FunctionTool, Tool, ToolErrorText, ToolFailure
+from .base import (
+    FailureCategory,
+    FunctionTool,
+    ResultKind,
+    Tool,
+    ToolErrorText,
+    ToolFailure,
+)
 from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -171,6 +178,7 @@ def _build_tool(spec: McpServerSpec, remote: Any) -> Tool:
         name=remote.name,
         description=getattr(remote, "description", "") or remote.name,
         parameters=getattr(remote, "inputSchema", None) or {},
+        result_kind=ResultKind.TEXT,
     )
 
 

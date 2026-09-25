@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.internal.tools.base import Tool, ToolEffect, ToolSchema
+from src.internal.tools.base import (
+    FailureCategory,
+    ResultKind,
+    Tool,
+    ToolEffect,
+    ToolErrorText,
+    ToolFailure,
+    ToolSchema,
+)
 from src.internal.tools.registry import ToolRegistry
 
 
@@ -19,6 +27,10 @@ class _AddMemoryTool(Tool):
     @property
     def effect(self) -> ToolEffect:
         return ToolEffect.SIDE_EFFECTING
+
+    @property
+    def result_kind(self) -> ResultKind:
+        return ResultKind.TEXT
 
     @property
     def schema(self) -> ToolSchema:
@@ -45,7 +57,9 @@ class _AddMemoryTool(Tool):
             self._user_id, str(arguments.get("content", ""))
         )
         if record is None:
-            return "empty content; nothing added", None, {}
+            text = "empty content; nothing added"
+            failure = ToolFailure(FailureCategory.INVALID_INPUT, text)
+            return ToolErrorText(text, failure), None, {"failure": failure}
         self._counts["add"] += 1
         return f"added memory {record.id}", record, {}
 
@@ -61,6 +75,10 @@ class _UpdateMemoryTool(Tool):
     @property
     def effect(self) -> ToolEffect:
         return ToolEffect.SIDE_EFFECTING
+
+    @property
+    def result_kind(self) -> ResultKind:
+        return ResultKind.TEXT
 
     @property
     def schema(self) -> ToolSchema:
@@ -86,7 +104,9 @@ class _UpdateMemoryTool(Tool):
             str(arguments.get("content", "")),
         )
         if updated is None:
-            return "memory not found", None, {}
+            text = "memory not found"
+            failure = ToolFailure(FailureCategory.INVALID_INPUT, text)
+            return ToolErrorText(text, failure), None, {"failure": failure}
         self._counts["update"] += 1
         return f"updated memory {updated.id}", updated, {}
 
@@ -102,6 +122,10 @@ class _DeleteMemoryTool(Tool):
     @property
     def effect(self) -> ToolEffect:
         return ToolEffect.SIDE_EFFECTING
+
+    @property
+    def result_kind(self) -> ResultKind:
+        return ResultKind.TEXT
 
     @property
     def schema(self) -> ToolSchema:
@@ -122,7 +146,9 @@ class _DeleteMemoryTool(Tool):
             self._user_id, str(arguments.get("memory_id", ""))
         )
         if not ok:
-            return "memory not found", None, {}
+            text = "memory not found"
+            failure = ToolFailure(FailureCategory.INVALID_INPUT, text)
+            return ToolErrorText(text, failure), None, {"failure": failure}
         self._counts["delete"] += 1
         return "deleted memory", None, {}
 
