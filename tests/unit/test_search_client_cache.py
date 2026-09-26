@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 
+import aiohttp
 import pytest
+from src.internal.observability.prometheus import REGISTRY
 
 from src.context.retrieval.client import SearchClient, SearchClientConfig
 from src.internal.cache import serving
@@ -248,3 +250,91 @@ def test_cancellation_never_serves_stale(monkeypatch, posts, stale_cache):
     _fail_with(monkeypatch, asyncio.CancelledError())
     with pytest.raises(asyncio.CancelledError):
         _run(_client().retrieve(["a"]))
+
+
+def _http_error(status: int) -> aiohttp.ClientResponseError:
+    return aiohttp.ClientResponseError(None, (), status=status)
+
+
+@pytest.mark.parametrize("status", [400, 403])
+def test_client_error_reraises_despite_a_stale_row(
+    monkeypatch, posts, stale_cache, status
+):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, _http_error(status))
+    with pytest.raises(aiohttp.ClientResponseError) as exc_info:
+        _run(_client().retrieve(["a"]))
+    assert exc_info.value.status == status
+
+
+@pytest.mark.parametrize("status", [429, 503, 500])
+def test_rate_limit_and_server_errors_serve_stale(
+    monkeypatch, posts, stale_cache, status
+):
+    # 429 re-raises directly from _post_json; 5xx exhaust the single retry and
+    # arrive as RuntimeError whose __cause__ is the ClientResponseError.
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, _http_error(status))
+    rows = _run(_client().retrieve(["a"]))
+    assert rows[0][0].metadata == {"acl": ["public"], "stale": True}
+
+
+def test_is_client_error_reads_the_cause():
+    from src.context.retrieval.client import _is_client_error
+
+    wrapped = RuntimeError("retries exhausted")
+    wrapped.__cause__ = _http_error(404)
+    assert _is_client_error(wrapped)
+    wrapped.__cause__ = _http_error(500)
+    assert not _is_client_error(wrapped)
+    assert not _is_client_error(_http_error(429))
+
+
+def _stale_serves() -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "agentic_search_stale_cache_serves_total", {"source": "retrieval"}
+        )
+        or 0.0
+    )
+
+
+def test_stale_serve_counts_once_per_call(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a", "b", "c"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    before = _stale_serves()
+    _run(_client().retrieve(["a", "b", "c"]))
+    assert _stale_serves() == before + 1
+
+
+def test_no_stale_serve_counts_nothing(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    before = _stale_serves()
+    _fail_with(monkeypatch, ConnectionError("down"))
+    with pytest.raises(RuntimeError):
+        _run(_client().retrieve(["a", "b"]))  # b has no stale row
+    _fail_with(monkeypatch, _http_error(400))
+    with pytest.raises(aiohttp.ClientResponseError):
+        _run(_client().retrieve(["a"]))
+    assert _stale_serves() == before
+
+
+def test_mutating_a_stale_result_cannot_poison_the_next_stale_serve(
+    monkeypatch, posts, stale_cache
+):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    first = _run(_client().retrieve(["a"]))
+    first[0][0].metadata["acl"].append("user:mallory")
+    second = _run(_client().retrieve(["a"]))
+    assert second[0][0].metadata == {"acl": ["public"], "stale": True}

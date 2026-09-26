@@ -7,6 +7,7 @@ import asyncio
 import copy
 
 import pytest
+from src.internal.observability.prometheus import REGISTRY
 
 from src.internal.cache import serving
 from src.internal.cache.ttl_cache import TTLCache
@@ -230,3 +231,29 @@ def test_recovery_after_a_stale_fallback_is_fresh_again(serp, stale_cache, clock
     fresh = _search("q")
     assert serp["calls"] == 3
     assert fresh[0].metadata == {}
+
+
+def _stale_serves() -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "agentic_search_stale_cache_serves_total", {"source": "web"}
+        )
+        or 0.0
+    )
+
+
+def test_stale_fallback_counts_one_web_serve(serp, stale_cache, clock):
+    _search("q")
+    clock.now += 61
+    serp["reply"] = FAILURES["error"]
+    before = _stale_serves()
+    _search("q")
+    assert _stale_serves() == before + 1
+
+
+@pytest.mark.parametrize("failure", FAILURES)
+def test_failure_without_stale_entry_counts_nothing(serp, stale_cache, failure):
+    before = _stale_serves()
+    serp["reply"] = FAILURES[failure]
+    assert _search("q") == FAILURES[failure]
+    assert _stale_serves() == before
