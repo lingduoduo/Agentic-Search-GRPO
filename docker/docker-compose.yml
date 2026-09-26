@@ -90,6 +90,9 @@ services:
   # ---------------------------------------------------------------------------
 
   retrieval:
+    # Unset: `up --build` builds and tags a local image, as before. Set it to a
+    # published tag to deploy or roll back without building (docs/deploy.md).
+    image: ${AGENTIC_SEARCH_IMAGE:-agentic-search:local}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -117,6 +120,9 @@ services:
       - agentic_search_default
 
   web:
+    # Unset: `up --build` builds and tags a local image, as before. Set it to a
+    # published tag to deploy or roll back without building (docs/deploy.md).
+    image: ${AGENTIC_SEARCH_IMAGE:-agentic-search:local}
     build:
       context: ..
       dockerfile: Dockerfile
