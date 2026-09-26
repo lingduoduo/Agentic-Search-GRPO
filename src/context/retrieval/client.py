@@ -52,6 +52,20 @@ class _LazyAiohttp:
 aiohttp = _LazyAiohttp()
 
 
+def _is_client_error(exc: BaseException) -> bool:
+    """A 4xx other than 429, raised directly or as the retry error's cause.
+
+    Such a request is wrong (a rejected filter, missing auth), so it must
+    surface rather than be hidden behind stale rows.
+    """
+    return any(
+        isinstance(err, aiohttp.ClientResponseError)
+        and err.status < 500
+        and err.status != 429
+        for err in (exc, exc.__cause__)
+    )
+
+
 @dataclass(frozen=True)
 class SearchClientConfig:
     url: str
@@ -170,10 +184,13 @@ class SearchClient:
                 )
                 # A failed server is answered from stale cached rows, but only
                 # when every missing query has one: never a mix of stale and
-                # missing. Cancellation is not a failure and always propagates.
+                # missing. Cancellation is not a failure and always propagates,
+                # and neither does a 4xx other than 429: the request is wrong.
                 stale = (
                     [cache.get_stale(keys[i]) for i in missing]
-                    if cache is not None and isinstance(exc, Exception)
+                    if cache is not None
+                    and isinstance(exc, Exception)
+                    and not _is_client_error(exc)
                     else []
                 )
                 if not stale or any(row is None for row in stale):

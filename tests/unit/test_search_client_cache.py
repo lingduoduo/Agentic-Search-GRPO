@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
+import aiohttp
 import pytest
 
 from src.context.retrieval.client import SearchClient, SearchClientConfig
@@ -248,3 +249,45 @@ def test_cancellation_never_serves_stale(monkeypatch, posts, stale_cache):
     _fail_with(monkeypatch, asyncio.CancelledError())
     with pytest.raises(asyncio.CancelledError):
         _run(_client().retrieve(["a"]))
+
+
+def _http_error(status: int) -> aiohttp.ClientResponseError:
+    return aiohttp.ClientResponseError(None, (), status=status)
+
+
+@pytest.mark.parametrize("status", [400, 403])
+def test_client_error_reraises_despite_a_stale_row(
+    monkeypatch, posts, stale_cache, status
+):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, _http_error(status))
+    with pytest.raises(aiohttp.ClientResponseError) as exc_info:
+        _run(_client().retrieve(["a"]))
+    assert exc_info.value.status == status
+
+
+@pytest.mark.parametrize("status", [429, 503, 500])
+def test_rate_limit_and_server_errors_serve_stale(
+    monkeypatch, posts, stale_cache, status
+):
+    # 429 re-raises directly from _post_json; 5xx exhaust the single retry and
+    # arrive as RuntimeError whose __cause__ is the ClientResponseError.
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, _http_error(status))
+    rows = _run(_client().retrieve(["a"]))
+    assert rows[0][0].metadata == {"acl": ["public"], "stale": True}
+
+
+def test_is_client_error_reads_the_cause():
+    from src.context.retrieval.client import _is_client_error
+
+    wrapped = RuntimeError("retries exhausted")
+    wrapped.__cause__ = _http_error(404)
+    assert _is_client_error(wrapped)
+    wrapped.__cause__ = _http_error(500)
+    assert not _is_client_error(wrapped)
+    assert not _is_client_error(_http_error(429))
