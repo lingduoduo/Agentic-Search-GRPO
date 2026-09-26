@@ -33,20 +33,20 @@ pytest, actionlint.
 
 ### Task 1: Tests (red)
 
-- [ ] Rewrite `tests/unit/test_publish_workflow.py` for the `build` and
+- [x] Rewrite `tests/unit/test_publish_workflow.py` for the `build` and
   `merge` jobs, following the spec's Testing section. Run it and expect red,
   because the workflow is still a single job.
 
 ### Task 2: Workflow (green)
 
-- [ ] Rewrite the jobs in `.github/workflows/publish-image.yml`. Run the
+- [x] Rewrite the jobs in `.github/workflows/publish-image.yml`. Run the
   tests and actionlint, and expect green.
-- [ ] Run the mutation checks from the spec.
-- [ ] Commit.
+- [x] Run the mutation checks from the spec.
+- [x] Commit.
 
 ### Task 3: Docs and verification
 
-- [ ] In `docs/deploy.md`, list the two platforms and drop the
+- [x] In `docs/deploy.md`, list the two platforms and drop the
   amd64-only line.
-- [ ] Run the full unit suite, then ruff, then `git diff --check`, then
+- [x] Run the full unit suite, then ruff, then `git diff --check`, then
   actionlint. Open the PR.
