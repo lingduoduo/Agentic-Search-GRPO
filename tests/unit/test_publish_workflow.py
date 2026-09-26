@@ -106,9 +106,16 @@ def test_each_leg_pushes_the_root_dockerfile_by_digest():
     assert "push-by-digest=true" in build["outputs"]
     assert "push=true" in build["outputs"]
 
-    # The revision label comes from the checked-out (tested) commit, not
-    # github.sha, which for workflow_run is the moving branch tip.
-    assert _step("build", "docker/metadata-action@")["with"].get("context") == "git"
+    # The revision label names the tested commit, not github.sha (the moving
+    # branch tip for workflow_run). Set explicitly: metadata-action's
+    # `context: git` fails on the detached HEAD a head_sha checkout leaves
+    # ("Cannot find detached HEAD ref"), which broke every publish.
+    meta = _step("build", "docker/metadata-action@")["with"]
+    assert "context" not in meta
+    assert (
+        "org.opencontainers.image.revision="
+        "${{ github.event.workflow_run.head_sha || github.sha }}"
+    ) in meta["labels"]
 
     upload = _step("build", "actions/upload-artifact@")["with"]
     assert upload["name"].startswith("digests-")
