@@ -79,10 +79,13 @@ python -m examples.audit_integration_endpoints --show-files # per-file buckets
 ```bash
 cd web && npm run typecheck            # TypeScript check
 cd web && npm run build                # production bundle → web/dist/ (served by FastAPI)
-cd web && npm run test -- --run        # Vitest unit tests
+cd web && npm run test:unit            # Vitest unit tests (vitest run)
+cd web && npm run test                 # typecheck, then the unit tests
 ```
 
-Frontend tests live under `web/src/components/__tests__/`:
+Frontend tests (33 files) live under `web/src/__tests__/`, `web/src/components/__tests__/`,
+`web/src/components/debug/__tests__/`, and `web/src/pages/__tests__/`. A few of the
+component tests:
 
 | Test file | What is tested |
 |-----------|----------------|

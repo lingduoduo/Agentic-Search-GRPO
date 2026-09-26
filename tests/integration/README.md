@@ -28,13 +28,12 @@ The idea is that each test can use the manager class to create (.create()) a "te
    python -m dotenv -f .env run -- pytest -s tests/integration/tests/path_to/test_file.py::test_function_name
    ```
 
-Running some single tests require the `mock_connector_server` container to be running. If the above doesn't work,
-navigate to `tests/integration/mock_services` and run
+Most of this suite is inherited and targets endpoints the app no longer serves, so expect many
+failures that say nothing about your change. To see which files still exercise live routes, run
 ```sh
-docker compose -f docker-compose.mock-it-services.yml -p mock-it-services-stack up -d
+python -m examples.audit_integration_endpoints --show-files
 ```
-You will have to modify the networks section of the docker-compose file to `<your stack name>_default` if you brought up the stack
-with a name different from the default `agentic_search`.
+The mock connector stack these instructions used to start was deleted along with the tests that used it.
 
 ## Guidelines for Writing Integration Tests
 

@@ -238,6 +238,8 @@ Expected response:
 | `API_SERVER_URL_OVERRIDE_FOR_HTTP_REQUESTS` | — | Override the full web backend URL; takes precedence over protocol and host |
 | `AGENTIC_SEARCH_MCP_SERVERS` | — | MCP servers the **web process** pulls tools from, as `name=url` pairs. Unset disables it |
 | `AGENTIC_SEARCH_MCP_TOKEN` | — | Bearer token sent to those servers |
+| `AGENTIC_SEARCH_MCP_AGENT_EXCLUDE` | `ask_agentic_search` | Remote tools withheld from the agent because they re-enter an agent (comma-separated; replaces the default) |
+| `MCP_WEB_SEARCH_PROVIDER` | `google` | Provider behind the server's `search_web` tool: `google`, `serpapi`, or `serper` |
 
 
 ## Native domain operations

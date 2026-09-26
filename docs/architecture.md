@@ -46,11 +46,12 @@ src/
     ├── resilience/              # Circuit breakers (SerpAPI, browser search, HTTP reranker, remote LLM servers)
     ├── retrieval/               # Retrieval core: service, fusion, query transforms, routers
     ├── routing/                 # Routing layer: per-query router (heuristic default, optional logical/semantic strategies)
-    ├── search/                  # Search-vs-chat flow classification
+    ├── search/                  # SearchPipeline stages (context, retrieve, rank) + query processing
     ├── tools/                   # Internal tool registry
     ├── utils/                   # License, encryption, telemetry utilities
     └── servers/
         ├── app.py               # Shared helpers for the standalone search servers
+        ├── _auth.py             # Shared admin-only dependency factory
         ├── sse.py               # The one SSE framer: anti-buffering headers + idle keepalive
         ├── admin_surface/       # Admin summary endpoint
         ├── analytics/           # Usage analytics API
@@ -175,7 +176,7 @@ python -m examples.run_agentic_search --mode search \
 curl -sN -X POST http://localhost:7860/api/agent/stream \
   -H "Content-Type: application/json" \
   -d '{"query": "Compare dense and sparse retrieval", "mode": "search_agent", "top_k": 5}'
-  # data: {"type": "progress", "turn": 1, "text": "search_routing_tool · 5 docs"}
+  # data: {"type": "progress", "turn": 1, "text": "search · 5 docs"}
   # data: {"type": "progress", "turn": 2, "text": "writing answer…"}
   # data: {"type": "answer", "text": "..."}
   # data: {"type": "done", "intent": "search", "citations": ["[D1]"], "documents": [...]}
@@ -190,7 +191,7 @@ The backend auto-classifies every query and dispatches to the right agent withou
 |--------|-----------|---------|
 | `search` | Direct-first search pipeline (`SearchAgentLoop` only in explicit/escalated paths) | Query needs external retrieval or a bare entity lookup (e.g. `FAISS`) |
 | `chat` | `AgenticRAGLoop` | Descriptive/conversational questions and generative asks — grounded synthesis |
-| `tool` | `ToolAgentLoop` | Explicit tool use (`search_routing_tool`, custom tools) |
+| `tool` | `ToolAgentLoop` | Explicit tool use (`search`, `web_search`, public-data and custom tools) |
 
 The router is `recognize_intent` (`src/internal/servers/web/intent/recognizer.py`), dispatched by `_run_auto_routed` in `src/internal/servers/web/app.py`. It returns strategy, clarification, and metadata together. Its precedence is explicit source, deterministic regex cues, optional margin-gated canonical similarity, deterministic LLM classifier, then rule-based fallback. `recognize_intent` runs off the event loop (`asyncio.to_thread`), and the LLM classifier gives up after `llm.route_classifier_timeout_seconds` (default `3.0`, see [timeouts](configuration/timeouts.md)) and hands over to the rules. Bare terms route to `search`; input with no signal at all triggers a clarification question instead of guessing (see [API request routing](request-routing.md#auto-router-decision-order)).
 
@@ -227,7 +228,7 @@ The local policy model is not the fallback for missing evidence on the default u
 
 There are three independent routing layers: the web request strategy (`chat` / `search` / `tool`), the web source provider (`auto` / `retrieval` / web providers), and the internal retrieval backend router (sparse/dense/hybrid/etc.). See [API request routing](request-routing.md) for the detailed contract and [Retrieval](retrieval.md#routing-and-query-construction) for backend routing.
 
-**RAG-Fusion in tool mode** — `search_routing_tool` aggregates results from all configured retrieval sources (local index, Google, SerpAPI) in a single call, deduplicates by URL, and returns a ranked list with `[D1]`/`[D2]` citation labels.
+**Search tools in tool mode** — `search` retrieves from the local corpus, enforcing the caller's access filters on what comes back, and `web_search` runs 1–5 queries through the SerpAPI → browser cascade and deduplicates by URL. Both return `{title, content, url}` records, which the UI shows as source cards (see [Tool engine](tool-engine.md)).
 
 **SSE streaming with progress events** — All three agent paths emit SSE events:
 
@@ -239,7 +240,7 @@ There are three independent routing layers: the web request strategy (`chat` / `
 | `approval_required` | An approval-gated tool wants to run | `{type, approval}` |
 | `escalation_required` | A side-effecting (or unannotated) tool call failed; the user picks retry / skip / cancel via `POST /api/agent/escalations/{id}` | `{type, escalation}` |
 | `answer` | Answer token chunks | `{type, text}` |
-| `done` | Stream complete | `{type, session_id, citations, documents, intent, tool_calls}` |
+| `done` | Stream complete | `{type, request_id, session_id, citations, documents, intent, clarification, route, route_degraded, tool_calls, control_flow_trace}` |
 | `error` | Unhandled exception | `{type, detail}` |
 
 The `on_turn` callback (`OnTurnCallback` in `src/agents/core/base.py`) is the hook that feeds per-turn events into the run's event queue from inside the agent loop. That queue belongs to `AgentRunDriver` (`src/internal/servers/web/run_driver.py`), which is transport-neutral: `/api/agent/stream` frames its events as SSE, and `/api/agent/ws` carries the same events over a WebSocket (authenticated with a single-use token from `POST /api/agent/ws-token`, one run per socket, every event tagged with `run_id`; the client sends `session.start`, `approval.submit`, `escalation.submit`, `session.cancel` or `ping`).

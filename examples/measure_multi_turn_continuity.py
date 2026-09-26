@@ -20,7 +20,9 @@ Run:
 
     python -m examples.measure_multi_turn_continuity
 
-``--routers rules --retrievers tfidf`` runs without sentence-transformers.
+Needs sentence-transformers: the gated condition always loads the e5 gate
+embedder and exits without it, whichever ``--routers`` / ``--retrievers`` are
+chosen.
 """
 
 from __future__ import annotations

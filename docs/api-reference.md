@@ -104,17 +104,17 @@ curl -s -X POST http://localhost:7860/api/agent \
 # → search
 ```
 
-**Stream the same over SSE** (`POST /api/agent/stream`) — emits one `progress` event after each agent turn (via the `on_turn` callback), a `claim` event for each claim as it is verified, then `answer`, then `done` (which carries `intent`, `citations`, and `documents`; the frontend feeds `intent` to `setIntent`). The non-streaming `/api/agent` is unchanged:
+**Stream the same over SSE** (`POST /api/agent/stream`) — emits one `progress` event after each agent turn (via the `on_turn` callback), a `claim` event for each claim as it is verified, then `answer`, then `done` (which carries `request_id`, `session_id`, `citations`, `documents`, `intent`, `clarification`, `route`, `route_degraded`, `tool_calls`, and `control_flow_trace`; the frontend feeds `intent` to `setIntent`). The non-streaming `/api/agent` is unchanged:
 ```bash
 curl -sN -X POST http://localhost:7860/api/agent/stream \
   -H "Content-Type: application/json" \
   -d '{"query": "Compare dense and sparse retrieval", "top_k": 5}'
 # Server-Sent Events (one JSON object per `data:` line):
-# data: {"type": "progress", "turn": 1, "text": "search_routing_tool · 5 docs"}
+# data: {"type": "progress", "turn": 1, "text": "search · 5 docs"}
 # data: {"type": "progress", "turn": 2, "text": "writing answer…"}
 # data: {"type": "claim",    "text": "Dense retrieval embeds the query into a vector space."}
 # data: {"type": "answer",   "text": "Dense retrieval embeds the query …"}
-# data: {"type": "done",     "session_id": "...", "intent": "chat", "citations": ["[D1]"], "documents": [...]}
+# data: {"type": "done",     "request_id": "...", "session_id": "...", "intent": "chat", "route": "chat", "citations": ["[D1]"], "documents": [...], ...}
 ```
 On failure the stream yields `data: {"type": "error", "detail": "..."}` instead of `done`, which `streamAgent` surfaces as the error banner.
 
