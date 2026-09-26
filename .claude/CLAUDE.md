@@ -152,7 +152,7 @@ For production, `npm run build` produces `web/dist`; the FastAPI app serves it a
 ```bash
 pytest                           # unit + regression (default)
 pytest tests/unit/test_agent_loop.py -v   # single test file
-pytest tests/integration/        # integration tests — requires live Postgres/Redis stack
+pytest tests/integration/        # needs live Postgres/Redis; most of it targets removed endpoints (python -m examples.audit_integration_endpoints)
 ```
 
 ### Linting
@@ -176,7 +176,7 @@ python3 -m examples.run_agentic_search \
 python3 -m examples.run_agentic_search \
   --mode search --question "Compare dense and sparse retrieval" \
   --model meta-llama/Llama-3.1-8B-Instruct \
-  --vllm_url http://localhost:8080 --search_url http://localhost:8001/retrieve
+  --server_url http://localhost:8080 --search_url http://localhost:8001/retrieve
 ```
 
 Modes: `single` (PlainGenerationLoop), `search` (SearchAgentLoop), `tool` (ToolAgentLoop).
@@ -203,7 +203,7 @@ not under `src/model/post_training/`).
 Web search (`src/internal/servers/web_search/`):
 - `google.py` — Google Custom Search API proxy (requires `GOOGLE_API_KEY` + `GOOGLE_CSE_ID`)
 - `serp.py` — SerpAPI proxy (requires `SERP_API_KEY`)
-- `browser.py` — playwright-cli browser automation; no API key needed, slower (~5–10s/query)
+- `browser.py` — playwright-cli browser automation; no API key needed, slower (~30–50s/query)
 
 **2. Web backend** (`src/internal/servers/web/app.py`)
 FastAPI app that exposes `POST /api/agent`. On each request it:
