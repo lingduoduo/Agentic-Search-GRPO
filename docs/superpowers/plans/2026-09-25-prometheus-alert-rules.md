@@ -30,7 +30,7 @@ checks coverage and metric names without it.
 
 ### Task 1: Tests first (red)
 
-- [ ] **Write the tests.** Write `deploy/prometheus/agentic-search-alerts.test.yml`
+- [x] **Write the tests.** Write `deploy/prometheus/agentic-search-alerts.test.yml`
   with firing and quiet cases for all six alerts. Write
   `tests/unit/test_prometheus_alert_rules.py`:
   - `promtool check rules` / `test rules`, skipped without promtool;
@@ -39,18 +39,18 @@ checks coverage and metric names without it.
   - a metric-name drift test, which parses `agentic_search_[a-z_]+` from the
     rules and compares it with the names declared in `prometheus.py`,
     allowing the `_sum`, `_count` and `_bucket` suffixes of histograms.
-- [ ] **Run them.** Expect them to fail, because the rules file is missing.
+- [x] **Run them.** Expect them to fail, because the rules file is missing.
 
 ### Task 2: The rules (green)
 
-- [ ] **Write the rules.** Write `deploy/prometheus/agentic-search-alerts.yml`
+- [x] **Write the rules.** Write `deploy/prometheus/agentic-search-alerts.yml`
   per the spec table.
-- [ ] **Run them.** Run `promtool check rules`, `promtool test rules`, and
+- [x] **Run them.** Run `promtool check rules`, `promtool test rules`, and
   the pytest wrapper. Expect them to pass.
-- [ ] **Mutation checks.** These are in the spec. Restore after each.
+- [x] **Mutation checks.** These are in the spec. Restore after each.
 
 ### Task 3: Docs and verification
 
-- [ ] **Docs.** Add the Alerts section to `docs/observability-metrics.md`.
-- [ ] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
+- [x] **Docs.** Add the Alerts section to `docs/observability-metrics.md`.
+- [x] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
   Get a review, then open the PR.
