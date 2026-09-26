@@ -40,6 +40,23 @@ the right architecture automatically. The rollback handle (`sha-`) is
 unchanged. `docs/deploy.md` drops the "images are `linux/amd64`" limitation
 and notes both platforms.
 
+## Fix folded in: tags and labels name the tested commit
+
+`docker/metadata-action`'s `type=sha` tag and its `revision` label read
+`github.sha`. For a `workflow_run` event, that is the **tip of `main` when
+the publish starts**, not the commit CI tested.
+
+Since #663, a merge landing between CI finishing and the publish starting
+would tag commit A's image `sha-B`, so the rollback handle would name the
+wrong code. The first publish was correct only because nothing else had
+merged. The fix:
+
+- **The tag.** It is now explicit:
+  `type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}`.
+- **The labels.** The `build` job's metadata uses `context: git`, so they come
+  from the checked-out, tested commit.
+- **The test.** It pins both.
+
 ## Out of scope
 
 - More platforms, for example arm/v7.
