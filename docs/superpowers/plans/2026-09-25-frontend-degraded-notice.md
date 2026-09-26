@@ -59,7 +59,7 @@
 **Interfaces:**
 - Produces: `ConversationTurn.degraded?: string | null`; `done` events of `ChatStreamEvent` and `ToolStreamEvent` with `degraded?: string | null`; `Transcript` renders `<p className="degraded-notice" role="status" title={reason}>⚠ Model unavailable — degraded answer</p>` for an assistant turn with truthy `degraded`.
 
-- [ ] **Step 1: Write the failing tests** (append inside the `describe("ChatView", ...)` block)
+- [x] **Step 1: Write the failing tests** (append inside the `describe("ChatView", ...)` block)
 
 ```tsx
   function streamOnce(done: Record<string, unknown>, text = "answer text") {
@@ -124,12 +124,12 @@
 
 Also add `beforeEach(() => vi.restoreAllMocks());` at the top of the describe (import `beforeEach`) so spies do not leak between the new tests.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run (from `web/`): `npx vitest run src/components/__tests__/ChatView.test.tsx`
 Expected: "marks a degraded answer…" and "keeps the notice…" FAIL (no `status` role); the two no-notice tests pass already. Typecheck of the `degraded` spread is not enforced by vitest.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `web/src/types.ts`:
 
@@ -186,11 +186,11 @@ In `ConversationTurn`, after `pending?: boolean;`:
 }
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `npx vitest run src/components/__tests__/ChatView.test.tsx` → all PASS. Then `npm run typecheck` → exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/types.ts web/src/components/Transcript.tsx web/src/components/ChatView.tsx web/src/styles.css web/src/components/__tests__/ChatView.test.tsx
@@ -206,7 +206,7 @@ git commit -m "Chat marks a degraded answer with a notice"
 **Interfaces:**
 - Consumes: `ToolStreamEvent` `done.degraded?: string | null`, `ConversationTurn.degraded`, and the Transcript notice from Task 1.
 
-- [ ] **Step 1: Write the failing tests** (new describe block at the end of the file)
+- [x] **Step 1: Write the failing tests** (new describe block at the end of the file)
 
 ```tsx
 describe("ToolAgentView degraded notice", () => {
@@ -264,22 +264,22 @@ describe("ToolAgentView degraded notice", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run src/components/__tests__/ToolAgentView.test.tsx`
 Expected: "marks a degraded answer…" FAIL (view drops `degraded`).
 
-- [ ] **Step 3: Implement** — `ToolAgentView.tsx` `done` branch:
+- [x] **Step 3: Implement** — `ToolAgentView.tsx` `done` branch:
 
 ```tsx
           patchLastAssistant((t) => ({ ...t, pending: false, degraded: e.degraded ?? null }));
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run src/components/__tests__/ToolAgentView.test.tsx` → all PASS (including the existing truncation tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/components/ToolAgentView.tsx web/src/components/__tests__/ToolAgentView.test.tsx
@@ -288,5 +288,5 @@ git commit -m "Tool agent marks a degraded answer with a notice"
 
 ### Task 3: Mutation check and final verification
 
-- [ ] **Step 1:** Remove the notice render block from `Transcript.tsx`; run `npx vitest run src/components/__tests__/ChatView.test.tsx src/components/__tests__/ToolAgentView.test.tsx`. Expected: the three "marks a degraded answer" / "keeps the notice" tests FAIL. Restore with `git checkout web/src/components/Transcript.tsx`; confirm `git diff` is empty.
-- [ ] **Step 2:** From `web/`: `npm run typecheck` (exit 0) and `npm run test:unit` (all pass). From the worktree root: `git diff --check origin/main...HEAD` (no output).
+- [x] **Step 1:** Remove the notice render block from `Transcript.tsx`; run `npx vitest run src/components/__tests__/ChatView.test.tsx src/components/__tests__/ToolAgentView.test.tsx`. Expected: the three "marks a degraded answer" / "keeps the notice" tests FAIL. Restore with `git checkout web/src/components/Transcript.tsx`; confirm `git diff` is empty.
+- [x] **Step 2:** From `web/`: `npm run typecheck` (exit 0) and `npm run test:unit` (all pass). From the worktree root: `git diff --check origin/main...HEAD` (no output).
