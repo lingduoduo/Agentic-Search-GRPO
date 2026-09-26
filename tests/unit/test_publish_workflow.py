@@ -1,5 +1,7 @@
 """The image publish workflow: only CI-passed main commits and release tags,
-least privilege, immutable sha tags (spec: 2026-09-25-publish-images-ghcr-design.md)."""
+least privilege, immutable sha tags, one multi-arch manifest built natively per
+platform (specs: 2026-09-25-publish-images-ghcr-design.md,
+2026-09-25-multi-arch-images-design.md)."""
 
 from __future__ import annotations
 
@@ -24,15 +26,25 @@ def _triggers() -> dict:
     return doc.get("on", doc.get(True))  # PyYAML reads the bare key `on` as True
 
 
-def _steps() -> list[dict]:
-    (job,) = _workflow()["jobs"].values()
-    return job["steps"]
+def _job(name: str) -> dict:
+    jobs = _workflow()["jobs"]
+    assert set(jobs) == {"build", "merge"}
+    return jobs[name]
 
 
-def _step(uses_prefix: str) -> dict:
-    matches = [s for s in _steps() if str(s.get("uses", "")).startswith(uses_prefix)]
-    assert len(matches) == 1, uses_prefix
+def _step(job: str, uses_prefix: str) -> dict:
+    matches = [
+        s for s in _job(job)["steps"] if str(s.get("uses", "")).startswith(uses_prefix)
+    ]
+    assert len(matches) == 1, (job, uses_prefix)
     return matches[0]
+
+
+def _run_script(job: str) -> str:
+    return "\n".join(s.get("run", "") for s in _job(job)["steps"])
+
+
+# --- when it publishes ------------------------------------------------------
 
 
 def test_publishes_only_ci_passed_main_commits_and_release_tags():
@@ -51,15 +63,13 @@ def test_never_publishes_from_a_pull_request():
 
 
 def test_a_main_build_requires_ci_success():
-    (job,) = _workflow()["jobs"].values()
-    condition = job["if"]
+    condition = _job("build")["if"]
     assert "github.event.workflow_run.conclusion == 'success'" in condition
     assert "github.event_name == 'push'" in condition
 
 
 def test_checks_out_the_commit_ci_tested_not_the_branch_tip():
-    checkout = _step("actions/checkout@")
-    ref = checkout["with"]["ref"]
+    ref = _step("build", "actions/checkout@")["with"]["ref"]
     assert "github.event.workflow_run.head_sha" in ref
     assert "github.sha" in ref  # tag pushes have no workflow_run payload
 
@@ -68,21 +78,69 @@ def test_least_privilege_permissions():
     assert _workflow()["permissions"] == {"contents": "read", "packages": "write"}
 
 
-def test_pushes_immutable_sha_tags_of_the_root_dockerfile():
-    meta = _step("docker/metadata-action@")["with"]
-    assert meta["images"].strip() == IMAGE
-    tags = meta["tags"]
-    assert "type=sha,format=long" in tags
-    assert "type=semver,pattern={{version}}" in tags
+# --- build: one native leg per platform ----------------------------------------
 
-    build = _step("docker/build-push-action@")["with"]
-    assert build["push"] is True
+
+def test_builds_each_platform_natively_on_its_own_runner():
+    build = _job("build")
+    legs = {
+        (leg["platform"], leg["runner"])
+        for leg in build["strategy"]["matrix"]["include"]
+    }
+    assert legs == {
+        ("linux/amd64", "ubuntu-latest"),
+        ("linux/arm64", "ubuntu-24.04-arm"),
+    }
+    assert build["runs-on"] == "${{ matrix.runner }}"
+    uses = [str(s.get("uses", "")) for s in build["steps"]]
+    assert not any(u.startswith("docker/setup-qemu-action") for u in uses), (
+        "no emulation"
+    )
+
+
+def test_each_leg_pushes_the_root_dockerfile_by_digest():
+    build = _step("build", "docker/build-push-action@")["with"]
+    assert build["platforms"] == "${{ matrix.platform }}"
     assert build["context"] == "."
     assert build.get("file", "./Dockerfile") in {"Dockerfile", "./Dockerfile"}
-    assert "steps.meta.outputs.tags" in build["tags"]
+    assert "push-by-digest=true" in build["outputs"]
+    assert "push=true" in build["outputs"]
 
-    login = _step("docker/login-action@")["with"]
+    # The revision label comes from the checked-out (tested) commit, not
+    # github.sha, which for workflow_run is the moving branch tip.
+    assert _step("build", "docker/metadata-action@")["with"].get("context") == "git"
+
+    upload = _step("build", "actions/upload-artifact@")["with"]
+    assert upload["name"].startswith("digests-")
+
+    login = _step("build", "docker/login-action@")["with"]
     assert login["registry"] == "ghcr.io"
+    assert login["password"] == "${{ secrets.GITHUB_TOKEN }}"
+
+
+# --- merge: one tagged manifest list ----------------------------------------
+
+
+def test_merge_waits_for_every_platform():
+    assert _job("merge")["needs"] in ("build", ["build"])
+
+
+def test_merge_publishes_immutable_sha_tags_as_one_manifest():
+    meta = _step("merge", "docker/metadata-action@")["with"]
+    assert meta["images"].strip() == IMAGE
+    # The rollback handle names the commit CI tested. metadata-action's
+    # type=sha reads github.sha, which for workflow_run is the branch tip when
+    # the publish starts -- a later merge would mis-tag this image.
+    assert "type=sha" not in meta["tags"]
+    assert (
+        "type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}"
+        in meta["tags"]
+    )
+    assert "type=semver,pattern={{version}}" in meta["tags"]
+    _step("merge", "actions/download-artifact@")
+    assert "docker buildx imagetools create" in _run_script("merge")
+
+    login = _step("merge", "docker/login-action@")["with"]
     assert login["password"] == "${{ secrets.GITHUB_TOKEN }}"
 
 
