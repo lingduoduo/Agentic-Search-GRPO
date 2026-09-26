@@ -208,3 +208,44 @@ def test_ready_503_when_store_ping_hangs_past_the_probe_timeout(tmp_path, monkey
         "error": "TimeoutError",
     }
     store.close()
+
+
+# --- readiness recorded as metrics ---------------------------------------
+
+
+def _ready_metric(name, labels=None):
+    from src.internal.observability.prometheus import REGISTRY
+
+    return REGISTRY.get_sample_value(name, labels or {})
+
+
+def test_ready_probe_records_readiness_metrics(tmp_path, monkeypatch):
+    import time
+
+    _stub_retrieval(monkeypatch, _ok)
+    before = time.time()
+    assert TestClient(_ready_app(tmp_path)).get("/ready").status_code == 200
+
+    assert _ready_metric("agentic_search_ready") == 1
+    assert _ready_metric("agentic_search_ready_check", {"check": "store"}) == 1
+    assert _ready_metric("agentic_search_ready_check", {"check": "retrieval"}) == 1
+    assert _ready_metric("agentic_search_ready_checked_timestamp_seconds") >= before
+
+
+def test_a_failed_check_is_recorded_per_check(tmp_path, monkeypatch):
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    _stub_retrieval(monkeypatch, refuse)
+    assert TestClient(_ready_app(tmp_path)).get("/ready").status_code == 503
+
+    assert _ready_metric("agentic_search_ready") == 0
+    assert _ready_metric("agentic_search_ready_check", {"check": "retrieval"}) == 0
+    assert _ready_metric("agentic_search_ready_check", {"check": "store"}) == 1
+
+
+def test_observe_readiness_rejects_an_unknown_check():
+    from src.internal.observability.prometheus import observe_readiness
+
+    with pytest.raises(ValueError):
+        observe_readiness(True, {"dns": True})

@@ -132,3 +132,77 @@ def test_observe_stale_serve_rejects_an_unknown_source():
     with pytest.raises(ValueError):
         observe_stale_serve("rerank")
     assert _stale("rerank") == 0.0
+
+
+# --- circuit-breaker state (collected at scrape time) ------------------------
+
+
+def _breaker_sample(name: str, breaker: str) -> float | None:
+    from src.internal.observability.prometheus import REGISTRY
+
+    return REGISTRY.get_sample_value(name, {"breaker": breaker})
+
+
+def _open(breaker_name: str) -> None:
+    from src.internal.resilience.circuit_breaker import get_breaker
+
+    breaker = get_breaker(breaker_name)
+    for _ in range(5):  # [circuit_breaker] failure_threshold
+        breaker.record_failure()
+
+
+def test_no_breakers_export_no_breaker_series():
+    assert _breaker_sample("agentic_search_circuit_breaker_open", "serpapi") is None
+
+
+def test_an_open_breaker_exports_open_and_its_failures():
+    _open("serpapi")
+    assert _breaker_sample("agentic_search_circuit_breaker_open", "serpapi") == 1
+    assert (
+        _breaker_sample(
+            "agentic_search_circuit_breaker_consecutive_failures", "serpapi"
+        )
+        == 5
+    )
+
+
+def test_a_closed_breaker_exports_zero():
+    from src.internal.resilience.circuit_breaker import get_breaker
+
+    get_breaker("rerank").record_failure()
+    assert _breaker_sample("agentic_search_circuit_breaker_open", "rerank") == 0
+    assert (
+        _breaker_sample("agentic_search_circuit_breaker_consecutive_failures", "rerank")
+        == 1
+    )
+
+
+def test_remote_llm_breakers_collapse_to_their_family_without_urls():
+    from src.internal.observability.prometheus import REGISTRY
+    from src.internal.resilience.circuit_breaker import get_breaker
+
+    _open("remote_llm:http://gpu-a:8080")
+    get_breaker("remote_llm:http://gpu-b:8080").record_success()
+
+    assert _breaker_sample("agentic_search_circuit_breaker_open", "remote_llm") == 1
+    labels = [
+        sample.labels.get("breaker", "")
+        for metric in REGISTRY.collect()
+        if metric.name.startswith("agentic_search_circuit_breaker")
+        for sample in metric.samples
+    ]
+    assert labels and not any("http" in label or ":" in label for label in labels)
+
+
+def test_a_half_open_breaker_counts_as_open():
+    from src.internal.resilience import circuit_breaker as cb
+
+    breaker = cb.CircuitBreaker(
+        "browser_search", failure_threshold=1, open_seconds=0.0, clock=lambda: 0.0
+    )
+    breaker.record_failure()
+    breaker.before_call()  # open_seconds elapsed: admits the half-open probe
+    assert breaker.snapshot().state == "half_open"
+    with cb._registry_lock:
+        cb._registry["browser_search"] = breaker
+    assert _breaker_sample("agentic_search_circuit_breaker_open", "browser_search") == 1

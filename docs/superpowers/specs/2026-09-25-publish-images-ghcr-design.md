@@ -39,10 +39,11 @@ It carries the standard OCI labels (`org.opencontainers.image.source`,
 GitHub Actions build cache. Concurrency is one publish per ref, and a newer run
 does not cancel an older one mid-push.
 
-**Package visibility.** New GHCR container packages are created private.
-Because the repository is public, the runbook's first step after the first
-publish is to **check** the package's visibility at the package settings page.
-The workflow cannot enforce it with `GITHUB_TOKEN`.
+**Package visibility.** *Corrected after the first publish.* This spec
+assumed new GHCR packages start private, but a package linked to a public
+repository inherits **public** visibility: the first image was anonymously
+pullable. The runbook tells the owner to switch it to private once, in the
+package settings. The workflow cannot set it with `GITHUB_TOKEN`.
 
 ### 2. Compose can run a published image
 

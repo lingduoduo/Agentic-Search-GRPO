@@ -19,9 +19,11 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
     Counter,
+    Gauge,
     Histogram,
     generate_latest,
 )
+from prometheus_client.core import GaugeMetricFamily
 
 from src.internal.observability.stage_metrics import STAGES, RequestStageMetrics
 
@@ -71,6 +73,79 @@ def observe_stages(metrics: RequestStageMetrics | None) -> None:
         if getattr(metrics, f"{stage}_calls"):
             seconds = getattr(metrics, f"{stage}_ms") / 1000.0
             _STAGE_SECONDS.labels(stage).observe(seconds)
+
+
+_READY = Gauge(
+    "agentic_search_ready",
+    "1 when the last GET /ready found the process ready, else 0.",
+    registry=REGISTRY,
+)
+_READY_CHECK = Gauge(
+    "agentic_search_ready_check",
+    "Per-check result of the last GET /ready (1 ok, 0 failed).",
+    ("check",),
+    registry=REGISTRY,
+)
+_READY_CHECKED_AT = Gauge(
+    "agentic_search_ready_checked_timestamp_seconds",
+    "Unix time of the last GET /ready; alerts ignore a stale result.",
+    registry=REGISTRY,
+)
+_READY_CHECKS = frozenset({"store", "retrieval"})
+
+
+def observe_readiness(ready: bool, checks: dict[str, bool]) -> None:
+    """Record one /ready probe. A scrape never runs the checks itself: that
+    would put network calls inside Prometheus's collection."""
+    unknown = set(checks) - _READY_CHECKS
+    if unknown:
+        raise ValueError(f"Unknown readiness check: {sorted(unknown)}")
+    _READY.set(1 if ready else 0)
+    for name, ok in checks.items():
+        _READY_CHECK.labels(name).set(1 if ok else 0)
+    _READY_CHECKED_AT.set_to_current_time()
+
+
+class _BreakerStateCollector:
+    """Circuit-breaker state, read from the breaker registry at scrape time.
+
+    Labelled by breaker *family* (the name before the first ``:``) because
+    per-server ``remote_llm:<base_url>`` breakers are named by URL and labels
+    never carry URLs; a family reports its worst instance.
+    """
+
+    def collect(self):
+        # Imported here: the breaker module reads timeout policy, and this
+        # module is imported by low-level retrieval code.
+        from src.internal.resilience.circuit_breaker import breaker_snapshots
+
+        worst: dict[str, tuple[int, int]] = {}
+        for snap in breaker_snapshots():
+            family = snap.name.split(":", 1)[0]
+            is_open = 1 if snap.state in ("open", "half_open") else 0
+            prev_open, prev_failures = worst.get(family, (0, 0))
+            worst[family] = (
+                max(prev_open, is_open),
+                max(prev_failures, snap.consecutive_failures),
+            )
+        open_family = GaugeMetricFamily(
+            "agentic_search_circuit_breaker_open",
+            "1 while a breaker of this family is open or half-open (worst instance).",
+            labels=["breaker"],
+        )
+        failures_family = GaugeMetricFamily(
+            "agentic_search_circuit_breaker_consecutive_failures",
+            "Consecutive failures of this breaker family (worst instance).",
+            labels=["breaker"],
+        )
+        for family, (is_open, failures) in sorted(worst.items()):
+            open_family.add_metric([family], is_open)
+            failures_family.add_metric([family], failures)
+        yield open_family
+        yield failures_family
+
+
+REGISTRY.register(_BreakerStateCollector())
 
 
 def render_latest() -> tuple[bytes, str]:

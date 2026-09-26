@@ -98,3 +98,29 @@ groups:
         annotations:
           summary: "{{ $labels.agent }} agent runs average more than 8 decision rounds"
           description: Completed {{ $labels.agent }} runs have averaged more than 8 model generations each for 30 minutes.
+
+      # Circuit-breaker state is read at scrape time and labelled by breaker
+      # family (serpapi, browser_search, rerank, remote_llm), worst instance.
+      - alert: CircuitBreakerOpen
+        expr: max by (breaker) (agentic_search_circuit_breaker_open) == 1
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The {{ $labels.breaker }} circuit breaker is open"
+          description: The {{ $labels.breaker }} circuit breaker has been open for 5 minutes; calls to that dependency are failing fast.
+
+      # Recorded by each GET /ready probe -- something (an orchestrator probe,
+      # a blackbox exporter) must call /ready. Fires only while the last probe
+      # is fresh, so a stale not-ready result that nothing refreshed never pages.
+      - alert: NotReady
+        expr: |
+          agentic_search_ready == 0
+          and on ()
+          (time() - agentic_search_ready_checked_timestamp_seconds) < 300
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Agentic Search is not ready
+          description: GET /ready has reported not ready for 5 minutes; the store or the retrieval server is unreachable (see agentic_search_ready_check).

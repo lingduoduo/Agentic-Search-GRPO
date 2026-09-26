@@ -163,6 +163,7 @@ from src.internal.memory.working import (
 )
 from src.internal.observability import stage_metrics as _stage_metrics
 from src.internal.observability.stage_metrics import STAGE_LATENCY
+from src.internal.observability.prometheus import observe_readiness
 from src.internal.observability.prometheus import observe_stages
 from src.internal.observability.prometheus import render_latest
 from src.internal.servers.web.readiness import check_readiness
@@ -1663,6 +1664,7 @@ def create_web_app(
     @app.get("/ready")
     async def readiness_probe() -> JSONResponse:
         ready, checks = await check_readiness(db, settings.search_url)
+        observe_readiness(ready, {name: check["ok"] for name, check in checks.items()})
         return JSONResponse(
             {"status": "ready" if ready else "not_ready", "checks": checks},
             status_code=200 if ready else 503,

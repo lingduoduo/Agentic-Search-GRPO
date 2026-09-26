@@ -32,6 +32,11 @@ and tool timeout percentage.
 | `agentic_search_agent_decision_rounds` | histogram (buckets `0,1,2,3,5,8,13,21,34,55,+Inf`) | `agent`, `outcome` | Attempted model generations per terminated run; one observation per run, same labels as the run counter |
 | `agentic_search_tool_attempts_total` | counter | `outcome` (`success`, `timeout`, `error`, `cancelled`) | One per validated tool-registry execution |
 | `agentic_search_stale_cache_serves_total` | counter | `source` (`web`, `retrieval`) | One per failed live lookup answered from a stale serving-cache entry |
+| `agentic_search_circuit_breaker_open` | gauge | `breaker` (`serpapi`, `browser_search`, `rerank`, `remote_llm`) | 1 while a breaker of that family is open or half-open. Read at scrape time; a family reports its worst instance, so per-server `remote_llm:<url>` breakers never put a URL in a label |
+| `agentic_search_circuit_breaker_consecutive_failures` | gauge | `breaker` | Consecutive failures, worst instance of the family |
+| `agentic_search_ready` | gauge | — | 1 or 0, the result of the last `GET /ready`. Something (an orchestrator probe, a blackbox exporter) must call `/ready`: a scrape never runs the checks |
+| `agentic_search_ready_check` | gauge | `check` (`store`, `retrieval`) | Per-check result of the last `GET /ready` |
+| `agentic_search_ready_checked_timestamp_seconds` | gauge | — | Unix time of the last `GET /ready` |
 
 ### Semantics and coverage
 
@@ -205,6 +210,8 @@ alert rules. To use it:
 | `HighToolTimeoutRate` | Tool timeouts are above 20 % of executed attempts | 15m | ticket |
 | `StaleCacheServing` | Any stale-cache serve, per `source` (a hidden outage) | 10m | ticket |
 | `HighAgentDecisionRounds` | Completed runs average more than 8 rounds, per agent | 30m | ticket |
+| `CircuitBreakerOpen` | A breaker family is open, per `breaker` | 5m | ticket |
+| `NotReady` | The last `/ready` said not ready **and** that probe is under 5 minutes old | 5m | page |
 
 Percentage alerts never zero-fill their denominator, so zero traffic cannot
 fire them. The HTTP traffic floor stops a single failure during an idle hour
@@ -218,15 +225,18 @@ it with:
 cd deploy/prometheus && promtool test rules agentic-search-alerts.test.yml
 ```
 
-`tests/unit/test_prometheus_alert_rules.py` runs promtool when it is on
-`PATH`. Without promtool it still checks three things:
+The `Prometheus alert rules` CI job runs these tests with a checksum-pinned
+promtool. `tests/unit/test_prometheus_alert_rules.py` runs promtool when it
+is on `PATH`. Without promtool it still checks three things:
 
 - every alert has a severity, a summary and a description;
 - every alert has both a firing and a quiet test;
 - every metric a rule uses is one the exporter declares.
 
-**Not covered yet.** `/ready` and circuit-breaker state are not Prometheus
-metrics, so neither has an alert.
+**Staleness.** `NotReady` depends on something calling `/ready`. It stays
+quiet when the last probe is older than 5 minutes, so a stale not-ready result
+nobody refreshed never pages. Alert on probe freshness separately if `/ready`
+is not polled.
 
 ## Also available
 
