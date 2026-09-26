@@ -65,10 +65,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/agentic-search
-          # Labels (revision, created) from the checked-out commit: the default
-          # `workflow` context reads github.sha, which for workflow_run is the
-          # branch tip when the publish starts, not the commit CI tested.
-          context: git
+          # The revision label names the commit CI tested. The default reads
+          # github.sha -- for workflow_run, the branch tip when the publish
+          # starts. Not `context: git`: it fails on the detached HEAD a
+          # head_sha checkout leaves. A custom label overrides the default.
+          labels: |
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
 
       - id: build
         uses: docker/build-push-action@v6

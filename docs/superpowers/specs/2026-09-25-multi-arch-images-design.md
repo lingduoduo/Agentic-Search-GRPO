@@ -53,8 +53,13 @@ merged. The fix:
 
 - **The tag.** It is now explicit:
   `type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}`.
-- **The labels.** The `build` job's metadata uses `context: git`, so they come
-  from the checked-out, tested commit.
+- **The labels.** *Corrected after the first multi-arch publish.* The first
+  version used `context: git` in the `build` job's metadata. That failed on
+  the detached HEAD a `head_sha` checkout leaves ("Cannot find detached HEAD
+  ref"), so both legs failed and nothing was published. The `revision` label
+  is now set explicitly to
+  `${{ github.event.workflow_run.head_sha || github.sha }}`, as a custom label
+  that overrides the default.
 - **The test.** It pins both.
 
 ## Out of scope
