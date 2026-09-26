@@ -21,11 +21,18 @@ Images are published to `ghcr.io/<owner>/agentic-search`, for example
 workflow succeeded, and it is built from the exact commit CI tested. Pull
 requests never publish.
 
-**Package visibility.** The package is created on the first publish. The
-repository is public, so once, after the first publish, open
-`https://github.com/users/<owner>/packages/container/agentic-search/settings`
-and confirm the visibility is **private**. Pulling a private image needs
-`docker login ghcr.io` with a token that has `read:packages`.
+**Package visibility.** The package is created on the first publish. It
+inherits the visibility of the repository it is linked to, so from this public
+repository it starts **public**; this was measured on the first publish, when
+an anonymous client could pull `:main`. To make it private, once:
+
+1. Open
+   `https://github.com/users/<owner>/packages/container/agentic-search/settings`.
+2. Under **Change visibility**, choose **Private**. Later publishes keep that
+   setting.
+
+`GITHUB_TOKEN` cannot change it from the workflow. Pulling a private image
+needs `docker login ghcr.io` with a token that has `read:packages`.
 
 ## Deploy a tag
 
