@@ -9,9 +9,15 @@ Provides a singleton registry that:
 
 Usage::
 
-    from src.internal.tools.registry import tool, tool_registry
+    from src.internal.tools.registry import (
+        ResultKind, ToolEffect, tool, tool_registry,
+    )
 
-    @tool(description="Add two numbers")
+    @tool(
+        description="Add two numbers",
+        effect=ToolEffect.READ_ONLY,
+        result_kind=ResultKind.JSON,
+    )
     def add(a: int, b: int) -> int:
         return a + b
 

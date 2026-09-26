@@ -55,6 +55,9 @@ surface, parallel to `/search/*` and `/chat/*`:
   under the caller's ACL instead of failing: the answer lists what was found,
   and the response and `done` event carry `degraded: "model_unavailable"`.
   Any other failure still reports `error`.
+
+  If the client disconnects mid-stream, the run is cancelled, including any
+  tool call in flight, rather than left running with no one to receive it.
 - `GET /tool/tool-history` — past sessions for the caller (session proxy, like
   `/search/search-history`).
 
@@ -164,7 +167,10 @@ Every tool on the global registry declares `effect` (`READ_ONLY`,
 `TEXT`), `citeable` and `retries_internally`. The registry refuses a tool that
 leaves `result_kind` undeclared, is `UNSPECIFIED` without coming from MCP, or
 is `citeable` without returning `DOCUMENTS`: `POST /admin/tools/openapi`
-answers **422**, and MCP discovery logs and skips the tool. An OpenAPI
+answers **422**. MCP-discovered tools always pass: they are built with
+`result_kind=TEXT`, never citeable, and may stay `UNSPECIFIED` (so every remote
+call goes through the approval gate); discovery would log and skip one that
+failed. An OpenAPI
 operation is `READ_ONLY` for GET/HEAD/OPTIONS and `SIDE_EFFECTING` otherwise.
 
 Arguments are validated against the tool's full JSON Schema (Draft 2020-12)

@@ -901,7 +901,7 @@ class MultiQueryWebSearchTool(Tool):
         self._schema = ToolSchema(
             name="web_search",
             description=(
-                "Search the web for information. Pass multiple queries to search in parallel."
+                "Search the web for information. Pass up to 5 queries to search in parallel."
             ),
             parameters={
                 "type": "object",
@@ -912,7 +912,7 @@ class MultiQueryWebSearchTool(Tool):
                         # Each query is a paid provider call; 5 matches batch_search.
                         "minItems": 1,
                         "maxItems": 5,
-                        "description": "One or more search queries to run in parallel.",
+                        "description": "One to five search queries to run in parallel.",
                     },
                     "domain": search_domain_parameter(),
                 },
