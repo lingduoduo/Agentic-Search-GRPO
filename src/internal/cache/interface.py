@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import abc
+import math
+import time
+from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
@@ -115,14 +118,29 @@ class _InMemoryCacheLock(CacheLock):
 
 
 class InMemoryCache(CacheBackend):
-    """Thread-unsafe in-memory cache for local / test mode."""
+    """Thread-unsafe in-memory cache for local / test mode.
 
-    def __init__(self) -> None:
+    Keys may carry an expiry (``set(ex=...)`` / ``expire``), checked lazily on
+    read against *clock* (monotonic seconds), with Redis semantics.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._store: dict[str, Any] = {}
+        self._expires: dict[str, float] = {}
         self._lists: dict[str, list[bytes]] = {}
+        self._clock = clock
+
+    def _live(self, key: str) -> bool:
+        """Is *key* present and unexpired? Deletes it if it has expired."""
+        deadline = self._expires.get(key)
+        if deadline is not None and self._clock() >= deadline:
+            self.delete(key)
+        return key in self._store
 
     def get(self, key: str) -> bytes | None:
-        v = self._store.get(key)
+        if not self._live(key):
+            return None
+        v = self._store[key]
         if v is None:
             return None
         return v if isinstance(v, bytes) else str(v).encode()
@@ -134,18 +152,29 @@ class InMemoryCache(CacheBackend):
         ex: int | None = None,
     ) -> None:
         self._store[key] = value
+        if ex is None:
+            self._expires.pop(key, None)
+        else:
+            self._expires[key] = self._clock() + ex
 
     def delete(self, key: str) -> None:
         self._store.pop(key, None)
+        self._expires.pop(key, None)
 
     def exists(self, key: str) -> bool:
-        return key in self._store
+        return self._live(key)
 
     def expire(self, key: str, seconds: int) -> None:
-        pass
+        if self._live(key):
+            self._expires[key] = self._clock() + seconds
 
     def ttl(self, key: str) -> int:
-        return TTL_NO_EXPIRY if key in self._store else TTL_KEY_NOT_FOUND
+        if not self._live(key):
+            return TTL_KEY_NOT_FOUND
+        deadline = self._expires.get(key)
+        if deadline is None:
+            return TTL_NO_EXPIRY
+        return math.ceil(deadline - self._clock())
 
     def lock(self, name: str, timeout: float | None = None) -> CacheLock:
         return _InMemoryCacheLock()
