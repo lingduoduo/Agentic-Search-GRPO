@@ -9,7 +9,12 @@ code and rebuild.
 ## Image tags
 
 Images are published to `ghcr.io/<owner>/agentic-search`, for example
-`ghcr.io/lingduoduo/agentic-search`.
+`ghcr.io/lingduoduo/agentic-search`, as one multi-arch manifest per tag:
+
+- **Platforms.** Each tag covers `linux/amd64` and `linux/arm64`, each built
+  natively on its own runner. `docker pull` picks the right one for the host.
+- **Tag names.** Every `sha-` tag names the commit CI tested, as does the
+  image's `revision` label.
 
 | Tag | When | Use |
 |---|---|---|
@@ -89,4 +94,4 @@ docker run --rm -v docker_app_data:/data -v "$PWD":/backup alpine \
 
 - Deploying to a specific environment.
 - Image signing and provenance attestation.
-- Multi-architecture builds. Images are `linux/amd64`.
+- Platforms beyond `linux/amd64` and `linux/arm64`.
