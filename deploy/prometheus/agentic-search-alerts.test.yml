@@ -1,0 +1,210 @@
+# promtool test rules deploy/prometheus/agentic-search-alerts.test.yml
+#
+# Every alert has a firing case and at least one quiet case; zero traffic must
+# never fire a percentage alert. Counters are cumulative: `0+60x20` adds 60 per
+# 1m step, i.e. 1/s.
+rule_files:
+  - agentic-search-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- AgenticSearchDown -------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'up{job="agentic-search", instance="web:7860"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AgenticSearchDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              job: agentic-search
+              instance: web:7860
+            exp_annotations:
+              summary: Agentic Search web app is not being scraped
+              description: Prometheus cannot scrape the agentic-search job; the process is down or /metrics is unreachable.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="agentic-search", instance="web:7860"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AgenticSearchDown
+        exp_alerts: []
+
+  # --- HighHTTP5xxRate ---------------------------------------------------
+  # Firing: 0.2/s 5xx of 1.2/s total (16.7%), above the 0.1 req/s floor.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="2xx"}'
+        values: "0+60x20"
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="5xx"}'
+        values: "0+12x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighHTTP5xxRate
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: More than 5% of query requests are failing with 5xx
+              description: HTTP 5xx is above 5% of POST query-route traffic for 10 minutes. A 5xx is a response the server failed; streamed failures after headers are counted by the agent metrics instead.
+  # Quiet: healthy ratio (1.6%).
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="2xx"}'
+        values: "0+60x20"
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="5xx"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighHTTP5xxRate
+        exp_alerts: []
+  # Quiet: 50% errors but only ~0.03 req/s -- below the traffic floor.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="2xx"}'
+        values: "0+1x20"
+      - series: 'agentic_search_http_requests_total{method="POST", route="/api/agent", status="5xx"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighHTTP5xxRate
+        exp_alerts: []
+  # Quiet: 5xx on a non-query route (health checks) are not in the population.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_http_requests_total{method="GET", route="/ready", status="5xx"}'
+        values: "0+60x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighHTTP5xxRate
+        exp_alerts: []
+
+  # --- HighAgentErrorRate ------------------------------------------------
+  # The tool agent fails half its runs; the search agent is healthy and has no
+  # error series at all. Only the tool agent may fire.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_agent_runs_total{agent="tool", outcome="completed"}'
+        values: "0+6x20"
+      - series: 'agentic_search_agent_runs_total{agent="tool", outcome="error"}'
+        values: "0+6x20"
+      - series: 'agentic_search_agent_runs_total{agent="search", outcome="completed"}'
+        values: "0+6x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighAgentErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              agent: tool
+            exp_annotations:
+              summary: More than 10% of tool agent runs are failing
+              description: The tool agent loop raised on more than 10% of its runs for 10 minutes.
+  # Quiet: zero traffic (no series).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="agentic-search", instance="web:7860"}'
+        values: "1x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighAgentErrorRate
+        exp_alerts: []
+
+  # --- HighToolTimeoutRate -----------------------------------------------
+  # Firing: 3 timeouts per 9 executed attempts (33%).
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_tool_attempts_total{outcome="success"}'
+        values: "0+6x30"
+      - series: 'agentic_search_tool_attempts_total{outcome="timeout"}'
+        values: "0+3x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HighToolTimeoutRate
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: More than 20% of tool calls are timing out
+              description: Tool-registry attempts timed out above 20% of executed attempts for 15 minutes.
+  # Quiet: 1 in 21 (4.8%); cancelled attempts are outside the population.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_tool_attempts_total{outcome="success"}'
+        values: "0+20x30"
+      - series: 'agentic_search_tool_attempts_total{outcome="timeout"}'
+        values: "0+1x30"
+      - series: 'agentic_search_tool_attempts_total{outcome="cancelled"}'
+        values: "0+50x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HighToolTimeoutRate
+        exp_alerts: []
+  # Quiet: zero traffic.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="agentic-search", instance="web:7860"}'
+        values: "1x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HighToolTimeoutRate
+        exp_alerts: []
+
+  # --- StaleCacheServing -------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_stale_cache_serves_total{source="web"}'
+        values: "0+1x30"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: StaleCacheServing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              source: web
+            exp_annotations:
+              summary: web lookups are being answered from stale cache
+              description: Live web lookups have been failing for 10 minutes and are answered from stale serving-cache entries; the provider is likely down.
+  # Quiet: the counter exists but stopped increasing.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_stale_cache_serves_total{source="retrieval"}'
+        values: "5x30"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: StaleCacheServing
+        exp_alerts: []
+
+  # --- HighAgentDecisionRounds -------------------------------------------
+  # Firing: completed search runs average 10 rounds.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_agent_decision_rounds_sum{agent="search", outcome="completed"}'
+        values: "0+60x60"
+      - series: 'agentic_search_agent_decision_rounds_count{agent="search", outcome="completed"}'
+        values: "0+6x60"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: HighAgentDecisionRounds
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              agent: search
+            exp_annotations:
+              summary: search agent runs average more than 8 decision rounds
+              description: Completed search runs have averaged more than 8 model generations each for 30 minutes.
+  # Quiet: 2 rounds on average.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_agent_decision_rounds_sum{agent="search", outcome="completed"}'
+        values: "0+12x60"
+      - series: 'agentic_search_agent_decision_rounds_count{agent="search", outcome="completed"}'
+        values: "0+6x60"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: HighAgentDecisionRounds
+        exp_alerts: []

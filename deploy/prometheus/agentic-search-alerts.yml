@@ -1,0 +1,100 @@
+# Prometheus alert rules for the Agentic Search web app.
+#
+# Load with `rule_files: [deploy/prometheus/agentic-search-alerts.yml]`. The
+# web app must be scraped as job "agentic-search" with
+# AGENTIC_SEARCH_METRICS_ENABLED=1 (see docs/observability-metrics.md).
+#
+# Every threshold is a starting point: tune it to your traffic. Expressions
+# reuse the tested PromQL in docs/observability-metrics.md -- denominators are
+# never zero-filled, so zero traffic can never fire a percentage alert.
+# Tested by deploy/prometheus/agentic-search-alerts.test.yml
+# (`promtool test rules agentic-search-alerts.test.yml`).
+groups:
+  - name: agentic-search
+    rules:
+      - alert: AgenticSearchDown
+        expr: up{job="agentic-search"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Agentic Search web app is not being scraped
+          description: Prometheus cannot scrape the agentic-search job; the process is down or /metrics is unreachable.
+
+      # 5xx over the query routes only (health, readiness, metrics and admin
+      # routes are excluded). The traffic floor (0.1 req/s) keeps one failure
+      # during an idle hour from reading as 100%.
+      - alert: HighHTTP5xxRate
+        expr: |
+          (
+            100 * (sum(rate(agentic_search_http_requests_total{method="POST",route=~"/api/agent|/api/agent/stream|/chat/send-chat-message|/search/send-search-message|/tool/send-tool-message",status="5xx"}[5m])) or vector(0))
+            /
+            sum(rate(agentic_search_http_requests_total{method="POST",route=~"/api/agent|/api/agent/stream|/chat/send-chat-message|/search/send-search-message|/tool/send-tool-message"}[5m]))
+          ) > 5
+          and
+          sum(rate(agentic_search_http_requests_total{method="POST",route=~"/api/agent|/api/agent/stream|/chat/send-chat-message|/search/send-search-message|/tool/send-tool-message"}[5m])) >= 0.1
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: More than 5% of query requests are failing with 5xx
+          description: HTTP 5xx is above 5% of POST query-route traffic for 10 minutes. A 5xx is a response the server failed; streamed failures after headers are counted by the agent metrics instead.
+
+      # Per agent (search, tool). Cancelled runs are excluded from the
+      # denominator; the numerator zero-fills per agent so a healthy agent
+      # with no error series reads 0, not "no data".
+      - alert: HighAgentErrorRate
+        expr: |
+          (
+            100 * (sum by (agent) (rate(agentic_search_agent_runs_total{outcome="error"}[5m])) or (0 * sum by (agent) (rate(agentic_search_agent_runs_total[5m]))))
+            /
+            sum by (agent) (rate(agentic_search_agent_runs_total{outcome=~"completed|error"}[5m]))
+          ) > 10
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: More than 10% of {{ $labels.agent }} agent runs are failing
+          description: The {{ $labels.agent }} agent loop raised on more than 10% of its runs for 10 minutes.
+
+      # Executed tool attempts only; cancelled attempts are outside the
+      # population. A timeout followed by a successful retry counts once each.
+      - alert: HighToolTimeoutRate
+        expr: |
+          (
+            100 * (sum(rate(agentic_search_tool_attempts_total{outcome="timeout"}[5m])) or vector(0))
+            /
+            sum(rate(agentic_search_tool_attempts_total{outcome=~"success|timeout|error"}[5m]))
+          ) > 20
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: More than 20% of tool calls are timing out
+          description: Tool-registry attempts timed out above 20% of executed attempts for 15 minutes.
+
+      # Any stale serve means a live lookup failed and the cache answered for
+      # it -- an outage users do not see. Grouped by source (web, retrieval).
+      - alert: StaleCacheServing
+        expr: sum by (source) (rate(agentic_search_stale_cache_serves_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.source }} lookups are being answered from stale cache"
+          description: Live {{ $labels.source }} lookups have been failing for 10 minutes and are answered from stale serving-cache entries; the provider is likely down.
+
+      # Completed runs only: a rising average is a runaway-loop signal.
+      - alert: HighAgentDecisionRounds
+        expr: |
+          (
+            sum by (agent) (rate(agentic_search_agent_decision_rounds_sum{outcome="completed"}[5m]))
+            /
+            sum by (agent) (rate(agentic_search_agent_decision_rounds_count{outcome="completed"}[5m]))
+          ) > 8
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.agent }} agent runs average more than 8 decision rounds"
+          description: Completed {{ $labels.agent }} runs have averaged more than 8 model generations each for 30 minutes.

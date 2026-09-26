@@ -186,6 +186,48 @@ The by-agent numerators zero-fill with `0 * <denominator-shaped series>`
 rather than `vector(0)`. A bare `vector(0)` has no `agent` label, so it would
 not match the per-agent denominator.
 
+## Alerts
+
+`deploy/prometheus/agentic-search-alerts.yml` turns the queries above into
+alert rules. To use it:
+
+- Load it with `rule_files: [deploy/prometheus/agentic-search-alerts.yml]`.
+- Scrape the web app as job **`agentic-search`**, with
+  `AGENTIC_SEARCH_METRICS_ENABLED=1`. The job name is only used by
+  `AgenticSearchDown`, so change it there if yours differs.
+- Treat every threshold as a starting point to tune to your traffic.
+
+| Alert | Fires when (5m windows) | For | Severity |
+|---|---|---|---|
+| `AgenticSearchDown` | `up{job="agentic-search"} == 0` | 2m | page |
+| `HighHTTP5xxRate` | Query-route 5xx is above 5 %, **and** query traffic is at least 0.1 req/s | 10m | page |
+| `HighAgentErrorRate` | Agent error runs are above 10 % of completed plus error runs, per agent | 10m | ticket |
+| `HighToolTimeoutRate` | Tool timeouts are above 20 % of executed attempts | 15m | ticket |
+| `StaleCacheServing` | Any stale-cache serve, per `source` (a hidden outage) | 10m | ticket |
+| `HighAgentDecisionRounds` | Completed runs average more than 8 rounds, per agent | 30m | ticket |
+
+Percentage alerts never zero-fill their denominator, so zero traffic cannot
+fire them. The HTTP traffic floor stops a single failure during an idle hour
+from reading as 100 %.
+
+**Tests.** `deploy/prometheus/agentic-search-alerts.test.yml` has a firing
+case and at least one quiet case for every alert, including zero traffic. Run
+it with:
+
+```bash
+cd deploy/prometheus && promtool test rules agentic-search-alerts.test.yml
+```
+
+`tests/unit/test_prometheus_alert_rules.py` runs promtool when it is on
+`PATH`. Without promtool it still checks three things:
+
+- every alert has a severity, a summary and a description;
+- every alert has both a firing and a quiet test;
+- every metric a rule uses is one the exporter declares.
+
+**Not covered yet.** `/ready` and circuit-breaker state are not Prometheus
+metrics, so neither has an alert.
+
 ## Also available
 
 - `GET /api/admin/metrics` (admin-only JSON) has rolling windows of the last
