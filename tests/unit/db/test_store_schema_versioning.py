@@ -179,3 +179,26 @@ def test_a_new_database_on_a_later_build_runs_every_migration(tmp_path):
     assert "nickname" in _columns(path, "users")
     assert _columns(path, "reshaped") == {"id"}
     assert _min_reader(path) == 3
+
+
+def test_a_failed_step_leaves_nothing_behind_on_a_live_connection(tmp_path):
+    """The step itself is atomic -- not just because the constructor closes
+    the connection on failure. Pins both BEGIN and ROLLBACK."""
+    store = AgenticSearchStore(tmp_path / "s.sqlite3")
+
+    with pytest.raises(sqlite3.OperationalError):
+        store._apply_step(
+            2,
+            (
+                "CREATE TABLE half_done (id TEXT)",
+                "ALTER TABLE no_such_table ADD COLUMN x TEXT",
+            ),
+            min_reader=2,
+        )
+
+    assert not store._conn.in_transaction
+    tables = {r[0] for r in store._conn.execute("SELECT name FROM sqlite_master")}
+    assert "half_done" not in tables
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert store._read_min_reader() == 1
+    store.close()
