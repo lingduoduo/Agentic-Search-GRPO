@@ -246,8 +246,9 @@ python3 -m src.internal.servers.retrieval.rerank --port 8002
 ```
 
 ```bash
-# Optional — browser web search (Terminal 1c), the fallback when SerpAPI fails.
-# No API key needed, but slow. It wraps the `playwright-cli` binary, which is not
+# Optional — browser web search (Terminal 1c). The `web_search` tool falls back
+# to it when SerpAPI fails. The /api/agent search route has a browser leg too,
+# but nothing sets its URL from the environment yet. No API key needed, but slow. It wraps the `playwright-cli` binary, which is not
 # a pip package, and it refuses to start without that binary rather than serve
 # empty results. Host only, not in the container image.
 python3 -m src.internal.servers.web_search.browser --port 8003
