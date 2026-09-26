@@ -19,6 +19,7 @@ from src.internal.auth import AuthenticatedUser
 from src.internal.cache.interface import get_cache_backend
 from src.internal.memory.working import (
     MAX_HISTORY_MESSAGES,
+    forget_session,
     load_working_memory,
     schedule_compression,
 )
@@ -195,6 +196,8 @@ def create_chat_router(
         found = store.delete_chat_session(session_id)
         if not found:
             raise HTTPException(status_code=404, detail="Chat session not found")
+        # The conversation's LLM-written summary goes with it.
+        forget_session(get_cache_backend(), session_id)
 
     @router.post("/create-chat-message-feedback")
     def create_chat_feedback(feedback: ChatFeedbackRequest, request: Request) -> None:

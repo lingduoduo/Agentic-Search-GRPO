@@ -81,6 +81,16 @@ def save_state(cache: CacheBackend, session_id: str, state: SessionMemoryState) 
     )
 
 
+def forget_session(cache: CacheBackend, session_id: str) -> None:
+    """Drop the session's state, so a deleted conversation's summary goes with
+    it. Never raises: the session is already gone, and a cache problem must
+    not turn a successful delete into an error (the key still has its TTL)."""
+    try:
+        cache.delete(_STATE_KEY.format(session_id=session_id))
+    except Exception as exc:  # noqa: BLE001 - best effort; TTL is the backstop
+        logger.warning("session memory delete failed for %s: %s", session_id, exc)
+
+
 @dataclass(frozen=True)
 class WorkingMemory:
     """What a surface hands to its loop, plus what still needs summarizing."""

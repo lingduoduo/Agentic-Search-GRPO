@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from pathlib import Path
 from time import perf_counter
 
@@ -14,6 +15,9 @@ from .types import IntentModelDecision, RouteStrategy
 logger = logging.getLogger(__name__)
 
 _INTENT_INDEXES: dict[Path, object | None] = {}
+# recognize_intent runs in worker threads (#657): one cold load per path, and a
+# failure is decided once rather than by whichever racing thread wrote last.
+_INTENT_INDEXES_LOCK = threading.Lock()
 _ROUTE_VALUES = {strategy.value for strategy in RouteStrategy}
 
 
@@ -33,31 +37,34 @@ def load_intent_index(settings: AppSettings | None = None) -> object | None:
     directory = configured.resolve()
     if directory in _INTENT_INDEXES:
         return _INTENT_INDEXES[directory]
-    try:
-        from src.model.pre_training.intents.model import (
-            DEFAULT_ENCODER,
-            INDEX_FILENAME,
-            IntentIndex,
-        )
+    with _INTENT_INDEXES_LOCK:
+        if directory in _INTENT_INDEXES:
+            return _INTENT_INDEXES[directory]
+        try:
+            from src.model.pre_training.intents.model import (
+                DEFAULT_ENCODER,
+                INDEX_FILENAME,
+                IntentIndex,
+            )
 
-        index = IntentIndex.load(directory / INDEX_FILENAME)
-        if index.encoder != DEFAULT_ENCODER:
-            raise ValueError(
-                f"intent-index built with encoder {index.encoder!r}, "
-                f"serving uses {DEFAULT_ENCODER!r}"
-            )
-    except Exception:
-        logger.exception("intent-index: load failed — similarity routing disabled")
-        _INTENT_INDEXES[directory] = None
-    else:
-        low_support = index.low_support_modules()
-        if low_support:
-            logger.warning(
-                "intent-index: modules below support, not emitted: %s",
-                ", ".join(low_support),
-            )
-        _INTENT_INDEXES[directory] = index
-    return _INTENT_INDEXES[directory]
+            index = IntentIndex.load(directory / INDEX_FILENAME)
+            if index.encoder != DEFAULT_ENCODER:
+                raise ValueError(
+                    f"intent-index built with encoder {index.encoder!r}, "
+                    f"serving uses {DEFAULT_ENCODER!r}"
+                )
+        except Exception:
+            logger.exception("intent-index: load failed — similarity routing disabled")
+            _INTENT_INDEXES[directory] = None
+        else:
+            low_support = index.low_support_modules()
+            if low_support:
+                logger.warning(
+                    "intent-index: modules below support, not emitted: %s",
+                    ", ".join(low_support),
+                )
+            _INTENT_INDEXES[directory] = index
+        return _INTENT_INDEXES[directory]
 
 
 def predict_route(
