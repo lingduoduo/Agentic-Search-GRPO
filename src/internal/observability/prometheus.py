@@ -19,6 +19,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
     Counter,
+    Gauge,
     Histogram,
     generate_latest,
 )
@@ -72,6 +73,37 @@ def observe_stages(metrics: RequestStageMetrics | None) -> None:
         if getattr(metrics, f"{stage}_calls"):
             seconds = getattr(metrics, f"{stage}_ms") / 1000.0
             _STAGE_SECONDS.labels(stage).observe(seconds)
+
+
+_READY = Gauge(
+    "agentic_search_ready",
+    "1 when the last GET /ready found the process ready, else 0.",
+    registry=REGISTRY,
+)
+_READY_CHECK = Gauge(
+    "agentic_search_ready_check",
+    "Per-check result of the last GET /ready (1 ok, 0 failed).",
+    ("check",),
+    registry=REGISTRY,
+)
+_READY_CHECKED_AT = Gauge(
+    "agentic_search_ready_checked_timestamp_seconds",
+    "Unix time of the last GET /ready; alerts ignore a stale result.",
+    registry=REGISTRY,
+)
+_READY_CHECKS = frozenset({"store", "retrieval"})
+
+
+def observe_readiness(ready: bool, checks: dict[str, bool]) -> None:
+    """Record one /ready probe. A scrape never runs the checks itself: that
+    would put network calls inside Prometheus's collection."""
+    unknown = set(checks) - _READY_CHECKS
+    if unknown:
+        raise ValueError(f"Unknown readiness check: {sorted(unknown)}")
+    _READY.set(1 if ready else 0)
+    for name, ok in checks.items():
+        _READY_CHECK.labels(name).set(1 if ok else 0)
+    _READY_CHECKED_AT.set_to_current_time()
 
 
 class _BreakerStateCollector:
