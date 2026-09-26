@@ -281,7 +281,7 @@ This is serving-time routing and inference. It is unrelated to GRPO training, ev
 
 - Internal retrieval: `AGENTIC_SEARCH_RETRIEVAL_URL` or the web server's retrieval setting.
 - SerpAPI: `SERP_API_KEY` or `SERPAPI_API_KEY` and the SerpAPI integration.
-- Browser fallback: `SearchExperienceSettings.browser_search_url` and a running browser-search service. The default `from_app_settings()` construction does not currently populate this URL, so deployments that want browser fallback must wire it into app construction.
+- Browser fallback: `AGENTIC_SEARCH_BROWSER_SEARCH_URL` (read into `ServiceSettings.browser_search_url` and passed through `from_app_settings()`) and a running browser-search service. Unset, the browser leg is skipped.
 - Local policy modes: `SEARCH_AGENT_MODEL` or `SEARCH_AGENT_SERVER_URL`.
 - Provider-backed chat and classification: `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, and provider credentials.
 - Optional similarity route: `AGENTIC_SEARCH_INTENT_INDEX_PATH`, `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`), `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` (default `0.8215`, diagnostics only), and `AGENTIC_SEARCH_INTENT_TOP_K` (default `8`).

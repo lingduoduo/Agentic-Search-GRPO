@@ -200,6 +200,17 @@ def test_load_app_settings_reads_rerank_url():
     assert load_app_settings({}).services.rerank_url is None
 
 
+def test_load_app_settings_reads_browser_search_url():
+    assert (
+        load_app_settings(
+            {"AGENTIC_SEARCH_BROWSER_SEARCH_URL": "http://localhost:8003/retrieve"}
+        ).services.browser_search_url
+        == "http://localhost:8003/retrieve"
+    )
+    # Unset ⇒ None (the /api/agent browser leg stays off by default).
+    assert load_app_settings({}).services.browser_search_url is None
+
+
 def test_web_settings_can_be_built_from_app_settings():
     app_settings = load_app_settings(
         {
@@ -207,6 +218,7 @@ def test_web_settings_can_be_built_from_app_settings():
             "AGENTIC_SEARCH_WEB_TOP_K": "9",
             "AGENTIC_SEARCH_WEB_DB_PATH": "/tmp/search.sqlite3",
             "AGENTIC_SEARCH_RERANK_URL": "http://rr.test/rerank",
+            "AGENTIC_SEARCH_BROWSER_SEARCH_URL": "http://browser.test/retrieve",
         }
     )
 
@@ -216,6 +228,7 @@ def test_web_settings_can_be_built_from_app_settings():
     assert web_settings.top_k == 9
     assert web_settings.db_path == "/tmp/search.sqlite3"
     assert web_settings.rerank_url == "http://rr.test/rerank"
+    assert web_settings.browser_search_url == "http://browser.test/retrieve"
 
 
 def test_tool_agent_parser_defaults_to_json():

@@ -51,7 +51,7 @@ Routing configuration spans separate capabilities:
 |---|---|
 | `AGENTIC_SEARCH_RETRIEVAL_URL` | First source for auto-routed search and internal grounding for chat paths |
 | `SERP_API_KEY` / `SERPAPI_API_KEY` | Enables the SerpAPI fallback after weak or empty internal evidence |
-| `SearchExperienceSettings.browser_search_url` | Enables the HTTP browser-search fallback after SerpAPI; run `src.internal.servers.web_search.browser` separately and wire its `/retrieve` URL into app construction |
+| `AGENTIC_SEARCH_BROWSER_SEARCH_URL` | Enables the HTTP browser-search fallback after SerpAPI. Run `src.internal.servers.web_search.browser` separately and set this to its `/retrieve` URL. Unset, the browser leg is off. The `web_search` tool reads the same variable for its own fallback |
 | `SEARCH_AGENT_MODEL` / `SEARCH_AGENT_SERVER_URL` | Enables explicit local/remote policy-agent modes; not required for default auto-search |
 | `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, provider key | Enables grounded chat synthesis and the classifier for ambiguous routes |
 | `AGENTIC_SEARCH_INTENT_INDEX_PATH` | Directory holding a canonical-example index (`index.npz`) built by `src.model.pre_training.intents.cli`; unset by default, which disables the similarity route |

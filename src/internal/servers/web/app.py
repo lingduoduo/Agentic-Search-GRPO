@@ -242,6 +242,7 @@ class SearchExperienceSettings:
         return cls(
             search_url=app_settings.services.retrieval_url,
             rerank_url=app_settings.services.rerank_url,
+            browser_search_url=app_settings.services.browser_search_url,
             top_k=app_settings.services.web_top_k,
             db_path=app_settings.services.web_db_path,
             allow_client_search_url=_flag("AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL"),
