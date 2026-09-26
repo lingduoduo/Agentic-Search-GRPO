@@ -178,7 +178,11 @@ One policy for every serving-dependency breaker (`serpapi`, `browser_search`,
 A breaker opens after `failure_threshold` consecutive failures — a transport
 error, a timeout, HTTP 5xx or 429 — and then fails fast for `open_seconds`
 before letting one probe call through. Breaker state is per process and is
-reported under `circuits` by `GET /api/admin/metrics`.
+reported under `circuits` by `GET /api/admin/metrics`, and — when
+`AGENTIC_SEARCH_METRICS_ENABLED` mounts `/metrics` — as
+`agentic_search_circuit_breaker_open` and
+`agentic_search_circuit_breaker_consecutive_failures`, labelled by breaker
+family (`remote_llm`, not the per-server URL).
 
 | key | default | bounds |
 |---|---|---|

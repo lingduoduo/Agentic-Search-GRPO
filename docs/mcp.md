@@ -17,6 +17,12 @@ pip install -e ".[mcp]"
 uvicorn src.internal.mcp_server.api:mcp_app --port 8090
 ```
 
+The MCP dependencies are capped below their next majors: `fastmcp>=2.0.0,<4` in
+the `[mcp]` extra, and `mcp>=1.0.0,<2` plus the same `fastmcp` cap in
+`requirements.txt`. `mcp` 2.x removed the streamable-HTTP client that the web
+process's MCP client imports, and `fastmcp` 4.x requires `mcp` 2.x, so an
+uncapped install breaks [pulling MCP tools into the web process](#pulling-mcp-tools-into-the-web-process).
+
 The server also launches with the `Run All Services` task from the default `launch.json`, and can be launched independently through the VS Code debugger.
 
 ## Authentication and transport
@@ -134,8 +140,10 @@ union of both:
   time — so it reflects whatever is registered (empty until seeding runs). Built-in
   tools group into a `local` server; each OpenAPI provider gets its own server.
 
-Built-in seed tools: `web_search`, `search`, `search_routing_tool` (and
-`rag_routing_tool` when an LLM is configured).
+Built-in seed tools: `web_search`, `search`, the nine keyless public-data
+tools, `search_domain`, `get_sub_domains`, `extract_page` and `batch_search`
+(and `rag_routing_tool` when an LLM is configured). Not all of them are offered
+to the tool agent; see [Tool engine](tool-engine.md#not-every-registered-tool-is-offered-to-an-agent).
 
 This does not change how MCP clients invoke tools — MCP tool selection stays
 client-driven, as described above. Discovery is a ranking aid, not a dispatcher.
@@ -180,7 +188,12 @@ Three things worth knowing:
   startup finishes. Discovery is a background task for that reason.
 
 Remote tools carry `effect=UNSPECIFIED`, so the tool agent's approval gate
-applies to them — only `READ_ONLY` tools are auto-approved. Configure only MCP
+applies to them — only `READ_ONLY` tools are auto-approved. For the same reason
+a failed remote call (including one the server reports with `isError`) is never
+retried automatically: it escalates to the user as Retry / Skip / Cancel (see
+[When a tool call fails](tool-engine.md#when-a-tool-call-fails)). Request and
+stream-read timeouts are `[tools.mcp]` in
+[timeouts](configuration/timeouts.md). Configure only MCP
 servers you trust: a server controls the tool descriptions the model sees.
 
 ## Resources
@@ -232,7 +245,7 @@ Expected response:
 `get_sub_domains`, `search_domain`, `extract_page`, and `batch_search` share the
 repository's `DomainSearch` implementation with the tool registry. No additional
 provider, API key, or CLI is needed. See [native domain features](search-engine.md#native-domain-search-features)
-for tags, aliases, schemas, examples, and limits.
+for tags, schemas, examples, and limits.
 
 `search_domain` returns query/domain/tag metadata and results, while
 `batch_search` returns a `queries` array of these results or errors. For web routes,

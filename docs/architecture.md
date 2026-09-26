@@ -28,9 +28,9 @@ src/
 └── internal/
     ├── access/                  # Access control & ACL helpers
     ├── auth/                    # Authentication & authorization
-    ├── cache/                   # In-memory cache backend (chat session state)
-    ├── chat/                    # Chat pipeline (loop, steps, citations, compression)
-    ├── configs/                 # Environment-based configuration (AppSettings)
+    ├── cache/                   # Cache backends (chat session state) + the process-local serving TTL cache
+    ├── chat/                    # Chat pipeline (LLM step, citations, emitter)
+    ├── configs/                 # Environment-based configuration (AppSettings) + timeouts.toml retry/timeout policies
     ├── connectors/              # Connector data models (connector classes removed)
     ├── db/                      # SQLite store (AgenticSearchStore)
     ├── document_index/          # Document index (FAISS / BM25)
@@ -40,16 +40,18 @@ src/
     ├── hooks/                   # Outbound webhook execution
     ├── llm/                     # LLM provider integrations
     ├── mcp_server/              # MCP server (tools, resources, auth)
-    ├── memory/                  # Conversation-memory store & curation
-    ├── observability/           # Admin surface summary & health score
+    ├── memory/                  # Conversation-memory store, curation & working memory (token-budgeted history + summaries)
+    ├── observability/           # Admin surface summary & health score, tracer, stage + agent metrics, Prometheus export
     ├── prompts/                 # Prompt templates
+    ├── resilience/              # Circuit breakers (SerpAPI, browser search, HTTP reranker, remote LLM servers)
     ├── retrieval/               # Retrieval core: service, fusion, query transforms, routers
-    ├── routing/                 # Routing layer: per-query router + 6 query constructors
+    ├── routing/                 # Routing layer: per-query router (heuristic default, optional logical/semantic strategies)
     ├── search/                  # Search-vs-chat flow classification
     ├── tools/                   # Internal tool registry
     ├── utils/                   # License, encryption, telemetry utilities
     └── servers/
         ├── app.py               # Shared helpers for the standalone search servers
+        ├── sse.py               # The one SSE framer: anti-buffering headers + idle keepalive
         ├── admin_surface/       # Admin summary endpoint
         ├── analytics/           # Usage analytics API
         ├── billing/             # Stripe billing proxy
@@ -78,6 +80,8 @@ src/
         ├── web/                 # FastAPI app assembly
         └── web_search/          # Web search servers (Google, SerpAPI, browser)
 bin/                             # Shell helpers (eval, training data generation)
+deploy/prometheus/               # Prometheus alert rules + promtool tests
+docker/                          # docker-compose stack + build-context contract (the image's Dockerfile is at the root)
 tests/                           # Unit and integration test suites
 examples/                        # Runnable CLI examples
 ```
@@ -160,7 +164,7 @@ Each surfaces an additive `metrics` key — `effective_search_limit`, `adaptive_
 ```bash
 python -m examples.run_agentic_search --mode search \
   --question "Compare dense and sparse retrieval" \
-  --model meta-llama/Llama-3.1-8B-Instruct --vllm_url http://localhost:8080 \
+  --model meta-llama/Llama-3.1-8B-Instruct --server_url http://localhost:8080 \
   --search_url http://localhost:8001/retrieve \
   --max_search_limit 5 --max_turns 8 --max_answer_rejections 3
   # --no_evidence_gate disables the require-sufficient-evidence answer gate
@@ -188,7 +192,7 @@ The backend auto-classifies every query and dispatches to the right agent withou
 | `chat` | `AgenticRAGLoop` | Descriptive/conversational questions and generative asks — grounded synthesis |
 | `tool` | `ToolAgentLoop` | Explicit tool use (`search_routing_tool`, custom tools) |
 
-The router is `recognize_intent` (`src/internal/servers/web/intent/recognizer.py`), dispatched by `_run_auto_routed` in `src/internal/servers/web/app.py`. It returns strategy, clarification, and metadata together. Its precedence is explicit source, deterministic regex cues, optional margin-gated canonical similarity, deterministic LLM classifier, then rule-based fallback. Bare terms route to `search`; input with no signal at all triggers a clarification question instead of guessing (see [API request routing](request-routing.md#auto-router-decision-order)).
+The router is `recognize_intent` (`src/internal/servers/web/intent/recognizer.py`), dispatched by `_run_auto_routed` in `src/internal/servers/web/app.py`. It returns strategy, clarification, and metadata together. Its precedence is explicit source, deterministic regex cues, optional margin-gated canonical similarity, deterministic LLM classifier, then rule-based fallback. `recognize_intent` runs off the event loop (`asyncio.to_thread`), and the LLM classifier gives up after `llm.route_classifier_timeout_seconds` (default `3.0`, see [timeouts](configuration/timeouts.md)) and hands over to the rules. Bare terms route to `search`; input with no signal at all triggers a clarification question instead of guessing (see [API request routing](request-routing.md#auto-router-decision-order)).
 
 ### End-to-end request flow
 
@@ -217,6 +221,8 @@ offline index_builder (corpus.jsonl)
 
 The normalized `SearchPipeline` stages are internal boundaries, not services that require new deployment units. They adapt the existing retrieval clients, ranking helpers, and inference boundary while preserving `/api/agent`, `/api/agent/stream`, `/retrieve`, `/search`, and `/rerank`. No public API or schema was introduced. Optional reranker failure keeps the best pre-rerank order; retrieval or evidence failure never turns into an ungrounded model answer.
 
+If the model becomes unavailable mid-request (a connection error, HTTP 5xx/429, or an open circuit breaker on the inference server), `/api/agent`, `/api/agent/stream` and `/api/agent/ws` degrade to the search-only `SearchPipeline` composition with `route_degraded: "model_unavailable"` instead of returning a 502. Explicit modes degrade corpus-only (`source_provider="retrieval"`); auto mode keeps the request's provider.
+
 The local policy model is not the fallback for missing evidence on the default unfiltered auto-search path. Strong internal evidence returns directly; weak or empty internal evidence tries external search first. This avoids conflating a model's internal knowledge with retrieved evidence.
 
 There are three independent routing layers: the web request strategy (`chat` / `search` / `tool`), the web source provider (`auto` / `retrieval` / web providers), and the internal retrieval backend router (sparse/dense/hybrid/etc.). See [API request routing](request-routing.md) for the detailed contract and [Retrieval](retrieval.md#routing-and-query-construction) for backend routing.
@@ -231,11 +237,14 @@ There are three independent routing layers: the web request strategy (`chat` / `
 | `claim` | Each verified claim, as it is verified | `{type, text}` |
 | `trace` | Each control-flow event (Dev Console) | `{type, event}` |
 | `approval_required` | An approval-gated tool wants to run | `{type, approval}` |
+| `escalation_required` | A side-effecting (or unannotated) tool call failed; the user picks retry / skip / cancel via `POST /api/agent/escalations/{id}` | `{type, escalation}` |
 | `answer` | Answer token chunks | `{type, text}` |
 | `done` | Stream complete | `{type, session_id, citations, documents, intent, tool_calls}` |
 | `error` | Unhandled exception | `{type, detail}` |
 
-The `on_turn` callback (`OnTurnCallback` in `src/agents/core/base.py`) is the hook that feeds per-turn events into the SSE queue from inside the agent loop.
+The `on_turn` callback (`OnTurnCallback` in `src/agents/core/base.py`) is the hook that feeds per-turn events into the run's event queue from inside the agent loop. That queue belongs to `AgentRunDriver` (`src/internal/servers/web/run_driver.py`), which is transport-neutral: `/api/agent/stream` frames its events as SSE, and `/api/agent/ws` carries the same events over a WebSocket (authenticated with a single-use token from `POST /api/agent/ws-token`, one run per socket, every event tagged with `run_id`; the client sends `session.start`, `approval.submit`, `escalation.submit`, `session.cancel` or `ping`).
+
+Every SSE endpoint goes through `src/internal/servers/sse.py`, which sets `Cache-Control: no-cache` and `X-Accel-Buffering: no` so a buffering proxy passes events through, and sends a `: keepalive` comment frame when a stream is idle for `sse.heartbeat_seconds` (default `15`, `0` disables; see [timeouts](configuration/timeouts.md)). SSE readers ignore comment frames.
 
 **`claim` is what makes the grounded answer feel live.** The Assist path does not
 stream tokens as the model emits them — its answer *is* the join of the claims it

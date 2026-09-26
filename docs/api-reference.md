@@ -121,12 +121,59 @@ On failure the stream yields `data: {"type": "error", "detail": "..."}` instead 
 The grounded (Assist) path emits **`claim`** rather than streaming raw tokens,
 because its answer *is* the join of the claims it has verified — there is nothing
 to stream until a claim passes verification. A Dev Console client additionally
-receives `trace` events, and an approval-gated tool produces `approval_required`.
+receives `trace` events. For a signed-in caller, an approval-gated tool produces
+`approval_required` (`{"approval": {id, tool_name, arguments, expires_at}}`), and
+a tool failure the tool loop cannot retry or degrade past produces `escalation_required`
+(`{"escalation": {id, tool_name, arguments, category, message, attempts,
+expires_at}}`). Answer them with `POST /api/agent/approvals/{id}` (`{"decision":
+"approve" | "deny"}`) or `POST /api/agent/escalations/{id}` (`{"decision":
+"retry" | "skip" | "cancel"}`); both return `403`/`404`/`409`/`410` for a
+foreign, unknown, already-decided or expired id.
+
+A stream that stays silent for `AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS` (default
+15, `0` disables) receives a `: keepalive` comment frame, which SSE readers
+ignore. All three SSE endpoints (`/api/agent/stream`, `/chat/send-chat-message`,
+`/tool/send-tool-message`) send `Cache-Control: no-cache` and
+`X-Accel-Buffering: no`, so a buffering proxy passes events through as they
+arrive.
 
 **`claim` and `trace` are best-effort; `answer` and `done` are the contract.** The
 SSE queue is bounded and drops these two rather than blocking a slow consumer. No
 data is lost when it does — the terminal `answer` event still carries the full
 text — so a client must not assume it has seen every `claim`.
+
+**WebSocket control channel** (`WS /api/agent/ws`) — the same run, the same
+events and the same approval/escalation brokers as `/api/agent/stream`, with
+decisions and cancellation sent over the socket instead of separate POSTs.
+Signed-in callers only. Mint a single-use token first:
+```bash
+curl -s -X POST http://localhost:7860/api/agent/ws-token -H "Authorization: Bearer $TOKEN"
+# → {"token": "...", "expires_in": 60}
+```
+`401` when not signed in, `429` past 10 tokens per user per minute, `503` when
+Redis (which holds the tokens) is unreachable. Connect to
+`/api/agent/ws?token=<token>` within 60 s; the token is consumed on first use,
+and a missing, replayed or expired token — or one whose user is gone or
+inactive — closes the socket with code `1008`.
+
+Client events (JSON frames with a `type`):
+
+| `type` | Payload |
+|---|---|
+| `session.start` | `{"request": {...}}` — an `/api/agent` request body |
+| `approval.submit` | `approval_id`, `decision` |
+| `escalation.submit` | `escalation_id`, `decision` |
+| `session.cancel` | — |
+| `ping` | — (answered with `pong`) |
+
+The server sends `session.started` (`run_id`), then the stream's `progress`,
+`claim`, `trace`, `approval_required`, `escalation_required`, `answer` and
+`done` / `error` events, each with `run_id` added. One run at a time per
+socket: a second `session.start` gets an `error` with `code: 409`. Malformed or
+unknown events, and failed decisions, get an `error` event with an HTTP-style
+`code` (`400`/`403`/`404`/`409`/`410`) and never close the socket.
+`session.cancel` stops the run and answers `{"type": "done", "run_id": ...,
+"cancelled": true}`; disconnecting also cancels it.
 
 **Sessions:**
 ```bash
@@ -167,7 +214,9 @@ latency window, the same recent `/api/agent` requests split into their
 retrieval share (ms, docs, cache-hit rate), their generation share (answer
 synthesis only: ms, prompt/completion tokens) and their auxiliary LLM calls
 (query transforms, sufficiency checks, intent recognition — kept apart so
-they cannot inflate "generation"), and the feedback summary by target.
+they cannot inflate "generation"), the feedback summary by target, and the
+state of each circuit breaker the process has used so far (`circuits`:
+SerpAPI, browser search, the HTTP reranker, remote LLM servers).
 Recorded in every web process; this is the production-reachable read of it.
 Each assistant turn also carries its own split as `metadata.stage_metrics`.
 Only `/api/agent` opens the scope; the `/search`, `/chat` and `/tool` direct
@@ -187,7 +236,12 @@ the auto-router and carries no agent output.
 All three multi-turn paths are **conversation-aware** — `search_agent`,
 `tool_agent`, and `chat_loop` thread bounded prior session turns into the loop.
 Search mode uses the tighter `SEARCH_AGENT_HISTORY_MESSAGES` limit because it
-also carries long retrieval observations.
+also carries long retrieval observations. The prior turns loaded for a request
+are the newest messages that fit `AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS` (default
+2500 estimated tokens, never more than 40 messages); on `/api/agent` the turns
+that fall outside it are summarized by default (`AGENTIC_SEARCH_MEMORY_COMPRESSION`
+unset means on here; any value other than `1`/`true`/`yes`, such as `0`, turns
+it off).
 
 For the shared search pipeline, prior session messages are bounded and used to resolve follow-up retrieval queries while the original user query remains the inference question. Candidate retrieval then preserves access filters, ranking deduplicates and optionally reranks/diversifies the candidates, and inference runs only with ranked evidence. Empty evidence produces a deterministic no-results response; a retrieval outage produces a deterministic unavailable-sources response. Finalization persists the answer, citations, documents, and normalized `pipeline_stages` metadata for both JSON and SSE delivery.
 
@@ -199,6 +253,14 @@ For the shared search pipeline, prior session messages are bounded and used to r
 | `chat_loop` | `AgenticRAGLoop` (decompose + HyDE) | `chat` | LLM client |
 | `hybrid_search` | internal + web fan-out, MMR-merged | `search` | — |
 | `search_tool` | raw retrieval, no synthesis | `search` | — |
+
+A model that fails during the request — the LLM provider unreachable or
+answering 5xx/429, or the inference server down or behind an open circuit — does
+not fail it with `502`: the dispatcher answers search-only instead, with
+`hook_metadata.route_degraded="model_unavailable"`. An explicit `mode` degrades
+against the internal corpus only; auto mode keeps the request's
+`source_provider`. The `400` above is for a local model that is not configured
+at all.
 
 **Auto-router:** a non-`auto` source forces `search`; otherwise deterministic
 regex cues, an optional learned intent model, an optional LLM classifier, and a
@@ -220,6 +282,10 @@ narrows what each provider may return. See
 details such as `search_mode`, `external_provider`, `tier`, and `top_score`.
 The complete field-level contract, explicit-source behavior, and worked examples
 are in [API request routing](request-routing.md).
+
+The request's optional `domain` (default `general`) adds a topic hint to web
+provider queries; `GET /api/search-domains` lists the accepted identifiers. See
+[Domains over HTTP](search-engine.md#domains-over-http-and-in-the-web-ui).
 
 ## Chat and session API
 
@@ -284,7 +350,9 @@ export TOKEN=$(bin/gen_dev_token.sh)   # or: source bin/gen_dev_token.sh
 **Core**
 
 ```bash
-curl -s http://localhost:7860/health                  # web server
+curl -s http://localhost:7860/health                  # web server (liveness, always ok)
+curl -s http://localhost:7860/ready                   # 200 ready / 503 not_ready: store + retrieval checks
+curl -s http://localhost:7860/metrics                 # Prometheus; only with AGENTIC_SEARCH_METRICS_ENABLED=1, else 404
 curl -s http://localhost:8001/health                  # retrieval server
 curl -s http://localhost:7860/settings                # tier / license status (no auth)
 ```

@@ -261,7 +261,7 @@ ChunkingConfig(semantic_chunking=True, semantic_breakpoint_percentile=90.0)
 |--------|-------------|
 | `google.py` | Google Custom Search proxy |
 | `serp.py` | SerpAPI proxy |
-| `browser.py` | playwright-cli browser automation; no API key, ~5–10s/query |
+| `browser.py` | playwright-cli browser automation; no API key, ~5–10s/query. Host-only: needs a `playwright-cli` binary on `PATH` (not the `playwright` pip wheel, not in the image) and refuses to start without one |
 
 **Start a retrieval server:**
 
@@ -388,6 +388,17 @@ That pipeline composition uses the same internal stage sequence throughout the w
 4. inference synthesizes from ranked evidence, or the pipeline returns deterministic status/results when evidence or synthesis is unavailable;
 5. shared response finalization persists citations, documents, and stage metadata.
 
+Step 1 is a deterministic rewrite (`build_retrieval_context`) that only this
+composition runs, on the degraded branches. The direct-first gate and
+`AgenticRAGLoop` retrieve with the latest message as typed. With
+`AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION=true`, a switch-aware resolver
+(`resolve_follow_up`) runs once per `/api/agent` request and its query replaces
+the typed message for retrieval on the direct gate, the web fallback,
+`AgenticRAGLoop` and this composition; routing, the answer prompt,
+`SearchAgentLoop` and `ToolAgentLoop` keep the typed message. The flag is off by
+default: the resolver met one of its four success criteria (`criteria` in
+`data/eval/multi_turn_continuity.json`).
+
 These stages are internal adapters. Existing `/retrieve`, `/search`, and `/rerank` endpoints remain available with their current payloads, and no new retrieval API was added. Backend RRF inside `RetrievalService` remains distinct from web-layer candidate ranking: RRF fuses backend result lists; the web ranking stage normalizes, deduplicates, optionally reranks, and diversifies the resulting evidence.
 
 ### The direct-first sufficiency gate
@@ -497,6 +508,15 @@ RERANKER_PROVIDER=local RERANKER_ASYNC=true \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
+A rerank that times out or fails keeps the fused order and drops the
+`+reranked` suffix from `retrieval_mode`. `AsyncReranker` shares one
+`RERANKER_MAX_WORKERS` pool (default 4) across requests, and its
+`RERANKER_TIMEOUT_MS` budget counts from submission, so queueing spends it.
+Once it has measured scoring cost, it refuses a request whose projected wait
+exceeds the budget instead of queueing it. The result is the same fused order,
+returned at once. This sheds load but adds no capacity: raise
+`RERANKER_MAX_WORKERS` or make scoring cheaper for that.
+
 **Enable two-stage pipeline** (fast pre-filter → heavy scorer):
 ```bash
 RERANKER_PROVIDER=local RERANKER_TWO_STAGE=true \
@@ -592,6 +612,12 @@ QUERY_EXPANSION_ENABLED=true SPELL_CORRECTION_ENABLED=true EXPANSION_MAX_TERMS=3
   RESULT_CACHE_REDIS_URL=redis://localhost:6379 RESULT_CACHE_TTL=300 \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
+
+Query expansion builds its acronym table from the corpus's own glosses when it
+finds any (else the bundled table), and corpus-derived expansion measured
+**worse** than no expansion on the TF-IDF backend over two BEIR
+corpora. Keep `QUERY_EXPANSION_ENABLED` off unless you have measured a gain on
+your own corpus; see [Retrieval and optimization](configuration.md#retrieval-and-optimization).
 
 ## Query transformation optimization
 
@@ -722,7 +748,7 @@ query → Router.route() → RouteDecision(domain, sources, retriever)
 
 Routes come from a config-driven registry (`ROUTING_REGISTRY_PATH` → JSON of `{name, description, sources, retriever}`; a built-in default mirrors the local corpus). `RetrieverTarget` ∈ `sparse · dense · hybrid · metadata · sql · graph · api`.
 
-The router emits a decision only; there is no query-construction layer. Targets with no execution backend (`sql`, `graph`, `api`) fall through to ordinary hybrid retrieval and are recorded as a mode suffix (`hybrid+routed:sql`) — an unbacked route annotates a search rather than emptying it (#590). A construction layer that built and validated queries for those targets was removed in #591: nothing executed what it produced, and its substring-based validators rejected ordinary queries such as `SELECT created_at FROM orders`.
+The router emits a decision only; there is no query-construction layer. Targets with no execution backend (`sql`, `graph`, `api`) fall through to ordinary hybrid retrieval and are recorded as a mode suffix (`hybrid+routed:sql`) — an unbacked route annotates a search rather than emptying it (#590). A construction layer that built and validated queries for those targets was removed in #595: nothing executed what it produced, and its substring-based validators rejected ordinary queries such as `SELECT created_at FROM orders`.
 
 Every `route()` degrades to the default route rather than raising.
 

@@ -106,11 +106,11 @@ AGENTIC_SEARCH_DEBUG_PANELS=1 PYTHONPATH=src:. \
 cd web && VITE_DEBUG_PANELS=1 npm run dev
 ```
 
-Click **Console** in the top bar to open it. **Retrieval Lab** runs a query against each per-mode endpoint (`sparse` / `dense` / `hybrid` / `graph`) via the `POST /api/debug/retrieval/{mode}` proxy and shows results side by side, surfacing **503** (dense not configured → hybrid collapses to sparse) and **404** (endpoint not mounted, e.g. against `demo.py`) explicitly instead of as a generic error. (Health/workers/chat-trace panels land in later phases — see [the plan](superpowers/archive/plans/2026-06-29-backend-observability-uis.md).)
+Click **Console** in the top bar to open it. **Retrieval Lab** runs a query against each per-mode endpoint (`sparse` / `dense` / `hybrid` / `graph`) via the `POST /api/debug/retrieval/{mode}` proxy and shows results side by side, surfacing **503** (dense not configured → hybrid collapses to sparse) and **404** (endpoint not mounted, e.g. against `demo.py`) explicitly instead of as a generic error. The console also hosts the Request Inspector, Request Trace, Server Health, Query Transform Inspector, Evaluation Results and Tool Catalog panels. **Route Latency** (`LatencyPanel.tsx`, from `GET /api/debug/latency`) lists calls, errors and p50/p95/max ms per route, slowest p95 first, plus a retrieval-vs-generation stage table (auxiliary LLM calls listed apart). **Evaluation Results** groups each file's numbers into retrieval / generation / reward / latency / other.
 
 ## UI features
 
-**Streaming answers** (`AnswerPanel.tsx` → `ProgressLog`) — every query streams over SSE; `streamAgent` (`web/src/api.ts`) drives the UI from the `progress` / `claim` / `trace` / `approval_required` / `answer` / `done` events (full schema in the [SSE event table](architecture.md#intent-routing)). While the agent runs, a live **Agent reasoning** log renders one row per turn (`⟳ Turn N · writing answer…` active, `✓ Turn N · <tool> · N docs` completed) and answer tokens stream in as markdown; on `done` the log collapses to a one-line summary (`✓ 3 turns`) with a **show reasoning ▸** toggle that re-expands the full trace. Backend side, each turn fires the `on_turn` callback (`OnTurnCallback`) → a `progress` event, while token / tool-call / citation packets originate from `AgentQueueManager` → `Emitter`. The **New** button (`handleNewSession`, on the Assistant page) aborts any in-flight request and clears answer / citations / documents / messages / intent; an in-flight turn is cancellable via the stop-signal fence.
+**Streaming answers** (`AnswerPanel.tsx` → `ProgressLog`) — every query streams over SSE; `streamAgent` (`web/src/api.ts`) drives the UI from the `progress` / `claim` / `trace` / `approval_required` / `escalation_required` / `answer` / `done` events (full schema in the [SSE event table](architecture.md#intent-routing)). While the agent runs, a live **Agent reasoning** log renders one row per turn (`⟳ Turn N · writing answer…` active, `✓ Turn N · <tool> · N docs` completed) and answer tokens stream in as markdown; on `done` the log collapses to a one-line summary (`✓ 3 turns`) with a **show reasoning ▸** toggle that re-expands the full trace. Backend side, each turn fires the `on_turn` callback (`OnTurnCallback`) → a `progress` event on the `AgentRunDriver` queue (`src/internal/servers/web/run_driver.py`), which also carries `claim` / `trace` events and closes the run with the `answer` / `done` pair. The **New** button (`handleNewSession`, on the Assistant page) aborts any in-flight request and clears answer / citations / documents / messages / intent and any pending approval or escalation cards; the backend cancels the run when the stream's client disconnects.
 
 **On the Assistant page the answer arrives claim by claim, not token by token**
 (`AssistPage.tsx`). The grounded path's answer *is* the join of the claims it has
@@ -120,6 +120,16 @@ separated by a space and renders it immediately. The terminal `answer` event the
 authoritative text, which is what makes a dropped `claim` event cosmetic instead of
 lossy. `trace` events feed the Dev Console control-flow panel and
 `approval_required` events populate the pending-approval list.
+`escalation_required` events (a side-effecting tool call failed) render a
+`ToolEscalationCard` — on the Assistant and Tools pages — with **Retry** /
+**Skip** / **Cancel**, posted to `POST /api/agent/escalations/{id}` via
+`submitToolEscalation`; the card counts down to the escalation's expiry.
+
+**Degraded answers on the Chat and Tools pages** (`Transcript.tsx`) — when the
+model is unavailable, `/chat` and `/tool` answer anyway and mark the `done`
+event with `degraded: "model_unavailable"`. `ChatView` and `ToolAgentView` copy
+it onto the assistant turn, and the transcript shows
+`⚠ Model unavailable — degraded answer` under it (the reason in its `title`).
 
 **Markdown rendering** — Answers render via `react-markdown`: headings, bold/italic, inline code, code blocks, and ordered/unordered lists. Citation markers (`[D1]`, `[D2]`, …) become anchor links that scroll the page to the matching source card.
 
@@ -164,7 +174,7 @@ The intent itself comes from the backend's routing decision — see the `respons
 
 | Component | What it does |
 |-----------|--------------|
-| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
+| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, a **Domain** selector (options from `GET /api/search-domains`, default `general`, sent as the agent request's `domain`: a query hint for web search providers, not a result filter), source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
 | `AnswerPanel` | Streamed markdown answer + intent badge + `[D1]` citation anchor links |
 | `SourceGrid` | Expand/collapse source cards with copy-to-clipboard and citation `id` anchors |
 | `SessionTimeline` | Chat-bubble history (user right, assistant left; system filtered) |

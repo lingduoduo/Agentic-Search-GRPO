@@ -47,7 +47,14 @@ surface, parallel to `/search/*` and `/chat/*`:
   The response and the `done` event carry `truncated`. It is `true` when a
   generation hit the wall-clock stop (`AGENTIC_SEARCH_GENERATION_TIMEOUT`) and
   the answer is a fragment — otherwise a cut-off answer is indistinguishable
-  from a complete one.
+  from a complete one. They also carry `tool_recovery` (see
+  [When a tool call fails](#when-a-tool-call-fails)).
+
+  If the local model becomes unreachable mid-request (connection error,
+  timeout or open circuit), the endpoint answers from a corpus-only search
+  under the caller's ACL instead of failing: the answer lists what was found,
+  and the response and `done` event carry `degraded: "model_unavailable"`.
+  Any other failure still reports `error`.
 - `GET /tool/tool-history` — past sessions for the caller (session proxy, like
   `/search/search-history`).
 
@@ -61,6 +68,8 @@ Gated tools prompt for approval on the streaming path, at parity with the
 auto-router: the endpoint emits `approval_required` events through the
 `ToolApprovalBroker` and waits for the user's decision via the shared
 `POST /api/agent/approvals/{approval_id}` endpoint (authenticated users only).
+A failed side-effecting call is escalated the same way, through
+`escalation_required` events and `POST /api/agent/escalations/{escalation_id}`.
 
 ## Tool registry and discovery
 
@@ -77,6 +86,9 @@ runtime via `register_from_openapi`.
 
 Built-in seed tools: `web_search`, `search`, the nine keyless public
 data-source tools (see [README.md](../README.md#built-in-public-data-tools)),
+the four native domain tools `search_domain`, `get_sub_domains`,
+`extract_page` and `batch_search` (see
+[native domain features](search-engine.md#native-domain-search-features)),
 and `rag_routing_tool` when an LLM is configured. Discovery is a ranking aid,
 not a dispatcher.
 
@@ -91,7 +103,10 @@ call site:
   registered this way: it is built at process start, where no request identity
   exists, so it could only ever hold an unfiltered view of the corpus.
   `rag_routing_tool` is excluded too, because it generates a whole answer rather
-  than returning evidence.
+  than returning evidence. So are `search_domain`, `get_sub_domains` and
+  `batch_search`: every capability they route to is a public-data tool the agent
+  already has, so offering them gave a small model two paths to the same nine
+  tools. `extract_page` stays offered, since nothing else seeded fetches a URL.
 - **`user_scoped=True`** — withheld when the request has no user, so an
   anonymous caller cannot write into a shared bucket. Set at MCP registration
   from `AGENTIC_SEARCH_MCP_USER_SCOPED`.
@@ -110,11 +125,25 @@ The seeded `web_search` tool uses a sequential cascade: SerpAPI first
 when SerpAPI is empty or unavailable. This applies to both the Tool Agent tab
 and the `/api/agent` tool path.
 
-When no leg is usable the tool returns each leg's error rather than an empty
-result, because "No results found." is indistinguishable from a working search
-over a topic with no hits — a missing key, an exhausted quota (SerpAPI's free
-tier is 100 searches/month, after which it returns `429`) and an unreachable
-browser server all used to look identical.
+`web_search` takes one to five `queries`, runs them concurrently, and returns a
+JSON list of `{title, content, url}` deduplicated by URL. If some queries
+succeed, their results are returned and the failures dropped. When no query
+produces a usable result the call is a typed failure carrying the first error
+(`{"error": ...}`) rather than an empty result, because "No results found." is
+indistinguishable from a working search over a topic with no hits — a missing
+key, an exhausted quota (SerpAPI's free tier is 100 searches/month, after which
+it returns `429`) and an unreachable browser server all used to look identical.
+In the tool agent that failure makes `web_search` unavailable for the rest of
+the turn (see [When a tool call fails](#when-a-tool-call-fails)), so the model
+sees that it is unavailable rather than the error text.
+
+Each leg sits behind a circuit breaker (`serpapi`, `browser_search`): after
+repeated failures the leg is skipped with a "circuit open" error for a while,
+then one probe call is let through
+([`[circuit_breaker]`](configuration/timeouts.md#circuit_breaker)). A
+failed live lookup is answered from a stale serving-cache entry, marked
+`metadata.stale: true`, while one is inside
+`AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS`.
 
 To run the fallback leg:
 
@@ -127,6 +156,62 @@ AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve
 It needs no API key and drives a real browser, so expect ~30-50s per query and
 weaker relevance than SerpAPI. Use 8003 rather than its 8000 default: 8000 and
 8001 are the retrieval servers, 8002 the reranker.
+
+## Tool contract and argument validation
+
+Every tool on the global registry declares `effect` (`READ_ONLY`,
+`SIDE_EFFECTING` or `UNSPECIFIED`), `result_kind` (`DOCUMENTS`, `JSON` or
+`TEXT`), `citeable` and `retries_internally`. The registry refuses a tool that
+leaves `result_kind` undeclared, is `UNSPECIFIED` without coming from MCP, or
+is `citeable` without returning `DOCUMENTS`: `POST /admin/tools/openapi`
+answers **422**, and MCP discovery logs and skips the tool. An OpenAPI
+operation is `READ_ONLY` for GET/HEAD/OPTIONS and `SIDE_EFFECTING` otherwise.
+
+Arguments are validated against the tool's full JSON Schema (Draft 2020-12)
+before the tool runs, on every path through the registry: the tool agent,
+`/admin/tools/{name}/invoke`, MCP-mirrored tools and memory curation.
+Ranges, enums, patterns, array lengths and closed objects are enforced, and an
+invalid call is **rejected, not clamped**, with a message naming the argument —
+`Argument 'limit': 500 is greater than the maximum of 10`, or
+`Arguments: Additional properties are not allowed ('limti' was unexpected)` for a
+misspelled key. The built-in tools declare their limits as schema keywords, so
+for example `web_search.queries` takes at most 5 items and a `domain` must match
+an allowed value exactly. A schema the validator cannot use (malformed, or an
+unresolvable `$ref`) falls back to the old required-keys-and-types check with a
+warning.
+
+## When a tool call fails
+
+Recovery is always on, owned by `ToolAgentLoop`, and ordered **retry →
+degrade → escalate**:
+
+- **Bad input goes back to the model.** A schema violation, or an input the
+  tool itself rejects (an unknown ticker or place),
+  returns the error text to the model as `invalid_arguments` so it can correct
+  the call.
+- **Retry.** A transient failure (HTTP 429 or 5xx, a timeout, a connection
+  error) of a `READ_ONLY` tool is
+  retried up to 2 times with jittered backoff, honouring `Retry-After` up to
+  4 s, within a 10 s retry budget shared by the whole run. A tool that declares
+  `retries_internally` — the corpus `search` and the public-data tools that
+  retry their own GETs — is not retried again.
+- **Degrade.** A `READ_ONLY` tool that still fails becomes unavailable for the
+  rest of the turn: the model is told to answer from what it has, later calls
+  to it are short-circuited, and the answer ends with
+  `Note: <tool> was unavailable, so this answer may be incomplete.`
+- **Escalate.** A failed `SIDE_EFFECTING` or `UNSPECIFIED` call is never
+  replayed automatically. The run pauses with an `escalation_required` event
+  and the Assist and Tools pages offer **Retry**, **Skip** or **Cancel**. An
+  unanswered escalation (120 s), the per-run escalation cap (3), or a caller
+  that cannot be asked (non-streaming JSON, an anonymous caller) stops the run
+  as `unresolved` — never as a success.
+
+`/tool` responses and `/api/agent` response metadata report what happened in
+`tool_recovery`:
+`outcome` (`recovered`, `degraded`, `cancelled` or `unresolved`),
+`needs_user`, `retries`, `degraded` and `escalations`. The retry and
+escalation limits are the `[tool_loop]` and `[tool_loop.recovery]` tables in
+[timeouts](configuration/timeouts.md).
 
 ## Inspecting the registry
 
@@ -149,13 +234,15 @@ registered, so why did the agent ignore it".
 Admin-gated (`require_admin`), always mounted:
 
 - `GET /admin/tools` — every registered tool with `parameters`, `source`,
-  `provider_id`, `agent_callable`, and `user_scoped`. Group by
+  `provider_id`, `agent_callable`, `user_scoped`, `effect`, `result_kind`, and
+  `citeable`. Group by
   `source`/`provider_id` to get the catalog shape.
 - `POST /admin/tools/discover` — ranks tools for a `query` via the TF-IDF
   `SemanticRouter`, returning the per-stage routing details. No LLM.
 - `POST /admin/tools/{name}/invoke` — run one tool directly with arguments.
   Note it invokes the registry, so test-invoking `search` uses the seeded
-  unfiltered instance and can return more than an agent run would.
+  unfiltered instance and can return more than an agent run would. Invalid
+  arguments, and a tool that raises, come back in `errors` rather than as a 500.
 
 Dev-only, **mounted only when `AGENTIC_SEARCH_DEBUG_PANELS` is set** — these do
 not exist in a normal deployment, which is why the `/tools` page uses the admin

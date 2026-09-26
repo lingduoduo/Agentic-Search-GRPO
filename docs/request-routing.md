@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md)
 
-This guide is the source of truth for how the web API turns an agent request into a chat, search, or tool execution. It covers `POST /api/agent` and `POST /api/agent/stream`; both endpoints share the same dispatcher in `src/internal/servers/web/app.py`.
+This guide is the source of truth for how the web API turns an agent request into a chat, search, or tool execution. It covers `POST /api/agent`, `POST /api/agent/stream`, and the `WS /api/agent/ws` control channel; all three share the same dispatcher in `src/internal/servers/web/app.py`.
 
 The pipeline described here is query-time orchestration over indexes produced offline by the `index_builder`. It reuses the existing `/api/agent`, `/api/agent/stream`, `/retrieve`, `/search`, and `/rerank` contracts; no public endpoint or schema was added.
 
@@ -50,7 +50,9 @@ bounded session history
 
 The original query remains the answer question; only retrieval uses the resolved follow-up query. Internal access filters are preserved. If optional reranking fails, the pre-rerank candidate order is retained. If retrieval yields no evidence, model inference is skipped and a deterministic status is returned.
 
-Strong auto-search does not necessarily enter that composition or rewrite its retrieval query. Its existing direct-first path queries internal retrieval with the original request, applies direct ranking plus the sufficiency gate, and then tries SerpAPI and the browser-search service when internal evidence is weak or empty. The provider order below describes that distinct path.
+Strong auto-search does not necessarily enter that composition or rewrite its retrieval query. Its existing direct-first path queries internal retrieval with the original request (unless `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` is on — see below), applies direct ranking plus the sufficiency gate, and then tries SerpAPI and the browser-search service when internal evidence is weak or empty. The provider order below describes that distinct path.
+
+`AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION=true` (default off; it did not meet its evaluation criteria) resolves a follow-up turn once per request, without an LLM: a message that uses a pronoun, is at most four words, or is semantically close (`AGENTIC_SEARCH_FOLLOW_UP_COS_MIN`) to the latest standalone user turn is searched as `topic\nmessage`. The resolved query is used only for retrieval — the direct gate, the web fallback, `chat_once`, `chat_loop`, and the degraded pipeline — while routing, the answer prompt, `search_agent`, and `tool_agent` keep the message as typed. The decision is reported as `hook_metadata.follow_up` (`continuation`, `reason`, `query`).
 
 ## Request fields
 
@@ -66,6 +68,7 @@ The JSON body uses `AgentExperienceRequest`:
 | `source_provider` | `auto` | Source policy: `auto`, `retrieval`, `serpapi`, `google`, `browser`, or `all`. |
 | `route` | omitted | User-selected `chat`, `search`, or `tool` route; bypasses recognition in auto mode. |
 | `mode` | omitted | Explicit dispatch override: `search_tool`, `hybrid_search`, `chat_once`, `chat_loop`, `search_agent`, or `tool_agent`. |
+| `domain` | `general` | Topic hint appended to web-provider queries only. An unknown value, or a non-`general` value with a `mode` other than `search_tool`/`hybrid_search`, returns `400`. See [Search engine](search-engine.md#domains-over-http-and-in-the-web-ui). |
 
 The backend, not the browser client, normally owns service URLs. In production, keep client retrieval URL overrides disabled.
 
@@ -96,7 +99,7 @@ When `mode` is omitted and no user-selected `route` is supplied, `recognize_inte
    - standalone greetings and thanks, such as “hi!” and “thank you” → `chat`;
    - conversational or generative starts normally → `chat`. A current-information cue such as “latest” defers a chat-form question to the next step.
 3. If an index is configured, canonical-example similarity selects the highest-scoring route when its gap over the runner-up reaches `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`). Each route scores as its top-8 mean cosine similarity. Margin is the only abstention gate; absolute confidence is diagnostic. See [Training and evaluation](training-and-evaluation.md#intent-routing-by-nearest-canonical-example).
-4. An available LLM classifies at temperature 0. A completion must contain exactly one distinct supported whole-word label. A single-label explanation is accepted, but conflicting labels such as “not chat; search” are rejected as `unexpected`.
+4. An available LLM classifies at temperature 0, off the event loop and bounded by `[llm] route_classifier_timeout_seconds` (default 3 s; a timeout falls through to step 5). A completion must contain exactly one distinct supported whole-word label. A single-label explanation is accepted, but conflicting labels such as “not chat; search” are rejected as `unexpected`.
 5. If no LLM is available or its call raises, the last-resort heuristic checks tool, search, and bare-lookup cues. No signal defaults to chat with clarification. An empty or unusable classifier completion also requests clarification. Set `AGENTIC_SEARCH_ROUTE_CLARIFICATION=false` to return the chat default without the question.
 
 Explicit modes, user-selected routes, explicit providers, and deterministic rules take precedence over similarity. A served similarity prediction skips the LLM; an abstention defers to it. The model chooses an execution family, not a specific tool, and cannot bypass authorization. Module labels and the composite-request flag are diagnostics only; no multi-step planner acts on them.
@@ -171,6 +174,8 @@ No sources are reachable right now. Please try again shortly.
 
 Both cases use `intent="search"`, `search_mode="external_empty"`, and empty `citations` and `documents`. The local model does not replace missing evidence with an internal-knowledge answer.
 
+A provider call that fails outright — a SerpAPI error, timeout, or open circuit, or a retrieval-server failure other than a non-429 4xx — is answered from the [serving cache](retrieval.md#serving-cache) when the same lookup was cached within its TTL plus `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS` (default `3600`, `0` disables). Those documents carry `metadata.stale = true` and count as evidence. A SerpAPI timeout with nothing cached is an empty result, not a source card, so the request continues to the browser-search service.
+
 ## Access control
 
 **Signing in narrows results; it does not change the engine.** Anonymous and
@@ -244,7 +249,7 @@ Common routing metadata in `hook_metadata`:
 |---|---|---|
 | `mode` | `auto` | Dispatcher mode used for the request. |
 | `route` | `search` | Strategy selected by the auto-router. |
-| `route_degraded` | `no_llm` | Required capability was absent and dispatch used a fallback. |
+| `route_degraded` | `no_llm`, `no_local_model`, `tool_unavailable`, `model_unavailable` | Required capability was absent, or the model failed mid-request (`model_unavailable`), and dispatch used a fallback. |
 | `search_mode` | `direct`, `external_fallback`, `external_empty`, `escalated` | Search execution branch. |
 | `external_provider` | `serpapi`, `browser` | External provider that supplied evidence. |
 | `tier` | `exact`, `fuzzy`, `semantic` | Internal sufficiency tier. |
@@ -258,14 +263,14 @@ Persisted assistant-message metadata also contains a normalized `pipeline_stages
 1. zero or more `progress` events as agent turns complete;
 2. zero or more `claim` events, one per claim as the grounded path verifies it;
 3. zero or more `trace` events when control-flow tracing is on;
-4. optional `approval_required` events for approval-gated actions;
+4. optional `approval_required` events for approval-gated actions, and `escalation_required` events for tool failures the tool loop escalates (signed-in callers only);
 5. one `answer` event;
 6. one `done` event containing the final session, intent, citations, documents, route metadata, tool calls, and trace.
 
 `claim` and `trace` are best-effort — the bounded SSE queue drops them rather than
 blocking a slow consumer — while `answer` and `done` are guaranteed.
 
-Failures produce an `error` event instead of `done`. Streaming changes delivery, not routing behavior.
+Failures produce an `error` event instead of `done`. An idle stream receives a `: keepalive` comment frame every `AGENTIC_SEARCH_SSE_HEARTBEAT_SECONDS` (default 15, `0` disables). `WS /api/agent/ws` carries the same events, each tagged with a `run_id`; see [HTTP API reference](api-reference.md). Streaming changes delivery, not routing behavior.
 
 ## Why `RAG` and `GRPO` can look different
 
@@ -286,6 +291,9 @@ This is serving-time routing and inference. It is unrelated to GRPO training, ev
 - Provider-backed chat and classification: `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, and provider credentials.
 - Optional similarity route: `AGENTIC_SEARCH_INTENT_INDEX_PATH`, `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`), `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` (default `0.8215`, diagnostics only), and `AGENTIC_SEARCH_INTENT_TOP_K` (default `8`).
 - Sufficiency threshold: `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN`.
+- Routing classifier bound: `[llm] route_classifier_timeout_seconds` in `timeouts.toml` (default `3.0`; see [Timeouts](configuration/timeouts.md)).
+- Stale-on-error serving: `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS` (default `3600`).
+- Follow-up resolution for retrieval: `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` (default off) and `AGENTIC_SEARCH_FOLLOW_UP_COS_MIN`.
 
 See [Configuration](configuration.md) for setup details.
 

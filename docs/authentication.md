@@ -48,8 +48,10 @@ avoid revealing whether another user's session exists.
 
 Anonymous conversations intentionally have `user_id = NULL`. Possession of
 their session ID allows access; there is no per-browser anonymous identity.
-Anonymous history lists are empty. Retrieval feedback can also refer to an
-external session ID, but a matching locally owned session requires its owner.
+Anonymous history lists are empty. Retrieval feedback (`POST /api/feedback`)
+must name an existing session: an unknown session ID returns the same 404 as
+another user's session and writes nothing, and an owned session requires its
+owner.
 
 Memory retains the existing shared `default_user` bucket for anonymous local
 research. `AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH=true` disables that anonymous
@@ -71,6 +73,10 @@ guards; auth tests set it to `false`, since unsetting it lets `.env` restore it.
 SCIM directory operations require SCIM tokens, SCIM token administration
 requires admin, and SCIM discovery remains public.
 
+The standalone retrieval server (`servers/retrieval/server.py`) is guarded the
+same way: its stats, config, `/internal/search/*` and `/internal/optimize/*`
+routes require an admin, while `/health` and `/search` stay open.
+
 ## Adding an endpoint
 
 Before seeding, MCP discovery or model loading, web startup runs
@@ -79,6 +85,9 @@ dependency or an inline call to a reviewed guard, or appear in
 `PUBLIC_ENDPOINT_SPECS` with its reason. Public GET does not exempt POST;
 duplicate registrations and mounted applications are checked individually.
 Only explicitly classified static mounts are exempted as static assets.
+A WebSocket route cannot carry an authentication dependency, so it passes only
+through an inline call to the reviewed `authenticate_ws` guard; it is never
+listed as public.
 
 Use an authentication dependency for new protected endpoints. Inline detection
 is a source heuristic, not a control-flow proof: it recognizes reviewed
@@ -88,7 +97,9 @@ be inspected. It cannot prove a guard runs on every branch or its result is
 used correctly. Runtime authorization and ownership tests remain required.
 
 The allowlist records deliberate anonymous flows, UI bootstrap data, API docs,
-SCIM discovery, integration-mode fixture reset and unimplemented 501 stubs.
+health, readiness and (opt-in) metrics probes, the static search-domain
+taxonomy, SCIM discovery, integration-mode fixture reset and unimplemented 501
+stubs.
 Implementing a stub requires revisiting its classification.
 
 Regression coverage lives in `test_route_auth_enforcement.py`,
