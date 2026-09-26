@@ -34,32 +34,32 @@ from `PRAGMA user_version`, a `schema_meta` table, and the class attributes
 
 ### Task 1: Tests (red)
 
-- [ ] **Write the tests.** Write
+- [x] **Write the tests.** Write
   `tests/unit/db/test_store_schema_versioning.py` covering every case in the
   spec's Testing section. Use a subclass factory:
   `_store_class(version, migrations)` returns a subclass with those class
   attributes. Helpers read `PRAGMA user_version` and `schema_meta` through a
   fresh `sqlite3.connect(path)`.
-- [ ] **Run them.** Expect failures: `Migration`, `SchemaVersionError` and
+- [x] **Run them.** Expect failures: `Migration`, `SchemaVersionError` and
   `schema_meta` do not exist yet.
 
 ### Task 2: Implement (green)
 
-- [ ] **Implement.** In `store.py`, add:
+- [x] **Implement.** In `store.py`, add:
   - `Migration`, `SchemaVersionError`;
   - `SCHEMA_VERSION = 1`, `_MIGRATIONS = {}`;
   - `_ensure_schema`, which replaces `self._init_schema()` in `__init__`;
   - `_read_min_reader()` and `_write_meta()`.
-- [ ] **Run them.** Run the new tests and every existing store test under
+- [x] **Run them.** Run the new tests and every existing store test under
   `tests/unit/db` and `tests/unit/test_db_store.py`. Expect them to pass.
-- [ ] **Mutation checks.** These are in the spec. Restore and purge
+- [x] **Mutation checks.** These are in the spec. Restore and purge
   `__pycache__` after each.
 
 ### Task 3: Docs and verification
 
-- [ ] **Docs.** Add a short "Schema versioning" note in the store's module
+- [x] **Docs.** Add a short "Schema versioning" note in the store's module
   docstring or in `docs/architecture.md`, whichever already describes the
   store. Cover how to add a migration and when to set
   `breaks_older_readers`.
-- [ ] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
+- [x] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
   Open the PR.
