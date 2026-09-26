@@ -7,7 +7,7 @@ and `docker/docker-compose.yml` only builds from source. So "roll back" means
 checking out an older commit and rebuilding: slow, not reproducible, and there
 is no record of what was running.
 
-## Decision (approved by the user: GHCR, private package)
+## Decision (approved by the user: GHCR; package kept public, see Package visibility)
 
 ### 1. The publish workflow: `.github/workflows/publish-image.yml`
 
@@ -42,8 +42,11 @@ does not cancel an older one mid-push.
 **Package visibility.** *Corrected after the first publish.* This spec
 assumed new GHCR packages start private, but a package linked to a public
 repository inherits **public** visibility: the first image was anonymously
-pullable. The runbook tells the owner to switch it to private once, in the
-package settings. The workflow cannot set it with `GITHUB_TOKEN`.
+pullable. The owner then decided (2026-09-25) to **keep it public**: the
+image contains nothing the public repository does not, and runtime secrets
+come from the environment. Public pulls need no `docker login`. The runbook
+records the decision and how to go private if private data is ever baked in.
+The workflow cannot set visibility with `GITHUB_TOKEN`.
 
 ### 2. Compose can run a published image
 
@@ -73,7 +76,7 @@ It covers:
   So **back up the `app_data` volume before deploying a build that migrates
   the schema**, and restore that backup if a rollback is refused. The
   commands are included.
-- checking the package visibility once.
+- the package visibility and why it stays public.
 
 `docs/configuration.md` gets the `AGENTIC_SEARCH_IMAGE` compose variable,
 because the documented-env-vars test may require it.
