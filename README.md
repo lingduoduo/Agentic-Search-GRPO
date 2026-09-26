@@ -302,10 +302,10 @@ Prometheus metrics are always recorded, but `GET /metrics` is mounted only with 
 `docker/docker-compose.yml` runs the retrieval server (port 8000 inside the stack), the web backend with the built frontend on port 7860, and Postgres and Redis. The containers run as a non-root user:
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build
+docker compose --env-file .env -f docker/docker-compose.yml up --build
 ```
 
-The compose file sets `GEN_AI_API_KEY` to an empty value. Put real LLM credentials in a `docker/docker-compose.override.yml`. The browser search server is host-only and is not available under compose.
+`--env-file .env` supplies the LLM settings (`GEN_AI_*`) and `SERP_API_KEY` from your `.env`. Only the keys the compose file names reach the containers; host-only values such as `localhost` service URLs stay out. Without it, the containers run with an empty LLM key. The browser search server is host-only and is not available under compose.
 
 Every CI-passed `main` commit is also published to GHCR as a public multi-arch image. Its immutable `sha-<commit>` tag is the handle for deploying and rolling back. See [Deploy and roll back](docs/deploy.md), which also covers the store's schema version on rollback.
 
