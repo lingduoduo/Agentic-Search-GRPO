@@ -40,7 +40,7 @@ export function ChatView() {
         if (e.type === "answer") patchLastAssistant({ content: e.text });
         else if (e.type === "done") {
           setSessionId(e.session_id);
-          patchLastAssistant({ pending: false });
+          patchLastAssistant({ pending: false, degraded: e.degraded ?? null });
         } else if (e.type === "error") {
           setError(e.detail);
           patchLastAssistant({ pending: false });
