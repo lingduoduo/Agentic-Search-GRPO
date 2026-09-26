@@ -512,7 +512,7 @@ python3 -m examples.run_agentic_search \
 python3 -m examples.run_agentic_search \
   --mode search --question "Compare dense and sparse retrieval" \
   --model meta-llama/Llama-3.1-8B-Instruct \
-  --vllm_url http://localhost:8080 --search_url http://localhost:8001/retrieve
+  --server_url http://localhost:8080 --search_url http://localhost:8001/retrieve
 ```
 
 ### Intent operating point
@@ -573,10 +573,22 @@ python3 -m examples.run_search_pipeline --skip-enforcement
 `--group search-admins` and `--email owner@example.test` show the two grants the
 demo corpus carries.
 
+### Measurement harnesses
+
+Each measures a serving behaviour on a fixed workload and reports what it
+measured; none changes a default. The domain-relevance eval is documented in
+[Search engine](search-engine.md#does-selecting-a-domain-help-measured-and-the-answer-is-not-detectably).
+
+| Command | Measures | Result |
+|---------|----------|--------|
+| `python -m examples.measure_multi_turn_continuity` | Routing and retrieval on follow-up turns and topic switches, per query condition (`raw`, `regex`, `concat`, `gold_rewrite`, gated resolver). Needs sentence-transformers for the e5 gate embedder, and exits without it | `data/eval/multi_turn_continuity.json`. The gated resolver behind `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` met one of its four criteria, so the flag stays off |
+| `python -m examples.measure_agentic_rag_rounds --history data/agentic_search.db` | How many rounds `AgenticRAGLoop` uses and why each run stops, from stored CHAT answers; `--questions FILE` replays live against a retrieval server and an OpenAI-compatible LLM | Printed; `--out` writes JSON. No result file is committed |
+| `python -m examples.measure_memory_strategies --llm_model llama3.2:3b --out data/eval/memory_strategies.json` | Recall of earlier-turn facts under a sliding window versus a rolling summary, on seeded synthetic conversations. Needs Ollama; the full grid takes about 1–1.5 h | Written to `--out`. No result file is committed |
+
 ## Dataset preparation
 
 ```bash
-# Offline local RAG smoke test (4 examples, existing 30-document demo corpus)
+# Offline local RAG smoke test (4 examples, existing 20-document demo corpus)
 python3 -m examples.prepare_local_rag_smoke_dataset --topk 1 --preview
 
 # Write compact RAG parquet after inspecting the preview
@@ -585,6 +597,10 @@ python3 -m examples.prepare_local_rag_smoke_dataset \
 ```
 
 This command requires no retrieval server, network access, FlashRAG dataset, or retrieval caches.
+
+`prepare_local_rag_smoke_dataset` and `prepare_search_rag_dataset` both take
+`--corpus` in place of `--corpus_path`: a corpus name registered in
+`data/corpora.json`, a comma-separated list, or `all`.
 
 Optional large-dataset workflows:
 
@@ -831,7 +847,7 @@ python3 -m examples.run_bamboogle_eval \
 ```bash
 python3 -m examples.run_bamboogle_eval \
   --model meta-llama/Llama-3.1-8B-Instruct \
-  --vllm_url http://localhost:8080 \
+  --server_url http://localhost:8080 \
   --search_url http://localhost:8001/retrieve \
   --reward_preset second_pass --limit 125
 ```

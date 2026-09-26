@@ -63,7 +63,8 @@ go build -o ../bin/memory ./cmd/memory
 ```
 
 Go tooling: `go test ./...`, `go vet ./...`, `go build ./...` (run from `cli/`).
-Neither CI workflow has a `setup-go` step, so **nothing runs these for you** —
+None of the CI workflows (`ci.yml`, `eval-gate.yml`, `publish-image.yml`) has a
+`setup-go` step, so **nothing runs these for you** —
 run them yourself before pushing Go changes.
 
 ## `query` — search + answer

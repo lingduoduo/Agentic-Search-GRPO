@@ -63,7 +63,9 @@ Routing configuration spans separate capabilities:
 | `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN` | Semantic threshold for accepting internal evidence without external fallback |
 | `AGENTIC_SEARCH_ALLOW_CLIENT_RETRIEVAL_URL` | Allows a request body to override the server-owned retrieval URL; development only |
 | `AGENTIC_SEARCH_SEARCH_CACHE_TTL` | Seconds a retrieval row, web-provider page or rerank score stays in the web app's process-local serving cache; defaults to `300`, `0` disables it. No Redis involved. See [Serving cache](retrieval.md#serving-cache) |
-| `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS` | Seconds past the TTL an expired serving-cache entry is kept to answer when the live call fails (a web provider's error, timeout or open circuit; a retrieval-server error). Such results carry `metadata.stale: true`. Defaults to `3600`, `0` disables the fallback; a negative value is rejected at startup. See [Serving cache](retrieval.md#serving-cache) |
+| `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS` | Seconds past the TTL an expired serving-cache entry is kept to answer when the live call fails (a web provider's error, timeout or open circuit; a retrieval-server 5xx, 429 or transport error — a retrieval 4xx is never answered stale, since the request itself is wrong). Such results carry `metadata.stale: true` and count toward `agentic_search_stale_cache_serves_total` on `/metrics`. Defaults to `3600`, `0` disables the fallback; a negative value is rejected at startup. See [Serving cache](retrieval.md#serving-cache) |
+| `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` | Resolve a follow-up turn into a standalone **retrieval** query (`topic` + newline + message) before retrieval, and add `follow_up: {continuation, reason, query}` to the response metadata; routing and the answer prompt keep the message as typed. `false` by default, and it should stay off: it failed 3 of its 4 success criteria (#642) |
+| `AGENTIC_SEARCH_FOLLOW_UP_COS_MIN` | e5 cosine against the previous topic at or above which the follow-up resolver's semantic rule treats a turn as a continuation; defaults to `0.95`. Only read when `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` is on |
 
 `source_provider=auto` applies the sequential provider order to auto-routed search. Signing in narrows what that search returns rather than selecting a different path. Explicit modes and explicit providers retain their own execution contracts. See [API request routing](request-routing.md).
 
@@ -89,7 +91,8 @@ tokens are minted with a one-hour default lifetime; callers must renew them.
 | `AGENTIC_SEARCH_WORKLOAD_SUBJECTS` | `{}` | JSON subject-to-local-identity mapping; see the workload identity guide |
 | `AGENTIC_SEARCH_SUPER_USERS` | `[]` | JSON list of admin user IDs or emails |
 | `AGENTIC_SEARCH_WEB_DB_PATH` | `:memory:` | SQLite path (`:memory:` for ephemeral) |
-| `AGENTIC_SEARCH_METRICS_ENABLED` | `false` | Mount `GET /metrics`, the Prometheus exposition of `agentic_search_http_requests_total`, `agentic_search_http_request_duration_seconds` and `agentic_search_stage_duration_seconds`. The route is **unauthenticated**: restrict it at the network layer (ingress rule, internal-only port). Recording is always on; the flag only controls exposure. Metric definitions, coverage and PromQL for QPS, error, decision-round and tool-timeout rates: [operational metrics](observability-metrics.md). Single-process only (no `PROMETHEUS_MULTIPROC_DIR`); the image runs one uvicorn worker. Separately, `GET /ready` (always mounted, also public) returns 503 unless the store answers `SELECT 1` and the retrieval server's `/health` returns 2xx within `readiness.probe_timeout_seconds` ([timeouts](configuration/timeouts.md)); the compose healthchecks keep using the liveness `GET /health`, so pointing one at `/ready` is an operator choice |
+| `AGENTIC_SEARCH_TIMEOUTS_PATH` | — | TOML file overriding only the keys it names in the bundled `src/internal/configs/timeouts.toml` (tool, retrieval, LLM and escalation timeouts, retry counts, circuit breakers). Unknown keys and invalid values fail at startup; read once per process. See [timeouts](configuration/timeouts.md) |
+| `AGENTIC_SEARCH_METRICS_ENABLED` | `false` | Mount `GET /metrics`, the Prometheus exposition of the `agentic_search_*` metrics: HTTP requests and latency, stage latency, agent runs and decision rounds, tool attempts, stale-cache serves, circuit-breaker state, and readiness. The route is **unauthenticated**: restrict it at the network layer (ingress rule, internal-only port). Recording is always on; the flag only controls exposure. Metric definitions, coverage and PromQL for QPS, error, decision-round and tool-timeout rates: [operational metrics](observability-metrics.md). Single-process only (no `PROMETHEUS_MULTIPROC_DIR`); the image runs one uvicorn worker. Separately, `GET /ready` (always mounted, also public) returns 503 unless the store answers `SELECT 1` and the retrieval server's `/health` returns 2xx within `readiness.probe_timeout_seconds` ([timeouts](configuration/timeouts.md)); the compose healthchecks keep using the liveness `GET /health`, so pointing one at `/ready` is an operator choice |
 | `AGENTIC_SEARCH_IMAGE` | `agentic-search:local` | **Compose only** (`docker/docker-compose.yml`), not read by the app. The image the `retrieval` and `web` services run. Unset, `up --build` builds and tags `agentic-search:local` from source; set it to a published `ghcr.io/<owner>/agentic-search:sha-<sha>` tag and run `up --no-build` to deploy or roll back ([deploy](deploy.md)) |
 | `AGENTIC_SEARCH_MCP_USER_SCOPED` | — | Comma-separated MCP tool names to mark `user_scoped`, so they are withheld from callers with no user |
 | `AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH` | `false` | Refuse anonymous memory callers (`401`) instead of pooling them into the shared `default_user` bucket. Governs both `/api/memory/*` and the MCP memory tools |
@@ -149,7 +152,7 @@ falls through to the existing LLM/rule fallbacks.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg, using the bundled default table |
+| `QUERY_EXPANSION_ENABLED` | `false` | Enable acronym expansion in the BM25 leg, using a table derived from the corpus (bundled table as fallback). Measured to lower NDCG@10; see below |
 | `ACRONYM_PATH` | — | JSON file of `{"ACRONYM": "expansion"}`. Overrides both the corpus-derived and bundled tables |
 | `ACRONYM_CORPUS_PATH` | `BM25_CORPUS_PATH`, else `data/corpus.jsonl` | Corpus scanned for `long form (ABBR)` glosses to build the acronym table |
 | `SPELL_CORRECTION_ENABLED` | `false` | Enable `symspellpy` spell correction in BM25 leg. Requires the `symspellpy` package |
@@ -214,11 +217,11 @@ query-transform leg, on `eval_runner`.
 | `QT_ROUTER_MODEL_PATH` | — | Serialized scikit-learn router artifact; heuristic used when unset/missing |
 | `QT_CONSTRUCT_OPERATORS` | `false` | Extract numeric range/comparison filters (`rating_gte`/`rating_lte`) |
 
-## Routing and query construction
+## Routing
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `ROUTING_ENABLED` | `false` | Enable the per-query routing layer in `RetrievalService` (domain/source/retriever + query construction); zero overhead when unset |
+| `ROUTING_ENABLED` | `false` | Enable the per-query routing layer in `RetrievalService` (domain/source/retriever); zero overhead when unset |
 | `ROUTING_LOGICAL` | `false` | Add the LLM structured-classification router strategy (falls back to heuristic) |
 | `ROUTING_SEMANTIC` | `false` | Add the embedding-similarity router strategy (falls back to heuristic) |
 | `ROUTING_REGISTRY_PATH` | — | JSON route registry (`{name, description, sources, retriever}`); built-in default used when unset |

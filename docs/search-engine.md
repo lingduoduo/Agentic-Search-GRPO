@@ -39,8 +39,8 @@ parallel to `/chat/*` and `/tool/*`:
 In the web UI, the **Search** tab drives `send-search-message` and renders the
 returned documents directly (no answer panel).
 
-Searchable documents are prepared before query time by the existing asynchronous
-ingestion and indexing jobs. Filter-aware and degraded search paths use the
+Searchable documents are prepared before query time by the offline
+`index_builder`. Filter-aware and degraded search paths use the
 shared composed pipeline: bounded session history resolves follow-ups for
 retrieval, then candidates are ranked/reranked and used for evidence-grounded
 inference. Strong unfiltered auto-search remains a distinct direct-first path: it
@@ -193,7 +193,8 @@ which appear only under `?dev=1`.
 
 Three modes honor the field, because in each one a single caller-supplied query
 reaches a provider: the default auto mode, `search_tool`, and `hybrid_search`.
-`chat_once` performs no retrieval, and `chat_loop`, `search_agent`, and
+`chat_once` retrieves from the local corpus only, where the hint never applies,
+and `chat_loop`, `search_agent`, and
 `tool_agent` build their own per-round queries internally, so a non-`general`
 domain combined with an explicit one of those modes returns 400 rather than
 being dropped without notice. An unrecognized domain also returns 400, before
@@ -283,7 +284,7 @@ web search it already has in `web_search`. `NOT_AGENT_CALLABLE` in
 `search`/`search_routing_tool` pair, where a system prompt alone was tested and
 did not fix selection while the duplicates were present. They stay fully
 reachable through `/admin/tools` (always mounted) and MCP's own wrappers, and
-through `/api/debug/tools` when `AGENTIC_SEARCH_DEBUG_PANELS` is set.
+through `/api/debug/tools` (admin only) when `AGENTIC_SEARCH_DEBUG_PANELS` is set.
 `extract_page` is agent-callable, because nothing else seeded there fetches a
 URL.
 
@@ -337,13 +338,14 @@ Search with the resulting tag:
 For an untagged call, `domain` selects its web route. With a tag, the domain is
 inferred from the tag or validated against an explicitly supplied domain.
 Specialized routes receive the original query without appended topic words.
-`sub_domain` and `sub_domain_params` remain aliases for `tag` and `params`.
-Unknown tags, conflicting aliases, mismatched prefixes, and unsupported or
-missing capability parameters fail before dispatch. Provider-specific options
+Unknown tags, mismatched prefixes, and unsupported or missing capability
+parameters fail before dispatch. Provider-specific options
 must be present in the discovered schema; unsupported region/language options
 are not silently accepted. Set a supported language through capability params.
 
-`max_results` is capped at 10; a capability's `limit` is bounded by that cap.
+`max_results` is 1–10: through the tool registry a larger value is rejected by
+the tool schema, while the Python service clamps it. A capability's `limit` is
+bounded by `max_results`.
 Extraction defaults to 5,000 characters with a configurable maximum of 50,000,
 and reports fetch failures explicitly. Its text format follows the existing
 fetcher; it does not introduce additional file-format support.

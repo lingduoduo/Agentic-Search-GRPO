@@ -25,6 +25,26 @@ pytest tests/unit/test_reward.py tests/unit/test_grpo.py tests/unit/test_llm_age
 | `utils/test_license_expiry.py` | 18 parametrized `ExpiryWarningStage` boundary points |
 | `utils/test_tier.py` | `get_tier` + `tier_at_least` matrix |
 
+## What CI runs
+
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`:
+
+| Job | What it runs |
+|-----|--------------|
+| Python Lint | `ruff format --check .` and `ruff check .` |
+| Python Unit Tests | `pytest tests/unit/` on Python 3.10 (the `requires-python` floor) and 3.12 |
+| Prometheus alert rules | `promtool check rules` and `promtool test rules` over `deploy/prometheus/` |
+| Docker build context | builds `docker/Dockerfile.contract` (corpus in the build context, package registered) |
+| Docker image (full build) | builds the image, imports the ASGI app inside it, asserts no CUDA wheels and a non-root user |
+| Docker compose stack | `docker compose up --wait`, probes `/health` on 7860 and 8000, retrieves from the corpus |
+| Frontend | `npm run typecheck` and `npm run test:unit` |
+
+The unit job installs `pip install -e .` plus `requirements-unit-test.txt`,
+which leaves out torch, transformers, faiss and pyserini; tests that need them
+skip. Install the same two to reproduce CI locally. The unit job does not run
+`tests/regression/`. The eval gates live in `.github/workflows/eval-gate.yml`;
+see [Activating the eval gates](training-and-evaluation.md#activating-the-eval-gates).
+
 ## Opt-in integration tests
 
 Integration tests require a live server at `http://localhost:8080` by default:
@@ -42,14 +62,17 @@ python -m dotenv -f .env run -- pytest -s tests/integration/tests/path_to/test_f
 python -m dotenv -f .env run -- pytest -s tests/integration/tests/path_to/test_file.py::test_function_name
 ```
 
-Some individual tests require the mock connector server:
+The integration suite is Onyx heritage and still describes much of an API this
+app no longer serves. Tests that could reach nothing the app serves have been
+removed, including the indexing tests and the only fixture that used the mock
+connector server. Of the 94 remaining test files, 11 reach only served
+endpoints and 66 call both served and removed ones, so expect failures that say
+nothing about the current app. Re-measure the drift with:
 
 ```bash
-cd tests/integration/mock_services
-docker compose -f docker-compose.mock-it-services.yml -p mock-it-services-stack up -d
+python -m examples.audit_integration_endpoints              # summary + removed endpoints
+python -m examples.audit_integration_endpoints --show-files # per-file buckets
 ```
-
-If the main stack uses a non-default name, update the compose file's network to `<your stack name>_default`.
 
 ## Frontend checks
 
@@ -84,12 +107,16 @@ curl -s "https://serpapi.com/search.json?engine=google&q=what+is+FAISS&api_key=$
 
 ### Browser-backed retrieval
 
+The server wraps a `playwright-cli` binary, which must be on `PATH`: the
+`playwright` pip wheel does not provide it, and the container image does not
+install it. Without it the server refuses to start rather than serving empty
+results.
+
 ```bash
-pip install playwright
-playwright install chromium
-curl -s --max-time 30 -X POST http://127.0.0.1:8002/retrieve \
+python3 -m src.internal.servers.web_search.browser --port 8003
+curl -s --max-time 30 -X POST http://127.0.0.1:8003/retrieve \
   -H 'Content-Type: application/json' \
-  -d '{"query":"what is FAISS","top_k":5}' | python3 -m json.tool
+  -d '{"queries":["what is FAISS"]}' | python3 -m json.tool
 ```
 
 ### Request routing and provider fallback
