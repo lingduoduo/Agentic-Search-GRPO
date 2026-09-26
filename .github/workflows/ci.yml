@@ -57,6 +57,30 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit/ -q --tb=short
 
+  alert-rules:
+    name: Prometheus alert rules
+    runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_VERSION: "3.13.2"
+      # From the release's sha256sums.txt; the download is refused on mismatch.
+      PROMETHEUS_SHA256: "0e8c4d46101bd025ea8265e377d2caabc57f488fc1be1c367f37db69ea41be6f"
+    steps:
+      - uses: actions/checkout@v4
+      # The pytest wrapper skips the promtool tests when promtool is absent, so
+      # without this job CI never evaluated a single alert expression.
+      - name: Install promtool (checksum-verified)
+        run: |
+          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -fsSLo "$tarball" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tarball}"
+          echo "${PROMETHEUS_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          ./promtool --version
+      - name: Check and test the alert rules
+        run: |
+          ./promtool check rules deploy/prometheus/agentic-search-alerts.yml
+          cd deploy/prometheus && ../../promtool test rules agentic-search-alerts.test.yml
+
   docker-context:
     name: Docker build context
     runs-on: ubuntu-latest
