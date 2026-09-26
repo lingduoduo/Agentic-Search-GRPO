@@ -34,25 +34,25 @@ actionlint.
 
 ### Task 1: Tests (red)
 
-- [ ] **Workflow test.** Write `tests/unit/test_publish_workflow.py` per the
+- [x] **Workflow test.** Write `tests/unit/test_publish_workflow.py` per the
   spec's Testing section. PyYAML parses `on:` as `True`, so read
   `doc.get("on", doc.get(True))`.
-- [ ] **Compose contract test.** Add a test to
+- [x] **Compose contract test.** Add a test to
   `tests/unit/test_docker_stack_contract.py`: `retrieval` and `web` have
   `image == "${AGENTIC_SEARCH_IMAGE:-agentic-search:local}"` and a `build`.
-- [ ] **Run them.** Expect failures: the workflow is missing and compose has
+- [x] **Run them.** Expect failures: the workflow is missing and compose has
   no `image:`.
 
 ### Task 2: Workflow and compose (green)
 
-- [ ] **Workflow.** Write `.github/workflows/publish-image.yml`.
-- [ ] **Compose.** Add the `image:` lines to `docker/docker-compose.yml`.
-- [ ] **Run.** Run the tests and `actionlint`. Expect them to pass.
-- [ ] **Mutation checks.** These are in the spec.
+- [x] **Workflow.** Write `.github/workflows/publish-image.yml`.
+- [x] **Compose.** Add the `image:` lines to `docker/docker-compose.yml`.
+- [x] **Run.** Run the tests and `actionlint`. Expect them to pass.
+- [x] **Mutation checks.** These are in the spec.
 
 ### Task 3: Runbook and verification
 
-- [ ] **Runbook.** Write `docs/deploy.md`, and add the `AGENTIC_SEARCH_IMAGE`
+- [x] **Runbook.** Write `docs/deploy.md`, and add the `AGENTIC_SEARCH_IMAGE`
   row to `docs/configuration.md` if the documented-env-vars test requires it.
-- [ ] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
+- [x] **Verify.** Run the full unit suite, then ruff, then `git diff --check`.
   Open the PR.
