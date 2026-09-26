@@ -49,9 +49,13 @@ source as before.
 ```bash
 export AGENTIC_SEARCH_IMAGE=ghcr.io/<owner>/agentic-search:sha-<full sha>
 docker compose -f docker/docker-compose.yml pull retrieval web
-docker compose -f docker/docker-compose.yml up -d --no-build --wait
+docker compose --env-file .env -f docker/docker-compose.yml up -d --no-build --wait
 curl -fsS http://localhost:7860/ready   # 200 = store and retrieval reachable
 ```
+
+`--env-file .env` is where the runtime secrets come from: the compose file reads
+`GEN_AI_*` and `SERP_API_KEY` from it, or from the shell, and passes only those
+keys to the containers. Without it, the stack runs with an empty LLM key.
 
 ## Roll back
 
