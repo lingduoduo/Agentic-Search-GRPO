@@ -34,6 +34,7 @@ the routing path testable without it.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -179,27 +180,31 @@ def prefix_for(model_name: str) -> str:
 # request triggers it, forever. See intent.similarity._INTENT_INDEXES for the same
 # policy one layer up.
 _MODEL_CACHE: dict[str, object] = {}
+# Serving encodes from worker threads (#657): one cold load per encoder name.
+_MODEL_LOCK = threading.Lock()
 
 
 def _model(model_name: str):
     """Load and cache the encoder. Loading costs seconds; encoding costs ms."""
     cached = _MODEL_CACHE.get(model_name)
+    if cached is None:
+        with _MODEL_LOCK:
+            cached = _MODEL_CACHE.get(model_name)
+            if cached is None:
+                from sentence_transformers import SentenceTransformer
+
+                try:
+                    model = SentenceTransformer(model_name, device="cpu")
+                except Exception as exc:
+                    _MODEL_CACHE[model_name] = exc
+                    raise
+                _MODEL_CACHE[model_name] = model
+                return model
     if isinstance(cached, Exception):
         raise RuntimeError(
             f"intent encoder {model_name!r} failed to load previously; not retrying"
         ) from cached
-    if cached is not None:
-        return cached
-
-    from sentence_transformers import SentenceTransformer
-
-    try:
-        model = SentenceTransformer(model_name, device="cpu")
-    except Exception as exc:
-        _MODEL_CACHE[model_name] = exc
-        raise
-    _MODEL_CACHE[model_name] = model
-    return model
+    return cached
 
 
 def encode_texts(
