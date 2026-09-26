@@ -45,7 +45,7 @@
 **Interfaces:**
 - Produces: `InMemoryCache(clock: Callable[[], float] = time.monotonic)`; existing method signatures unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """InMemoryCache expiry: the TTL semantics Redis gives, in-process."""
@@ -162,12 +162,12 @@ def test_default_clock_is_monotonic():
     assert 0 < cache.ttl("k") <= 60
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/cache/test_in_memory_cache.py -q -p no:cacheprovider`
 Expected: FAIL (`InMemoryCache() got an unexpected keyword argument 'clock'`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/internal/cache/interface.py` add `import math`, `import time`, `from collections.abc import Callable`, then:
 
@@ -229,9 +229,9 @@ class InMemoryCache(CacheBackend):
 
 (keep the existing `set` type annotations; lock/rpush/blpop unchanged.)
 
-- [ ] **Step 4: Run to verify pass** — same command plus `tests/unit/cache/ tests/unit/memory/test_working_memory.py tests/unit/test_tool_backend.py`. Expected: PASS.
+- [x] **Step 4: Run to verify pass** — same command plus `tests/unit/cache/ tests/unit/memory/test_working_memory.py tests/unit/test_tool_backend.py`. Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git add src/internal/cache/interface.py tests/unit/cache/test_in_memory_cache.py && git commit -m "InMemoryCache honours ex, expire and ttl"`
+- [x] **Step 5: Commit** — `git add src/internal/cache/interface.py tests/unit/cache/test_in_memory_cache.py && git commit -m "InMemoryCache honours ex, expire and ttl"`
 
 ---
 
@@ -245,7 +245,7 @@ class InMemoryCache(CacheBackend):
 **Interfaces:**
 - Produces: `forget_session(cache: CacheBackend, session_id: str) -> None`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/unit/memory/test_working_memory.py` (add `import logging`, import `forget_session`):
 
@@ -308,9 +308,9 @@ def test_refused_delete_keeps_the_owners_working_memory(
     assert load_state(cache, session.id).summary == "secret"
 ```
 
-- [ ] **Step 2: Run to verify fail** — `.venv/bin/python -m pytest tests/unit/memory/test_working_memory.py tests/unit/test_chat_backend.py -q -p no:cacheprovider`. Expected: ImportError on `forget_session`.
+- [x] **Step 2: Run to verify fail** — `.venv/bin/python -m pytest tests/unit/memory/test_working_memory.py tests/unit/test_chat_backend.py -q -p no:cacheprovider`. Expected: ImportError on `forget_session`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `working.py`, after `save_state`:
 
@@ -334,9 +334,9 @@ def forget_session(cache: CacheBackend, session_id: str) -> None:
         forget_session(get_cache_backend(), session_id)
 ```
 
-- [ ] **Step 4: Run to verify pass** — same command plus `tests/unit/servers/web/test_chat_session_ownership.py`. Expected: PASS.
+- [x] **Step 4: Run to verify pass** — same command plus `tests/unit/servers/web/test_chat_session_ownership.py`. Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "Deleting a chat session deletes its working-memory state"`
+- [x] **Step 5: Commit** — `git commit -m "Deleting a chat session deletes its working-memory state"`
 
 ---
 
@@ -349,7 +349,7 @@ def forget_session(cache: CacheBackend, session_id: str) -> None:
 
 **Interfaces:** none new beyond the two module-level locks.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """The intent cold-load caches: two concurrent cold requests load once.
@@ -480,9 +480,9 @@ def test_concurrent_cold_load_failure_is_decided_once(monkeypatch):
         model_mod._model("some/encoder")
 ```
 
-- [ ] **Step 2: Run to verify fail** — `.venv/bin/python -m pytest tests/unit/test_intent_cache_concurrency.py -q -p no:cacheprovider`. Expected: all three FAIL with `loader.calls == 2`.
+- [x] **Step 2: Run to verify fail** — `.venv/bin/python -m pytest tests/unit/test_intent_cache_concurrency.py -q -p no:cacheprovider`. Expected: all three FAIL with `loader.calls == 2`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `similarity.py` (add `import threading`):
 
@@ -540,17 +540,17 @@ def _model(model_name: str):
     return cached
 ```
 
-- [ ] **Step 4: Run to verify pass** — new file plus `tests/unit/test_intent_encoder.py tests/unit/test_intent_routing.py tests/unit/test_ml_intent.py tests/unit/test_intent_evaluation.py tests/unit/test_run_agentic_search.py`. Expected: PASS.
+- [x] **Step 4: Run to verify pass** — new file plus `tests/unit/test_intent_encoder.py tests/unit/test_intent_routing.py tests/unit/test_ml_intent.py tests/unit/test_intent_evaluation.py tests/unit/test_run_agentic_search.py`. Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "Intent index and encoder load once under concurrent cold requests"`
+- [x] **Step 5: Commit** — `git commit -m "Intent index and encoder load once under concurrent cold requests"`
 
 ---
 
 ### Task 4: Mutation checks and final verification
 
-- [ ] Mutation 1: in `InMemoryCache.set` drop the `_expires` write (ignore `ex`) → expiry tests red. Restore, `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`.
-- [ ] Mutation 2: remove the `forget_session(...)` call from the route → `test_delete_session_forgets_its_working_memory` red. Restore, clear `__pycache__`.
-- [ ] Mutation 3: remove the lock in `load_intent_index` (replace `with _INTENT_INDEXES_LOCK:` by `if True:`) → index test red. Restore, clear.
-- [ ] Mutation 4: same for `_MODEL_LOCK` → both encoder tests red. Restore, clear.
-- [ ] `git diff` shows no source change after restoring.
-- [ ] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` (0 failures), `ruff check . && ruff format --check .`, `git diff --check origin/main...HEAD`.
+- [x] Mutation 1: in `InMemoryCache.set` drop the `_expires` write (ignore `ex`) → expiry tests red. Restore, `find src tests -name __pycache__ -type d -prune -exec rm -rf {} +`.
+- [x] Mutation 2: remove the `forget_session(...)` call from the route → `test_delete_session_forgets_its_working_memory` red. Restore, clear `__pycache__`.
+- [x] Mutation 3: remove the lock in `load_intent_index` (replace `with _INTENT_INDEXES_LOCK:` by `if True:`) → index test red. Restore, clear.
+- [x] Mutation 4: same for `_MODEL_LOCK` → both encoder tests red. Restore, clear.
+- [x] `git diff` shows no source change after restoring.
+- [x] `.venv/bin/python -m pytest tests/unit/ -q -p no:cacheprovider` (0 failures), `ruff check . && ruff format --check .`, `git diff --check origin/main...HEAD`.
