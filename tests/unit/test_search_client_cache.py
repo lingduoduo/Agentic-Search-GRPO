@@ -8,6 +8,7 @@ import asyncio
 
 import aiohttp
 import pytest
+from src.internal.observability.prometheus import REGISTRY
 
 from src.context.retrieval.client import SearchClient, SearchClientConfig
 from src.internal.cache import serving
@@ -291,3 +292,36 @@ def test_is_client_error_reads_the_cause():
     wrapped.__cause__ = _http_error(500)
     assert not _is_client_error(wrapped)
     assert not _is_client_error(_http_error(429))
+
+
+def _stale_serves() -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "agentic_search_stale_cache_serves_total", {"source": "retrieval"}
+        )
+        or 0.0
+    )
+
+
+def test_stale_serve_counts_once_per_call(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a", "b", "c"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    before = _stale_serves()
+    _run(_client().retrieve(["a", "b", "c"]))
+    assert _stale_serves() == before + 1
+
+
+def test_no_stale_serve_counts_nothing(monkeypatch, posts, stale_cache):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    before = _stale_serves()
+    _fail_with(monkeypatch, ConnectionError("down"))
+    with pytest.raises(RuntimeError):
+        _run(_client().retrieve(["a", "b"]))  # b has no stale row
+    _fail_with(monkeypatch, _http_error(400))
+    with pytest.raises(aiohttp.ClientResponseError):
+        _run(_client().retrieve(["a"]))
+    assert _stale_serves() == before

@@ -18,6 +18,7 @@ from urllib.parse import urlunsplit
 from ...context.search import SearchResult
 from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohttp
 from ..cache.serving import serving_cache
+from ..observability.prometheus import observe_stale_serve
 from ..configs.timeouts import get_timeout_policies
 from ..resilience.circuit_breaker import (
     CircuitOpenError,
@@ -591,6 +592,7 @@ async def search_tool(
                 provider,
                 query,
             )
+            observe_stale_serve("web")
             return [
                 replace(p, metadata={**p.metadata, "stale": True})
                 for p in copy.deepcopy(stale)

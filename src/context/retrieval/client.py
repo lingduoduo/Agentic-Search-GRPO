@@ -30,6 +30,7 @@ from urllib.parse import urlparse, urlunparse
 from src.context.search import SearchResult
 from src.internal.cache.serving import serving_cache
 from src.internal.configs.timeouts import get_timeout_policies
+from src.internal.observability.prometheus import observe_stale_serve
 from src.internal.observability.stage_metrics import note_retrieval
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ class SearchClient:
                     self.config.url,
                     len(missing),
                 )
+                observe_stale_serve("retrieval")
                 for index, row in zip(missing, stale):
                     rows_by_index[index] = copy.deepcopy(row)
                 results = [
