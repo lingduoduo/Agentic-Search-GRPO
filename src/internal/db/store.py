@@ -5,10 +5,12 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
+import logging
 import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -24,6 +26,27 @@ from .models import (
     UserRecord,
 )
 from src.internal.feedback.runtime import deterministic_capture
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Migration:
+    """One schema step. ``_MIGRATIONS[n]`` upgrades a database from n-1 to n.
+
+    ``breaks_older_readers``: set it when a build at an older schema could no
+    longer read the result correctly (a renamed/dropped column, a changed
+    meaning). Additive steps -- a new table, a nullable column -- leave it
+    False, so rolling back to an older build stays safe.
+    """
+
+    statements: tuple[str, ...]
+    breaks_older_readers: bool
+
+
+class SchemaVersionError(RuntimeError):
+    """The database needs a newer build than this one to be read safely."""
 
 
 def _now() -> str:
@@ -170,7 +193,11 @@ class AgenticSearchStore:
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._configure_connection()
-        self._init_schema()
+        try:
+            self._ensure_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         self._conn.close()
@@ -184,6 +211,96 @@ class AgenticSearchStore:
     def ping(self) -> None:
         """Raise unless the connection can run a query (the readiness probe)."""
         self._conn.execute("SELECT 1").fetchone()
+
+    #: The schema this build writes. Version 1 is everything _init_schema
+    #: produces; later versions come from _MIGRATIONS. See _ensure_schema.
+    SCHEMA_VERSION = 1
+    _MIGRATIONS: dict[int, Migration] = {}
+
+    def _ensure_schema(self) -> None:
+        """Bring the database to SCHEMA_VERSION, or refuse one this build cannot
+        read. ``PRAGMA user_version`` is the database's schema version;
+        ``schema_meta.min_reader_version`` is the oldest code schema that can
+        still read it (SQLite's own read/write-version model)."""
+        target = self.SCHEMA_VERSION
+        version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if version > target:
+            min_reader = self._read_min_reader()
+            if target < min_reader:
+                raise SchemaVersionError(
+                    f"{self.path}: database is at schema v{version} and requires a "
+                    f"build with schema >= {min_reader}; this build is v{target}. "
+                    "Deploy a newer build, or restore a backup taken before the "
+                    "upgrade."
+                )
+            # A rollback to a build that can still read it: write nothing.
+            logger.warning(
+                "%s: database is at schema v%d; this build is v%d and is compatible",
+                self.path,
+                version,
+                target,
+            )
+            return
+        # Version 1 is the baseline itself; every later step needs a migration.
+        missing = [
+            k
+            for k in range(max(version, 1) + 1, target + 1)
+            if k not in self._MIGRATIONS
+        ]
+        if missing:
+            raise RuntimeError(
+                f"{self.path}: no migration to schema v{missing[0]} "
+                f"(database v{version}, build v{target})"
+            )
+        # Idempotent baseline: creates a new database and completes one written
+        # before versioning. executescript commits, so never inside a step.
+        self._init_schema()
+        if version == 0:
+            # A new (or pre-versioning) database is now exactly the v1 baseline;
+            # stamp that, then run every later migration like any upgrade.
+            self._apply_step(1, (), min_reader=1)
+            version = 1
+        for step in range(version + 1, target + 1):
+            migration = self._MIGRATIONS[step]
+            self._apply_step(
+                step,
+                migration.statements,
+                min_reader=step if migration.breaks_older_readers else None,
+            )
+
+    def _apply_step(
+        self, version: int, statements: tuple[str, ...], *, min_reader: int | None
+    ) -> None:
+        """One transaction: the statements, the version bump and the meta row.
+        sqlite3 does not open transactions for DDL itself, hence BEGIN."""
+        self._conn.execute("BEGIN")
+        try:
+            for statement in statements:
+                self._conn.execute(statement)
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_meta "
+                "(key TEXT PRIMARY KEY, value INTEGER NOT NULL)"
+            )
+            if min_reader is not None:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO schema_meta (key, value) "
+                    "VALUES ('min_reader_version', ?)",
+                    (min_reader,),
+                )
+            self._conn.execute(f"PRAGMA user_version = {int(version)}")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
+
+    def _read_min_reader(self) -> int:
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'min_reader_version'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row[0]) if row else 0
 
     def _configure_connection(self) -> None:
         self._conn.execute("PRAGMA foreign_keys = ON")
