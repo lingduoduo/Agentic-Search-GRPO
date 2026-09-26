@@ -39,6 +39,7 @@ class ServiceSettings:
     retrieval_url: str = DEFAULT_RETRIEVAL_URL
     fetch_url: str | None = None
     rerank_url: str | None = None
+    browser_search_url: str | None = None
     web_db_path: str | Path = DEFAULT_WEB_DB_PATH
     web_top_k: int = 5
     # TTL of the process-local serving cache (retrieval rows, web-provider
@@ -302,6 +303,9 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
             ),
             fetch_url=get_env_str(source, "AGENTIC_SEARCH_FETCH_URL", None),
             rerank_url=get_env_str(source, "AGENTIC_SEARCH_RERANK_URL", None),
+            browser_search_url=get_env_str(
+                source, "AGENTIC_SEARCH_BROWSER_SEARCH_URL", None
+            ),
             web_db_path=get_env_str(
                 source, "AGENTIC_SEARCH_WEB_DB_PATH", DEFAULT_WEB_DB_PATH
             ),
