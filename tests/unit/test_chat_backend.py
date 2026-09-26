@@ -9,7 +9,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.internal.auth import AuthenticatedUser
+from src.internal.cache.interface import InMemoryCache
 from src.internal.db import AgenticSearchStore, UserRecord
+from src.internal.memory.working import SessionMemoryState, load_state, save_state
+from src.internal.servers.query_and_chat import chat_backend
 from src.internal.servers.query_and_chat.chat_backend import create_chat_router
 
 _USER_ID = "u-test-1"
@@ -510,3 +513,32 @@ def test_send_chat_compresses_only_when_direct_compression_is_on(
         assert (tasks[0] is not None) is compression
         if compression:
             assert client.portal.call(_await, tasks[0]) is True
+
+
+def test_delete_session_forgets_its_working_memory(
+    client: TestClient, store: AgenticSearchStore, monkeypatch: pytest.MonkeyPatch
+):
+    cache = InMemoryCache()
+    monkeypatch.setattr(chat_backend, "get_cache_backend", lambda: cache)
+    session = store.create_chat_session(user_id=_USER_ID)
+    save_state(cache, session.id, SessionMemoryState(summary="secret"))
+
+    resp = client.delete(f"/chat/delete-chat-session/{session.id}")
+
+    assert resp.status_code == 200
+    assert load_state(cache, session.id) == SessionMemoryState()
+
+
+def test_refused_delete_keeps_the_owners_working_memory(
+    client: TestClient, store: AgenticSearchStore, monkeypatch: pytest.MonkeyPatch
+):
+    cache = InMemoryCache()
+    monkeypatch.setattr(chat_backend, "get_cache_backend", lambda: cache)
+    store.upsert_user(UserRecord(id="u-other", email="other@example.com"))
+    session = store.create_chat_session(user_id="u-other")
+    save_state(cache, session.id, SessionMemoryState(summary="secret"))
+
+    resp = client.delete(f"/chat/delete-chat-session/{session.id}")
+
+    assert resp.status_code == 404
+    assert load_state(cache, session.id).summary == "secret"

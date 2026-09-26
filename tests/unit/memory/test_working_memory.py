@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import types
 
@@ -12,6 +13,7 @@ from src.internal.cache.interface import InMemoryCache
 from src.internal.db import AgenticSearchStore
 from src.internal.memory import working
 from src.internal.memory.working import (
+    forget_session,
     SESSION_MEMORY_TTL_SECONDS,
     SUMMARY_PREFIX,
     SessionMemoryState,
@@ -867,3 +869,28 @@ def test_compress_first_summary_writes_despite_failed_reread(store):
     state = load_state(cache, sid)
     assert state.summary == "S"
     assert state.summarized_through == records[1].id
+
+
+def test_forget_session_removes_the_state(cache):
+    save_state(cache, "sid", SessionMemoryState(summary="s"))
+    forget_session(cache, "sid")
+    assert cache.get("session_memory:sid") is None
+    assert load_state(cache, "sid") == SessionMemoryState()
+
+
+def test_forget_session_without_state_is_a_quiet_no_op(cache, caplog):
+    with caplog.at_level(logging.WARNING, logger="src.internal.memory.working"):
+        forget_session(cache, "never-stored")
+    assert caplog.records == []
+
+
+def test_forget_session_swallows_and_logs_a_cache_failure(caplog):
+    class BrokenCache(InMemoryCache):
+        def delete(self, key):
+            raise ConnectionError("cache down")
+
+    with caplog.at_level(logging.WARNING, logger="src.internal.memory.working"):
+        forget_session(BrokenCache(), "sid")
+    assert any(
+        r.levelno == logging.WARNING and "sid" in r.getMessage() for r in caplog.records
+    )
