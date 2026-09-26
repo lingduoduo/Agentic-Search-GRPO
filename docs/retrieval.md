@@ -261,7 +261,7 @@ ChunkingConfig(semantic_chunking=True, semantic_breakpoint_percentile=90.0)
 |--------|-------------|
 | `google.py` | Google Custom Search proxy |
 | `serp.py` | SerpAPI proxy |
-| `browser.py` | playwright-cli browser automation; no API key, ~5–10s/query. Host-only: needs a `playwright-cli` binary on `PATH` (not the `playwright` pip wheel, not in the image) and refuses to start without one |
+| `browser.py` | playwright-cli browser automation; no API key, ~30–50s/query. Host-only: needs a `playwright-cli` binary on `PATH` (not the `playwright` pip wheel, not in the image) and refuses to start without one |
 
 **Start a retrieval server:**
 

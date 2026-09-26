@@ -12,8 +12,10 @@ request into it. For the authoritative deep dives, see
   grounded synthesis.
 - **Dense, sparse, and hybrid retrieval** — RRF fusion, reranking, and query
   optimization workflows over the local corpus and indexes.
-- **Web search** — Google Custom Search, SerpAPI, and browser automation as
-  fall-through sources when internal retrieval is insufficient.
+- **Web search** — SerpAPI, then browser automation (when
+  `AGENTIC_SEARCH_BROWSER_SEARCH_URL` is set), as fall-through sources when
+  internal retrieval is insufficient. Google Custom Search is available only as
+  an explicit `source_provider`.
 
 ## Request routing
 

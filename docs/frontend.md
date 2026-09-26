@@ -67,8 +67,9 @@ Debug panels also require an authenticated admin when enabled. Their request
 traces and retrieval diagnostics use the same admin guard as the dashboard;
 the debug enablement flag alone does not grant access.
 
-The web UI includes admin panels — **Connectors, Manage tools, History, Admin
-overview, Analytics** (top-bar buttons + the observability panels). The tools
+The web UI includes admin panels. **Manage tools** and **History** are top-bar
+buttons; **Admin overview** and **Analytics** render below the results once their
+data loads. The tools
 button is labelled *Manage tools*, not *Tools*: the `/tools` nav link goes to the
 tool-agent page instead, and the two used to share a label. They call the
 `/admin/*` and `/analytics/*` routers, which are **admin-authenticated**. Two
@@ -90,9 +91,8 @@ never set this in production.** Without the flag the endpoints return `401` and
 you'd need an admin JWT in the `fastapiusersauth` cookie instead.
 
 Clicking a top-bar button toggles its panel below the observability panels
-(scroll down to see it). Empty panels — e.g. **Connectors** showing "No connectors
-configured", **Manage tools** empty — are expected when nothing is configured locally,
-not an error.
+(scroll down to see it). Empty panels — e.g. **Manage tools** with no registered
+tools — are expected when nothing is configured locally, not an error.
 
 ## Dev console
 
@@ -153,7 +153,7 @@ curl -s -X POST http://localhost:7860/api/agent \
 
 **Tool Call Trace Panel** — When the agent runs in `tool` mode, a panel below the answer shows every tool call: name, status (✓ / ✗), arguments as JSON, result summary (first 200 chars or "N items" for lists), and latency in ms. Failed calls render with a red border and the error message.
 
-**Intent-adaptive layout** — `App.tsx` reads `response.intent` (set from the `done` SSE event via `setIntent`) and applies `intent-${intent}` to the `.results-layout` container; when `intent` is undefined no class is added and the layout falls back to the default single-column stack. The behaviour is **CSS-only** — `styles.css` rules consume the class to reflow the existing panels (no extra components), keyed off stable hooks `.answer-column`, `.sources-panel`, `.session-panel`, and `.tool-trace-panel`:
+**Intent-adaptive layout** — `AssistPage.tsx` reads `response.intent` (set from the `done` SSE event via `setIntent`) and applies `intent-${intent}` to the `.results-layout` container; when `intent` is undefined no class is added and the layout falls back to the default single-column stack. The behaviour is **CSS-only** — `styles.css` rules consume the class to reflow the existing panels (no extra components), keyed off stable hooks `.answer-column`, `.sources-panel`, `.session-panel`, and `.tool-trace-panel`:
 
 | Intent | `.results-layout` class | Layout |
 |--------|--------|--------|
@@ -181,9 +181,8 @@ The intent itself comes from the backend's routing decision — see the `respons
 | `ToolCallTracePanel` | Per-tool-call trace (name, ✓/✗ status, JSON args, result summary, latency) for `tool` intent |
 | `AdminOverview` | Single-call health snapshot — connectors, indexing, users, auth, models, tools, analytics with a composite health score |
 | `AnalyticsDashboard` | Usage breakdowns by LLM, persona, and flow (`getAnalyticsBy*`) |
-| `ConnectorPanel` | Lists configured connectors and their sync/index status |
 | `QueryHistoryPanel` | Per-user query history with CSV export (`getQueryHistory`) |
-| `ToolPanel` | Admin view of MCP/OpenAPI tools registered via `tool_registry` |
+| `ToolAdminPanel` | Admin view of MCP/OpenAPI tools registered via `tool_registry` |
 
 API client functions live in `web/src/api.ts`: `runAgent` / `streamAgent` (SSE), `createSession` / `getSession`, `getAdminSummary`, `getAnalyticsByLLM` / `getAnalyticsByPersona` / `getAnalyticsByFlow`, `getQueryHistory`, `getAuditSummary`, `submitFeedback`.
 

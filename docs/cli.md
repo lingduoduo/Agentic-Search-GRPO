@@ -191,7 +191,7 @@ just because it exists:
 | Package | LOC | Status |
 |---|---|---|
 | `tui/` (13 files) | ~2,140 | A full bubbletea chat TUI — splash, SSH auth, status bar, scrollback viewport, `/configure`. Complete and tested; **no `main` package launches it.** Needs an entry point (a `cmd/tui` binary, or bare `query` with no args). |
-| `parser/`, `api/stream.go`, `models/events.go` | 976 | NDJSON stream-event parsing for `POST /api/chat/send-chat-message`. Reached only from `tui/`. That endpoint **does** exist. |
+| `parser/`, `api/stream.go`, `models/events.go` | 976 | NDJSON stream-event parsing for `POST /chat/send-chat-message`. Reached only from `tui/`. The endpoint exists but streams **SSE** (`data: {...}` frames), which `ParseStreamLine` rejects as malformed, so the parser needs an SSE reader before the TUI can use it. |
 | `overflow/`, `fsutil/`, `browser/` | 458 | Pager writer, skill-file installer, browser opener — TUI support code. |
 | `starprompt/` | 83 | One-time "star us on GitHub" prompt, shown before the TUI. |
 | `embedded/` + `SKILL.md` | 7 + doc | An agent skill embedded into a binary named `agentic-search`, which this repo does not build. |
