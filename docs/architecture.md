@@ -91,6 +91,24 @@ comes from the lock, not from SQLite. Anything long-running must therefore stay 
 of a store call, and code that blocks (model generation, answer synthesis) belongs
 on a worker thread — see `asyncio.to_thread` in the agent paths.
 
+**The store's schema is versioned.** `PRAGMA user_version` records the schema
+version, and `AgenticSearchStore.SCHEMA_VERSION = 1` is today's schema, which
+is everything `_init_schema` creates. `schema_meta.min_reader_version` records
+the oldest build that can still read the database.
+
+To change the schema:
+- add `_MIGRATIONS[n] = Migration(statements=(...), breaks_older_readers=...)`
+  and bump `SCHEMA_VERSION` to `n`;
+- each migration applies in its own transaction when a store opens.
+
+Set `breaks_older_readers=True` only when an older build could no longer read
+the result correctly, for example after a renamed or dropped column. Additive
+changes, such as a new table or a nullable column, leave it `False`.
+
+On rollback, an older build still opens a newer database when its version is
+at least the min reader version, and writes nothing to the schema. Otherwise
+it refuses with `SchemaVersionError`.
+
 ## Agent framework and control flow
 
 The agent layer (`src/agents/`) behind every loop the [Web backend API](api-reference.md#web-backend-api) and [runnable agent examples](training-and-evaluation.md#agent-cli) drive.
