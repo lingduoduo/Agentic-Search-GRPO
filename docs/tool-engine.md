@@ -28,6 +28,13 @@ order and response metadata (tool calls are surfaced as `tool_calls`).
 
 ## Dedicated tool-agent surface (`/tool/*`)
 
+Diagrams in the README:
+- [Tool-calling sequence](../README.md#tool-calling-sequence): generate, then
+  approval, then parallel execution, then recovery or escalation, then the SSE
+  events.
+- [Tool-call states](../README.md#tool-call-states): each call's path to its
+  `TaskStatus`.
+
 Beyond the unified `/api/agent`, the tool engine has its own conversational
 surface, parallel to `/search/*` and `/chat/*`:
 

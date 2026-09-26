@@ -19,9 +19,140 @@ Agentic Search is a retrieval-backed platform for building multi-turn search, RA
 
 ## Architecture
 
-[![Architecture](agentic-search-grpo-architecture.png)](agentic-search-grpo-architecture.html)
+The web backend routes each `/api/agent` request to a chat, search, or tool agent; the direct Search, Chat, and Tools pages call their engines without routing. Retrieval, reranking, and browser search run as separate services, and every dependency the agents call is behind a degradation path. See [Architecture](docs/architecture.md) for the repository layout and request flows.
 
-*Click the image to open the interactive version. See [Architecture](docs/architecture.md) for the repository layout and request flows.*
+```mermaid
+flowchart LR
+    subgraph clients["Clients"]
+        UI["React UI :5173<br/>Assist · Search · Chat · Tools"]
+        CLI["Go CLIs · MCP clients"]
+    end
+
+    subgraph web["FastAPI web backend :7860"]
+        API["POST /api/agent · /search · /chat · /tool<br/>GET /ready · /metrics"]
+        Router["recognize_intent<br/>regex → kNN model → LLM classifier<br/>→ rules → clarify"]
+        Chat["AgenticRAGLoop<br/>chat route"]
+        Search["Search route<br/>direct gate → SerpAPI → browser<br/>SearchAgentLoop escalation"]
+        Tool["ToolAgentLoop<br/>tool calling"]
+        Plain["PlainGenerationLoop<br/>/chat, local model"]
+        Pipeline["SearchPipeline<br/>retrieve → dedup · rerank · MMR → grounded answer<br/>also the model-unavailable fallback"]
+        Registry["Tool registry<br/>public-data tools · web_search · MCP · OpenAPI"]
+        Resilience["Circuit breakers · stale-on-error cache<br/>token-budgeted working memory"]
+        Store[("SQLite store<br/>sessions · summaries · schema v1")]
+    end
+
+    subgraph services["Services"]
+        Retrieval["Retrieval :8000<br/>demo TF-IDF or hybrid dense+sparse"]
+        Rerank["Reranker :8002<br/>optional"]
+        Browser["Browser search :8003<br/>optional"]
+        SerpAPI["SerpAPI"]
+        LLM["LLM<br/>remote OpenAI-compatible or local model"]
+    end
+
+    Offline["Offline<br/>index_builder → indexes<br/>post-training SFT · DPO · GRPO"]
+    Prom["Prometheus<br/>deploy/prometheus alert rules"]
+
+    UI -->|"/api/* via Vite proxy"| API
+    CLI --> API
+    API -->|"/api/agent auto"| Router
+    Router --> Chat
+    Router --> Search
+    Router --> Tool
+    API -->|"/tool"| Tool
+    API -->|"/chat"| Plain
+    Chat --> Pipeline
+    Search --> Pipeline
+    Tool --> Registry
+    Pipeline --> Retrieval
+    Pipeline --> Rerank
+    Search --> SerpAPI
+    Search --> Browser
+    Registry --> SerpAPI
+    Chat --> LLM
+    Tool --> LLM
+    Plain --> LLM
+    API --> Store
+    Resilience -.-> Pipeline
+    Resilience -.-> Registry
+    Offline -.-> Retrieval
+    Prom -.->|"scrape"| API
+```
+
+### Tool-calling sequence
+
+How `ToolAgentLoop` runs one request, on the Tools page or the `/api/agent` tool route. Approval and escalation reach the user as SSE events; see [Tool engine](docs/tool-engine.md).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant API as /tool/send-tool-message<br/>or /api/agent tool route
+    participant L as ToolAgentLoop
+    participant M as Model
+    participant R as ToolRegistry
+    participant P as RecoveryPolicy
+
+    U->>API: message, stream=true
+    API->>L: run(messages, on_approval, on_escalation)
+    loop until no tool calls, or turn / length / prompt budget reached (max 10 assistant turns)
+        L->>M: generate — one decision round
+        M-->>L: text and tool calls (at most 4 run per turn)
+        opt a call's tool is not READ_ONLY
+            L-->>U: SSE approval_required
+            U->>API: approve or deny (expires after 60 s)
+        end
+        par each approved call
+            L->>R: invoke_detailed(name, args)
+            R-->>L: result, or a typed ToolFailure
+            alt call failed
+                L->>P: decide(failure, effect, retries, budget)
+                P-->>L: retry, feed back, unavailable, or escalate
+                opt escalate — tool is not READ_ONLY
+                    L-->>U: SSE escalation_required
+                    U->>API: retry, skip, or cancel (expires after 120 s)
+                end
+            end
+        end
+        L-->>U: SSE progress, one per executed call
+        L->>L: append results as role=tool messages
+    end
+    L-->>API: final answer + tool_recovery summary
+    API-->>U: SSE tool_call per call, then answer, then done
+```
+
+### Tool-call states
+
+What happens to a single tool call. Each end state is the `TaskStatus` recorded for it; the retry, feed-back, unavailable, and escalate branches are `RecoveryPolicy`'s decision.
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> ApprovalGate
+    ApprovalGate --> Executing: READ_ONLY tool, or the user approves
+    ApprovalGate --> Skipped: denied, expired, or no approver
+    Executing --> Skipped: tool already unavailable this run
+    Executing --> Completed: success
+    Executing --> Deciding: typed ToolFailure
+    Deciding --> Backoff: RETRY — read-only, transient, budget left
+    Backoff --> Executing: after a jittered delay
+    Deciding --> FedBack: FEED_BACK — invalid input or not found
+    Deciding --> Unavailable: UNAVAILABLE — no retry left or not retryable
+    Deciding --> Escalated: ESCALATE — tool is not READ_ONLY
+    Escalated --> Executing: user chooses retry
+    Escalated --> Unavailable: user chooses skip
+    Escalated --> RunStopped: cancel, expired, no callback, or cap
+    Completed --> [*]
+    FedBack --> [*]
+    Unavailable --> [*]
+    Skipped --> [*]
+    RunStopped --> [*]
+
+    Completed: Completed — COMPLETED
+    FedBack: FedBack — FAILED, error goes back to the model
+    Unavailable: Unavailable — FAILED, later calls to it are SKIPPED
+    Skipped: Skipped — SKIPPED
+    RunStopped: RunStopped — FAILED, the run ends with a fixed answer
+```
 
 ## Prerequisites
 
