@@ -44,7 +44,7 @@
 **Interfaces:**
 - Produces: `observe_stale_serve(source: str) -> None` in `src.internal.observability.prometheus`; sample name `agentic_search_stale_cache_serves_total`, label `source`.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/unit/observability/test_prometheus.py`, add `observe_stale_serve` and `import pytest`)
+- [x] **Step 1: Write the failing tests** (append to `tests/unit/observability/test_prometheus.py`, add `observe_stale_serve` and `import pytest`)
 
 ```python
 def _stale(source: str) -> float:
@@ -65,9 +65,9 @@ def test_observe_stale_serve_rejects_an_unknown_source():
     assert _stale("rerank") == 0.0
 ```
 
-- [ ] **Step 2: Run** `.venv/bin/python -m pytest tests/unit/observability/test_prometheus.py -q -p no:cacheprovider` — expect ImportError on `observe_stale_serve`.
+- [x] **Step 2: Run** `.venv/bin/python -m pytest tests/unit/observability/test_prometheus.py -q -p no:cacheprovider` — expect ImportError on `observe_stale_serve`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 _STALE_SERVES = Counter(
@@ -85,13 +85,13 @@ def observe_stale_serve(source: str) -> None:
     _STALE_SERVES.labels(source).inc()
 ```
 
-- [ ] **Step 4: Docs.** In `docs/observability-metrics.md`: add the table row; add a "Stale cache serves" semantics paragraph (web = `search_tool` fallback, retrieval = `SearchClient.retrieve` fallback, once per serving call, a stale-answered tool call still counts as tool `success`); add the query
+- [x] **Step 4: Docs.** In `docs/observability-metrics.md`: add the table row; add a "Stale cache serves" semantics paragraph (web = `search_tool` fallback, retrieval = `SearchClient.retrieve` fallback, once per serving call, a stale-answered tool call still counts as tool `success`); add the query
 
 ```promql
 sum by (source) (rate(agentic_search_stale_cache_serves_total[5m]))
 ```
 
-- [ ] **Step 5: Run tests** — pass. **Commit** `Metrics: a stale-cache serve counter by source`.
+- [x] **Step 5: Run tests** — pass. **Commit** `Metrics: a stale-cache serve counter by source`.
 
 ### Task 2: A retrieval 4xx is never answered from stale rows
 
@@ -103,7 +103,7 @@ sum by (source) (rate(agentic_search_stale_cache_serves_total[5m]))
 **Interfaces:**
 - Produces: module-private `_is_client_error(exc: BaseException) -> bool`.
 
-- [ ] **Step 1: Write the failing tests** (append; add `import aiohttp` at top)
+- [x] **Step 1: Write the failing tests** (append; add `import aiohttp` at top)
 
 ```python
 def _http_error(status: int) -> aiohttp.ClientResponseError:
@@ -148,9 +148,9 @@ def test_is_client_error_reads_the_cause():
     assert not _is_client_error(_http_error(429))
 ```
 
-- [ ] **Step 2: Run** — the 400/403 tests and `test_is_client_error_reads_the_cause` fail (stale served / ImportError); 429/503/500 pass already.
+- [x] **Step 2: Run** — the 400/403 tests and `test_is_client_error_reads_the_cause` fail (stale served / ImportError); 429/503/500 pass already.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def _is_client_error(exc: BaseException) -> bool:
@@ -181,9 +181,9 @@ and in `retrieve`:
 
 and update the comment above it to mention the 4xx rule.
 
-- [ ] **Step 4: Docs.** `docs/retrieval.md`: a 4xx other than 429 is raised, never answered from stale rows.
+- [x] **Step 4: Docs.** `docs/retrieval.md`: a 4xx other than 429 is raised, never answered from stale rows.
 
-- [ ] **Step 5: Run tests** — pass. **Commit** `Retrieval: a 4xx is raised, never answered from stale rows`.
+- [x] **Step 5: Run tests** — pass. **Commit** `Retrieval: a 4xx is raised, never answered from stale rows`.
 
 ### Task 3: Count each stale serve
 
@@ -195,7 +195,7 @@ and update the comment above it to mention the 4xx rule.
 **Interfaces:**
 - Consumes: `observe_stale_serve` from Task 1; `_is_client_error` behaviour from Task 2.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/unit/test_search_client_cache.py`:
 
@@ -268,13 +268,13 @@ def test_failure_without_stale_entry_counts_nothing(serp, stale_cache, failure):
     assert _stale_serves() == before
 ```
 
-- [ ] **Step 2: Run** — the two "counts once/one" tests fail; the "counts nothing" tests pass.
+- [x] **Step 2: Run** — the two "counts once/one" tests fail; the "counts nothing" tests pass.
 
-- [ ] **Step 3: Implement.** `client.py`: `from src.internal.observability.prometheus import observe_stale_serve`; call `observe_stale_serve("retrieval")` right after the stale `logger.info`. `search.py`: `from ..observability.prometheus import observe_stale_serve`; call `observe_stale_serve("web")` right after its stale `logger.info`.
+- [x] **Step 3: Implement.** `client.py`: `from src.internal.observability.prometheus import observe_stale_serve`; call `observe_stale_serve("retrieval")` right after the stale `logger.info`. `search.py`: `from ..observability.prometheus import observe_stale_serve`; call `observe_stale_serve("web")` right after its stale `logger.info`.
 
-- [ ] **Step 4: Run** both files + `tests/unit/observability/`; run the torch-blocked import probe (`sys.meta_path` finder raising for `torch`, then import `src.context.retrieval.client` and `src.internal.tools.search`) — expect `ok False`.
+- [x] **Step 4: Run** both files + `tests/unit/observability/`; run the torch-blocked import probe (`sys.meta_path` finder raising for `torch`, then import `src.context.retrieval.client` and `src.internal.tools.search`) — expect `ok False`.
 
-- [ ] **Step 5: Commit** `Stale serves are counted on /metrics (web and retrieval)`.
+- [x] **Step 5: Commit** `Stale serves are counted on /metrics (web and retrieval)`.
 
 ### Task 4: Pin the stale-row copy; document the ACL window
 
@@ -282,7 +282,7 @@ def test_failure_without_stale_entry_counts_nothing(serp, stale_cache, failure):
 - Test: `tests/unit/test_search_client_cache.py`
 - Modify: `docs/retrieval.md`
 
-- [ ] **Step 1: Write the test** (passes today; its red is proven by the mutation check in Step 2)
+- [x] **Step 1: Write the test** (passes today; its red is proven by the mutation check in Step 2)
 
 ```python
 def test_mutating_a_stale_result_cannot_poison_the_next_stale_serve(
@@ -298,11 +298,11 @@ def test_mutating_a_stale_result_cannot_poison_the_next_stale_serve(
     assert second[0][0].metadata == {"acl": ["public"], "stale": True}
 ```
 
-- [ ] **Step 2: Mutation.** Change `rows_by_index[index] = copy.deepcopy(row)` (stale loop) to `= row`; the test must go red; restore; delete `__pycache__` under `src/context/retrieval`.
+- [x] **Step 2: Mutation.** Change `rows_by_index[index] = copy.deepcopy(row)` (stale loop) to `= row`; the test must go red; restore; delete `__pycache__` under `src/context/retrieval`.
 
-- [ ] **Step 3: Docs.** `docs/retrieval.md` serving-cache section: "During a retrieval outage, a document made private can still be served from a stale row for up to TTL + grace, 65 minutes by default; set `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS=0` where that is unacceptable."
+- [x] **Step 3: Docs.** `docs/retrieval.md` serving-cache section: "During a retrieval outage, a document made private can still be served from a stale row for up to TTL + grace, 65 minutes by default; set `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS=0` where that is unacceptable."
 
-- [ ] **Step 4: Commit** `Tests: a mutated stale result cannot poison the next stale serve; document the ACL window`.
+- [x] **Step 4: Commit** `Tests: a mutated stale result cannot poison the next stale serve; document the ACL window`.
 
 ### Final verification
 
