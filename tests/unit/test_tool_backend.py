@@ -451,3 +451,66 @@ def test_send_tool_compresses_only_when_direct_compression_is_on(
         assert (tasks[0] is not None) is compression
         if compression:
             assert client.portal.call(_await, tasks[0]) is True
+
+
+async def test_tool_stream_cancels_the_run_when_the_client_disconnects(monkeypatch):
+    """A disconnect must stop the agent run, not orphan it mid tool call.
+
+    Driven over raw ASGI so the ``http.disconnect`` really reaches the app.
+    """
+    import asyncio
+
+    from src.internal.servers.web import tool_agent_runner
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def fake_run_tool_agent(query, *, on_turn=None, **kw):
+        await on_turn(1, "search", 3)
+        started.set()
+        try:
+            await asyncio.sleep(30)  # a long tool call
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return ("never", [], [], "tool", {"tool_calls": [], "num_turns": 1})
+
+    monkeypatch.setattr(tool_agent_runner, "_run_tool_agent", fake_run_tool_agent)
+    app = _make_app(with_model=True)
+
+    body = json.dumps({"message": "go", "stream": True}).encode()
+    inbox: asyncio.Queue = asyncio.Queue()
+    await inbox.put({"type": "http.request", "body": body, "more_body": False})
+    first_frame = asyncio.Event()
+
+    async def receive():
+        return await inbox.get()
+
+    async def send(message):
+        if message["type"] == "http.response.body" and b"progress" in message.get(
+            "body", b""
+        ):
+            first_frame.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/tool/send-tool-message",
+        "raw_path": b"/tool/send-tool-message",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("test", 1),
+        "server": ("test", 80),
+        "app": app,
+    }
+    serving = asyncio.create_task(app(scope, receive, send))
+    await asyncio.wait_for(first_frame.wait(), 5)
+    assert started.is_set()
+
+    await inbox.put({"type": "http.disconnect"})
+    await asyncio.wait_for(cancelled.wait(), 5)
+    await asyncio.wait_for(serving, 5)

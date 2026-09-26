@@ -248,7 +248,7 @@ Common routing metadata in `hook_metadata`:
 | Key | Example | Meaning |
 |---|---|---|
 | `mode` | `auto` | Dispatcher mode used for the request. |
-| `route` | `search` | Strategy selected by the auto-router. |
+| `route` | `search` | Strategy selected by the auto-router. Absent when `route_degraded` is `model_unavailable`: the route is chosen inside the call that failed, so the search-only fallback cannot report it. |
 | `route_degraded` | `no_llm`, `no_local_model`, `tool_unavailable`, `model_unavailable` | Required capability was absent, or the model failed mid-request (`model_unavailable`), and dispatch used a fallback. |
 | `search_mode` | `direct`, `external_fallback`, `external_empty`, `escalated` | Search execution branch. |
 | `external_provider` | `serpapi`, `browser` | External provider that supplied evidence. |

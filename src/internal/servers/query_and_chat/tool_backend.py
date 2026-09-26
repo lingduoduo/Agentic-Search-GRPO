@@ -312,6 +312,16 @@ def create_tool_router(
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Streaming tool agent failed for: %r", body.message)
                 yield sse_frame({"type": "error", "detail": str(exc)})
+            finally:
+                # A client disconnect arrives as CancelledError/GeneratorExit,
+                # which the handlers above do not catch. Stop the run rather
+                # than leave it executing tool calls for nobody.
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
         return sse_response(_gen())
 
