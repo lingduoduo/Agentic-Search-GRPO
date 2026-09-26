@@ -29,7 +29,7 @@ flowchart LR
     end
 
     subgraph web["FastAPI web backend :7860"]
-        API["POST /api/agent · /search · /chat · /tool<br/>GET /ready · /metrics"]
+        API["POST /api/agent · /search · /chat · /tool<br/>WS /api/agent/ws · GET /ready · /metrics"]
         Router["recognize_intent<br/>regex → kNN model → LLM classifier<br/>→ rules → clarify"]
         Chat["AgenticRAGLoop<br/>chat route"]
         Search["Search route<br/>direct gate → SerpAPI → browser<br/>SearchAgentLoop escalation"]
@@ -42,7 +42,7 @@ flowchart LR
     end
 
     subgraph services["Services"]
-        Retrieval["Retrieval :8000<br/>demo TF-IDF or hybrid dense+sparse"]
+        Retrieval["Retrieval :8001<br/>demo TF-IDF or hybrid dense+sparse"]
         Rerank["Reranker :8002<br/>optional"]
         Browser["Browser search :8003<br/>optional"]
         SerpAPI["SerpAPI"]
@@ -160,6 +160,7 @@ stateDiagram-v2
 - Node.js and npm
 - An LLM provider API key for agent loops
 - Java only when using BM25/pyserini
+- Docker only for the containerised stack
 
 ## Install
 
@@ -168,6 +169,14 @@ From the repository root:
 ```bash
 pip install -e .
 pip install -r requirements.txt
+```
+
+`requirements.txt` is the serving baseline, and it is what the container image installs. Three companion files add what serving does not need. Install them on top of it as required:
+
+```bash
+pip install -r requirements-retrieval-heavy.txt   # faiss-cpu + pyserini, for the FAISS/BM25 backends of retrieval/server.py
+pip install -r requirements-training.txt          # datasets/pyarrow for examples/
+pip install -r requirements-unit-test.txt         # what CI installs for the unit tests
 ```
 
 Install the optional MCP dependencies when needed:
@@ -196,7 +205,7 @@ GEN_AI_MODEL_VERSION=gpt-4o-mini
 GEN_AI_API_KEY=...
 ```
 
-Provider, web-search, retrieval, reranking, routing, and application settings are documented in [Configuration](docs/configuration.md).
+Provider, web-search, retrieval, reranking, routing, and application settings are documented in [Configuration](docs/configuration.md). Timeouts and retry budgets live in a validated TOML file. Point `AGENTIC_SEARCH_TIMEOUTS_PATH` at a partial override file to change them; see [Timeout and retry policies](docs/configuration/timeouts.md).
 
 ## Run locally
 
@@ -224,10 +233,25 @@ python3 -m src.internal.servers.retrieval.demo --corpus nfcorpus
 ```
 
 ```bash
+# Alternative — hybrid: RRF-fused dense e5 + sparse TF-IDF, a drop-in for demo
+# on the same port. Add --no-dense to skip the e5 model download.
+python3 -m src.internal.servers.retrieval.hybrid --corpus_path data/corpus.jsonl
+```
+
+```bash
 # Optional — cross-encoder reranker (Terminal 1b). Then set the env on the web
 # backend and restart it so retrieved docs are reranked before display:
 python3 -m src.internal.servers.retrieval.rerank --port 8002
 # web backend env: AGENTIC_SEARCH_RERANK_URL=http://localhost:8002/rerank
+```
+
+```bash
+# Optional — browser web search (Terminal 1c), the fallback when SerpAPI fails.
+# No API key needed, but slow. It wraps the `playwright-cli` binary, which is not
+# a pip package, and it refuses to start without that binary rather than serve
+# empty results. Host only, not in the container image.
+python3 -m src.internal.servers.web_search.browser --port 8003
+# web backend env: AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve
 ```
 
 ### 2. Start the API
@@ -264,6 +288,26 @@ Check the API health endpoint:
 curl -s http://127.0.0.1:7860/health | python3 -m json.tool
 ```
 
+`/health` reports only that the process is up. `/ready` also checks that the store and the retrieval service are reachable. It returns 200 when both are, and otherwise 503 with the failing check named:
+
+```bash
+curl -s http://127.0.0.1:7860/ready | python3 -m json.tool
+```
+
+Prometheus metrics are always recorded, but `GET /metrics` is mounted only with `AGENTIC_SEARCH_METRICS_ENABLED=1`. Alert rules ship in `deploy/prometheus/`. See [Operational metrics](docs/observability-metrics.md).
+
+## Run with Docker
+
+`docker/docker-compose.yml` runs the retrieval server (port 8000 inside the stack), the web backend with the built frontend on port 7860, and Postgres and Redis. The containers run as a non-root user:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+The compose file sets `GEN_AI_API_KEY` to an empty value. Put real LLM credentials in a `docker/docker-compose.override.yml`. The browser search server is host-only and is not available under compose.
+
+Every CI-passed `main` commit is also published to GHCR as a public multi-arch image. Its immutable `sha-<commit>` tag is the handle for deploying and rolling back. See [Deploy and roll back](docs/deploy.md), which also covers the store's schema version on rollback.
+
 ## Search engine
 
 The search agent classifies each request, tries internal retrieval first, and falls through to web search when evidence is weak. It also exposes a dedicated retrieval-only surface at `POST /search/send-search-message` (the **Search** page, `/search`). See [Search engine](docs/search-engine.md) for capabilities and request routing.
@@ -274,11 +318,23 @@ A request may name a **search domain** — `finance`, `academic`, `legal`, `heal
 
 The chat agent answers conversational requests with retrieval-grounded synthesis and multi-turn memory. A direct `POST /chat/send-chat-message` endpoint (the **Chat** page, `/chat`) calls the local model with no retrieval, streaming a multi-turn transcript. See [Chat engine](docs/chat-engine.md) for capabilities and routing.
 
+Conversation history is token-budgeted. Each surface keeps the newest messages that fit `AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS` (default 2500, and never more than 40). Older turns are summarized, which is on by default for `/api/agent` and opt-in for `/chat` and `/tool` via `AGENTIC_SEARCH_MEMORY_COMPRESSION=1`, because those two answer with the local model.
+
+When the model is unavailable (connection error, timeout, or an open circuit breaker), the surfaces degrade instead of failing:
+
+- `/api/agent` falls back to a search-only answer and records `hook_metadata.route_degraded = "model_unavailable"`.
+- `/tool` lists what the corpus search found.
+- `/chat` returns a short "temporarily unavailable" notice.
+
+Both `/tool` and `/chat` mark the response with `degraded`, and the UI shows a notice on those pages.
+
 ---
 
 ## Tool engine
 
 The tool agent runs multi-turn function calling with structured tool dispatch over a registry of built-in and OpenAPI-backed tools. A dedicated `POST /tool/send-tool-message` surface (the **Tools** page, `/tools`) streams tool calls, gates tools with approval prompts, and fetches the web via a serpapi→browser cascade. See [Tool engine](docs/tool-engine.md) for capabilities, routing, and the tool registry.
+
+Every call's arguments are validated against the tool's full JSON Schema, including ranges, enums, array items, and closed objects. A call that breaks the schema is rejected, not clamped. A failed call goes to `RecoveryPolicy`, shown in the diagrams above. `/api/agent` sessions can also be driven over a WebSocket (`POST /api/agent/ws-token`, then `WS /api/agent/ws`) that carries the same events as the SSE stream.
 
 ### Built-in public data tools
 
@@ -299,8 +355,9 @@ The tool agent ships nine keyless public data-source tools, seeded by
 
 The first three are citeable: they answer with `{title, content, url}` records,
 so their results appear as source cards on `/tools`. The rest answer with a
-JSON object of facts. Any upstream failure returns `{"error": ...}` from that
-one tool and leaves the turn intact.
+JSON object of facts. A transient upstream failure on a GET is retried first. Any
+failure that remains returns `{"error": ...}` from that one tool and leaves the
+turn intact.
 
 ## Ingestion
 
@@ -334,6 +391,10 @@ See [Testing](docs/testing.md) for focused suites and integration-test prerequis
 - [Command-line tools](docs/cli.md) — the Go `query` + `memory` CLIs, build, usage, auth, and exit codes
 - [MCP server](docs/mcp.md) — installation, transport, client configuration, tools, and resources
 - [Configuration](docs/configuration.md) — environment variables for providers, services, retrieval, and routing
+- [Timeout and retry policies](docs/configuration/timeouts.md) — the bundled `timeouts.toml`, operator overrides, and validation rules
+- [Deploy and roll back](docs/deploy.md) — published GHCR image tags, deploying a tag, and rolling back with the store's schema version
+- [Operational metrics](docs/observability-metrics.md) — `/metrics`, each metric's definition, PromQL, and alert rules
+- [Authentication](docs/authentication.md) — bearer tokens, registration, and route protection
 - [Workload identity](docs/workload-identity.md) — automated-client authentication, production safeguards, and renewable Redis IAM credentials
 - [Testing](docs/testing.md) — backend and frontend checks, integration tests, and debugging commands
 - [Self-review task reports](docs/development/self-review-reports.md) — validated implementation handoffs and mandatory review gates
