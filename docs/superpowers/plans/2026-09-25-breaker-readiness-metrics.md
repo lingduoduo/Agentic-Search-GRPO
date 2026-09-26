@@ -33,7 +33,7 @@ Prometheus rules and promtool, GitHub Actions.
 
 ### Task 1: Breaker collector (TDD)
 
-- [ ] Write tests in `tests/unit/observability/test_prometheus.py`, using the
+- [x] Write tests in `tests/unit/observability/test_prometheus.py`, using the
   real breaker registry (`get_breaker(...)`, with `record_failure` up to the
   threshold from policy). Run them and expect red, then implement
   `_BreakerStateCollector`, register it on `REGISTRY`, and expect green.
@@ -41,23 +41,23 @@ Prometheus rules and promtool, GitHub Actions.
 
 ### Task 2: Readiness gauges (TDD)
 
-- [ ] Unit-test `observe_readiness`. Add app tests in
+- [x] Unit-test `observe_readiness`. Add app tests in
   `tests/unit/servers/web/test_metrics_ready.py`: after `/ready` the gauges
   reflect the result. Run them and expect red, then implement the helper and
   the route call, and expect green. Commit.
 
 ### Task 3: Alerts and CI (TDD)
 
-- [ ] Add promtool cases (firing and quiet, including the stale case) for the
+- [x] Add promtool cases (firing and quiet, including the stale case) for the
   two alerts. Run them and expect red, because the rules are missing. Add
   the rules, and expect green.
-- [ ] Add the CI job, plus `tests/unit/test_ci_runs_promtool.py`. Run
+- [x] Add the CI job, plus `tests/unit/test_ci_runs_promtool.py`. Run
   actionlint.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 4: Docs and verification
 
-- [ ] Update `observability-metrics.md` and `deploy.md`, and correct the #663
+- [x] Update `observability-metrics.md` and `deploy.md`, and correct the #663
   spec's visibility claim.
-- [ ] Run the mutation checks (from the spec), then the full suite, then ruff,
+- [x] Run the mutation checks (from the spec), then the full suite, then ruff,
   then `git diff --check`. Open the PR.
