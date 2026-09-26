@@ -208,3 +208,68 @@ tests:
       - eval_time: 40m
         alertname: HighAgentDecisionRounds
         exp_alerts: []
+
+  # --- CircuitBreakerOpen ------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_circuit_breaker_open{breaker="serpapi"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CircuitBreakerOpen
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              breaker: serpapi
+            exp_annotations:
+              summary: The serpapi circuit breaker is open
+              description: The serpapi circuit breaker has been open for 5 minutes; calls to that dependency are failing fast.
+  # Quiet: the breaker opened briefly and closed again.
+  - interval: 1m
+    input_series:
+      - series: 'agentic_search_circuit_breaker_open{breaker="rerank"}'
+        values: "1 1 0 0 0 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CircuitBreakerOpen
+        exp_alerts: []
+
+  # --- NotReady -----------------------------------------------------------
+  # Firing: every probe (timestamp advancing each minute) says not ready.
+  - interval: 1m
+    input_series:
+      - series: "agentic_search_ready"
+        values: "0x15"
+      - series: "agentic_search_ready_checked_timestamp_seconds"
+        values: "0+60x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NotReady
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: Agentic Search is not ready
+              description: GET /ready has reported not ready for 5 minutes; the store or the retrieval server is unreachable (see agentic_search_ready_check).
+  # Quiet: ready.
+  - interval: 1m
+    input_series:
+      - series: "agentic_search_ready"
+        values: "1x15"
+      - series: "agentic_search_ready_checked_timestamp_seconds"
+        values: "0+60x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NotReady
+        exp_alerts: []
+  # Quiet: a stale not-ready result -- nothing has probed /ready since t=60s.
+  - interval: 1m
+    input_series:
+      - series: "agentic_search_ready"
+        values: "0x15"
+      - series: "agentic_search_ready_checked_timestamp_seconds"
+        values: "60x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NotReady
+        exp_alerts: []
