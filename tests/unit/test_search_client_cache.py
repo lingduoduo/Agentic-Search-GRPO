@@ -325,3 +325,16 @@ def test_no_stale_serve_counts_nothing(monkeypatch, posts, stale_cache):
     with pytest.raises(aiohttp.ClientResponseError):
         _run(_client().retrieve(["a"]))
     assert _stale_serves() == before
+
+
+def test_mutating_a_stale_result_cannot_poison_the_next_stale_serve(
+    monkeypatch, posts, stale_cache
+):
+    _, now = stale_cache
+    _run(_client().retrieve(["a"]))
+    now[0] += 61
+    _fail_with(monkeypatch, ConnectionError("down"))
+    first = _run(_client().retrieve(["a"]))
+    first[0][0].metadata["acl"].append("user:mallory")
+    second = _run(_client().retrieve(["a"]))
+    assert second[0][0].metadata == {"acl": ["public"], "stale": True}

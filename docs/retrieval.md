@@ -316,7 +316,13 @@ result is a successful empty search and never falls back, and a mixed result
 is returned as-is. The tool agent's `web_search` cascade reaches SerpAPI
 through `search_tool`, so it shares this. For `SearchClient.retrieve` the
 fallback is all-or-nothing: if any missing query has no stale row, the error is
-raised as before. The rerank cache has no stale fallback.
+raised as before. The rerank cache has no stale fallback. A 4xx from `/retrieve`, other than
+429, is never answered stale: it means the request is wrong (a rejected filter,
+missing auth), not that the server is down. Each stale serve increments
+`agentic_search_stale_cache_serves_total{source}` on `/metrics`. During a
+retrieval outage, a document made private can still be served from a stale row
+for up to TTL + grace (65 minutes by default); set
+`AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS=0` where that is unacceptable.
 
 **Build indexes:**
 
