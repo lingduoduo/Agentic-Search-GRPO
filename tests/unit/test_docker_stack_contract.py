@@ -315,3 +315,26 @@ def test_app_services_can_run_a_published_image():
             services[name]["image"] == "${AGENTIC_SEARCH_IMAGE:-agentic-search:local}"
         )
         assert services[name]["build"]["dockerfile"] == "Dockerfile"
+
+
+# Keys an operator must be able to supply without editing the compose file.
+# A literal value in `environment:` cannot be overridden by the shell or an
+# --env-file, so each must be an interpolation of its own name.
+OPERATOR_SUPPLIED_KEYS = (
+    "GEN_AI_MODEL_PROVIDER",
+    "GEN_AI_MODEL_VERSION",
+    "GEN_AI_API_KEY",
+    "GEN_AI_API_BASE",
+    "GEN_AI_MAX_INPUT_TOKENS",
+    "SERP_API_KEY",
+)
+
+
+@pytest.mark.parametrize("key", OPERATOR_SUPPLIED_KEYS)
+def test_credentials_reach_the_app_services_from_the_environment(key):
+    services = _compose()["services"]
+    for name in ("retrieval", "web"):
+        value = services[name]["environment"].get(key)
+        assert isinstance(value, str) and re.fullmatch(
+            rf"\$\{{{key}(:-[^}}]*)?\}}", value
+        ), f"{name}: {key} is {value!r}; the shell or --env-file cannot set it"
