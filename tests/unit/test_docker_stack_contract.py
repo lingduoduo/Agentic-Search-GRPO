@@ -303,3 +303,15 @@ def test_the_in_process_state_that_makes_that_true_still_exists():
             f"app.state.{attribute} is gone -- re-evaluate the single-worker "
             f"constraint documented in the Dockerfile"
         )
+
+
+def test_app_services_can_run_a_published_image():
+    """`AGENTIC_SEARCH_IMAGE=ghcr.io/...:sha-<sha> docker compose up --no-build`
+    runs a published tag (deploy / rollback); unset, `up --build` still builds
+    and tags a local image exactly as before (docs/deploy.md)."""
+    services = _compose()["services"]
+    for name in ("retrieval", "web"):
+        assert (
+            services[name]["image"] == "${AGENTIC_SEARCH_IMAGE:-agentic-search:local}"
+        )
+        assert services[name]["build"]["dockerfile"] == "Dockerfile"

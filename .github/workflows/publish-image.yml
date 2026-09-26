@@ -1,0 +1,68 @@
+name: Publish image
+
+# Publishes ghcr.io/<owner>/agentic-search so a deploy -- and a rollback -- is
+# "run this sha- tag" rather than "check out and rebuild" (docs/deploy.md).
+#
+# - main: only after the CI workflow succeeded, and only the commit CI tested
+#   (workflow_run.head_sha), never the moving branch tip.
+# - v* tags: a release is an explicit human act, so the tag itself is built.
+# - never from a pull request: there is no pull_request trigger.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image-${{ github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A tag push carries no workflow_run payload, so fall back to its sha.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agentic-search
+          # sha-<full sha> is the immutable deploy/rollback handle. `main` is a
+          # moving convenience tag -- never roll back to it. Version tags come
+          # from vX.Y.Z git tags.
+          tags: |
+            type=sha,format=long
+            type=raw,value=main,enable=${{ github.event_name == 'workflow_run' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
