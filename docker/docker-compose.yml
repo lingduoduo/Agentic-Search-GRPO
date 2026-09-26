@@ -5,6 +5,8 @@
 #
 # Bring up everything:
 #   docker compose -f docker/docker-compose.yml up --build
+# With LLM / SerpAPI credentials from the repository-root .env:
+#   docker compose --env-file .env -f docker/docker-compose.yml up --build
 #
 # All service-to-service hostnames match the service names below.
 # Override any value by creating a docker/docker-compose.override.yml or
@@ -33,11 +35,16 @@ x-app-env: &app-env
   CELERY_RESULT_EXPIRES: "3600"
   CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: "True"
 
-  # --- LLM (override with real keys in .env) ---
-  GEN_AI_MODEL_PROVIDER: openai
-  GEN_AI_MODEL_VERSION: gpt-4o-mini
-  GEN_AI_API_KEY: ""
-  GEN_AI_MAX_INPUT_TOKENS: "8192"
+  # --- LLM and web search credentials ---
+  # Read from the shell or an --env-file, never hard-coded:
+  #   docker compose --env-file .env -f docker/docker-compose.yml up --build
+  # Only the keys named here reach the containers; the rest of .env does not.
+  GEN_AI_MODEL_PROVIDER: ${GEN_AI_MODEL_PROVIDER:-openai}
+  GEN_AI_MODEL_VERSION: ${GEN_AI_MODEL_VERSION:-gpt-4o-mini}
+  GEN_AI_API_KEY: ${GEN_AI_API_KEY:-}
+  GEN_AI_API_BASE: ${GEN_AI_API_BASE:-}
+  GEN_AI_MAX_INPUT_TOKENS: ${GEN_AI_MAX_INPUT_TOKENS:-8192}
+  SERP_API_KEY: ${SERP_API_KEY:-}
 
   # --- Services ---
   AGENTIC_SEARCH_RETRIEVAL_URL: http://retrieval:8000/retrieve
