@@ -39,6 +39,223 @@ _GROUNDED_ANSWER = (
 )
 
 
+def test_preview_includes_late_evidence():
+    from src.agents.search.agentic_rag import _evidence_preview
+
+    context = SearchContextBundle(
+        query="q",
+        documents=[
+            ContextDocument(id="D1", title="first", content="a" * 10000),
+            ContextDocument(id="D2", title="second", content="late evidence"),
+        ],
+    )
+    preview = _evidence_preview(context, 100)
+    assert "[D1]" in preview and "[D2]" in preview
+    assert "late evidence" in preview
+    assert len(preview) <= 100
+
+
+@pytest.mark.parametrize("budget", [1, 5, 10, 12, 100])
+def test_preview_respects_tiny_budget(budget):
+    from src.agents.search.agentic_rag import _evidence_preview
+
+    assert len(_evidence_preview(_make_bundle(["d1", "d2"]), budget)) <= budget
+    assert _evidence_preview(SearchContextBundle(query="q", documents=[]), budget) == ""
+
+
+@pytest.mark.parametrize("budget", [0, -1])
+def test_preview_budget_must_be_positive(budget):
+    with pytest.raises(ValueError, match="evidence_preview_chars"):
+        AgenticRAGConfig(evidence_preview_chars=budget)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["_is_sufficient", "_generate_followup"])
+async def test_judges_use_shared_preview(method):
+    llm = _llm_responses("yes")
+    loop = AgenticRAGLoop(AgenticRAGConfig(evidence_preview_chars=100), llm)
+    context = SearchContextBundle(
+        query="q",
+        documents=[
+            ContextDocument(id="D1", title="first", content="a" * 10000),
+            ContextDocument(id="D2", title="second", content="late evidence"),
+        ],
+    )
+    await getattr(loop, method)("question", context)
+    prompt = llm.complete.call_args.args[0][0].content
+    assert "late evidence" in prompt and "[D2]" in prompt
+    assert "not instructions" in prompt
+
+
+def test_empty_followups_are_not_queries():
+    from src.agents.search.agentic_rag import _dedupe_novel, _parse_gap_queries
+
+    assert _parse_gap_queries("GAPS:\nnone\nQUERIES:\n NoNe ") == []
+    seen = set()
+    assert _dedupe_novel([" ", "q", " Q "], seen) == ["q"]
+    assert seen == {"q"}
+
+
+@pytest.mark.asyncio
+async def test_overflow_followups_remain_eligible():
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_followups_per_round=1))
+    batches = []
+
+    async def retrieve(queries, **kwargs):
+        batches.append(queries)
+        return [_make_bundle(["d1"]) for _ in queries]
+
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", retrieve),
+        patch.object(loop, "_is_sufficient", AsyncMock(return_value=(False, False))),
+        patch.object(
+            loop,
+            "_generate_followup",
+            AsyncMock(side_effect=[["used", "overflow"], ["overflow"]]),
+        ),
+    ):
+        result = await loop.run("initial")
+    assert batches == [["initial"], ["used"], ["overflow"]]
+    assert result.rounds_used == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", [0, -1])
+async def test_zero_followup_budget_stops_before_next_round(cap):
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_followups_per_round=cap))
+    retrieve = AsyncMock(return_value=[_make_bundle(["d1"])])
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", retrieve),
+        patch.object(loop, "_is_sufficient", AsyncMock(return_value=(False, False))),
+        patch.object(loop, "_generate_followup", AsyncMock(return_value=["a", "b"])),
+    ):
+        result = await loop.run("initial")
+    assert retrieve.await_count == 1
+    assert result.rounds_used == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_multiturn_query_preserves_synthesis_question_and_history():
+    from src.context.models import ChatMessage
+    from src.context.query_enhancer import QueryBundle
+
+    loop = AgenticRAGLoop(AgenticRAGConfig())
+    history = [ChatMessage(role="user", content="Tell me about FAISS deployment")]
+    question = "What about cost?"
+    resolved = "FAISS deployment cost"
+    with (
+        patch.object(
+            loop._enhancer,
+            "enhance_async",
+            AsyncMock(return_value=QueryBundle(original=resolved)),
+        ) as enhance,
+        patch.object(
+            loop, "_is_sufficient", AsyncMock(return_value=(False, False))
+        ) as judge,
+        patch.object(loop, "_generate_followup", AsyncMock(return_value=[])) as gaps,
+        patch(
+            "src.agents.search.agentic_rag.retrieve_contexts",
+            AsyncMock(return_value=[_make_bundle(["d1"])]),
+        ) as retrieve,
+        patch(
+            "src.agents.search.agentic_rag.generate_answer",
+            return_value=_stub_generation_result(),
+        ) as generate,
+    ):
+        await loop.run(question, retrieval_query=resolved, chat_history=history)
+    enhance.assert_awaited_once_with(resolved)
+    assert retrieve.await_args.args[0] == [resolved]
+    assert judge.await_args.args[0] == resolved
+    assert gaps.await_args.args[0] == resolved
+    request = generate.call_args.args[0]
+    assert request.question == question
+    assert request.chat_history == history
+
+
+@pytest.mark.asyncio
+async def test_accumulated_evidence_has_stable_grounded_citations():
+    from src.context.grounding import GroundingVerifier
+    from src.context.query_enhancer import QueryBundle
+
+    first = ContextDocument(
+        id="ephemeral",
+        title="Storage",
+        content="FAISS storage costs depend on vector count.",
+        url="https://example.com/storage",
+    )
+    second = ContextDocument(
+        id="ephemeral",
+        title="Compute",
+        content="FAISS compute costs depend on query volume.",
+        url="https://example.com/compute",
+    )
+    llm = _llm_responses(
+        '{"claims":[{"text":"FAISS storage costs depend on vector count.","evidence_ids":["D1"]},{"text":"FAISS compute costs depend on query volume.","evidence_ids":["D2"]}],"missing_information":[],"abstain":false}'
+    )
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_rounds=2), llm)
+    with (
+        patch.object(
+            loop._enhancer,
+            "enhance_async",
+            AsyncMock(
+                return_value=QueryBundle(
+                    original="FAISS costs", hyde_text="invented hypothetical cost"
+                )
+            ),
+        ),
+        patch.object(loop, "_is_sufficient", AsyncMock(return_value=(False, False))),
+        patch.object(
+            loop, "_generate_followup", AsyncMock(return_value=["compute cost"])
+        ),
+        patch(
+            "src.agents.search.agentic_rag.retrieve_contexts",
+            AsyncMock(
+                side_effect=[
+                    [
+                        SearchContextBundle(query="q", documents=[first]),
+                        SearchContextBundle(query="q", documents=[first]),
+                    ],
+                    [SearchContextBundle(query="q", documents=[first, second])],
+                ]
+            ),
+        ),
+    ):
+        result = await loop.run("What determines FAISS costs?")
+    assert result.rounds_used == 2
+    assert [doc.id for doc in result.context.documents] == ["D1", "D2"]
+    assert [doc.url for doc in result.context.documents] == [first.url, second.url]
+    assert result.citations == ["D1", "D2"]
+    assert "invented hypothetical" not in result.context.to_context_text()
+    report = GroundingVerifier().verify(result.answer, result.context)
+    assert len(report.verdicts) == 2
+    assert all(verdict.is_grounded for verdict in report.verdicts)
+
+
+@pytest.mark.asyncio
+async def test_empty_evidence_abstains_without_synthesis_llm_call():
+    from src.context.query_enhancer import QueryBundle
+    from src.context.safety import CANONICAL_ABSTENTION
+
+    llm = MagicMock()
+    llm.complete.side_effect = AssertionError("Synthesis must not invent evidence")
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_rounds=1), llm)
+    with (
+        patch.object(
+            loop._enhancer,
+            "enhance_async",
+            AsyncMock(return_value=QueryBundle(original="q")),
+        ),
+        patch(
+            "src.agents.search.agentic_rag.retrieve_contexts",
+            AsyncMock(return_value=[SearchContextBundle(query="q", documents=[])]),
+        ),
+    ):
+        result = await loop.run("q")
+    assert result.answer == CANONICAL_ABSTENTION
+    assert result.citations == []
+    llm.complete.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Happy path — sufficient on first round
 # ---------------------------------------------------------------------------
@@ -345,8 +562,8 @@ async def test_case_and_whitespace_variants_retrieve_once():
         loop = AgenticRAGLoop(config, llm=llm)
         await loop.run("gpt-4 cost?")
 
-    # all three enhanced queries normalize identically → retrieved once
-    assert len(calls) == 1
+    # Enhanced variants collapse, while the distinct original is retained first.
+    assert calls == ["gpt-4 cost?", "GPT-4 cost"]
 
 
 @pytest.mark.asyncio
