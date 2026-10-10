@@ -93,6 +93,11 @@ def _rule_based_route_or_none(query: str) -> RouteStrategy | None:
     q = query.strip()
     if not q or _is_standalone_greeting(q):
         return RouteStrategy.CHAT
+    # The request's leading intent takes precedence over verbs in its subject.
+    if _SEARCH_LOOKUP_RE.search(q):
+        return RouteStrategy.SEARCH
+    if _CHAT_START_RE.search(q) or _GENERATIVE_START_RE.search(q):
+        return RouteStrategy.CHAT
     if _TOOL_RE.search(q):
         return RouteStrategy.TOOL
     if _SEARCH_RE.search(q):
