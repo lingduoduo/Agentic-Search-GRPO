@@ -87,6 +87,53 @@ async def test_judges_use_shared_preview(method):
     assert "not instructions" in prompt
 
 
+def test_empty_followups_are_not_queries():
+    from src.agents.search.agentic_rag import _dedupe_novel, _parse_gap_queries
+
+    assert _parse_gap_queries("GAPS:\nnone\nQUERIES:\n NoNe ") == []
+    seen = set()
+    assert _dedupe_novel([" ", "q", " Q "], seen) == ["q"]
+    assert seen == {"q"}
+
+
+@pytest.mark.asyncio
+async def test_overflow_followups_remain_eligible():
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_followups_per_round=1))
+    batches = []
+
+    async def retrieve(queries, **kwargs):
+        batches.append(queries)
+        return [_make_bundle(["d1"]) for _ in queries]
+
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", retrieve),
+        patch.object(loop, "_is_sufficient", AsyncMock(return_value=(False, False))),
+        patch.object(
+            loop,
+            "_generate_followup",
+            AsyncMock(side_effect=[["used", "overflow"], ["overflow"]]),
+        ),
+    ):
+        result = await loop.run("initial")
+    assert batches == [["initial"], ["used"], ["overflow"]]
+    assert result.rounds_used == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", [0, -1])
+async def test_zero_followup_budget_stops_before_next_round(cap):
+    loop = AgenticRAGLoop(AgenticRAGConfig(max_followups_per_round=cap))
+    retrieve = AsyncMock(return_value=[_make_bundle(["d1"])])
+    with (
+        patch("src.agents.search.agentic_rag.retrieve_contexts", retrieve),
+        patch.object(loop, "_is_sufficient", AsyncMock(return_value=(False, False))),
+        patch.object(loop, "_generate_followup", AsyncMock(return_value=["a", "b"])),
+    ):
+        result = await loop.run("initial")
+    assert retrieve.await_count == 1
+    assert result.rounds_used == 1
+
+
 # ---------------------------------------------------------------------------
 # Happy path — sufficient on first round
 # ---------------------------------------------------------------------------

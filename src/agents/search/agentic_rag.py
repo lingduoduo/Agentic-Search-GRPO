@@ -93,7 +93,7 @@ def _dedupe_novel(queries: list[str], seen: set[str]) -> list[str]:
     novel: list[str] = []
     for q in queries:
         norm = _norm_query(q)
-        if norm not in seen:
+        if norm and norm not in seen:
             seen.add(norm)
             novel.append(q)
     return novel
@@ -136,7 +136,7 @@ def _parse_gap_queries(raw: str) -> list[str]:
     queries: list[str] = []
     for line in queries_section.splitlines():
         cleaned = _clean_line(line)
-        if cleaned:
+        if cleaned and cleaned.lower() != "none":
             queries.append(cleaned)
     return queries
 
@@ -366,12 +366,14 @@ class AgenticRAGLoop:
                 if sufficient:
                     break
                 follow_ups = await self._generate_followup(search_question, merged)
-                novel_follow_ups = _dedupe_novel(follow_ups, seen_queries)
-                if not novel_follow_ups:
-                    break
+                # Overflow has not been searched and remains eligible next round.
+                novel_follow_ups = _dedupe_novel(follow_ups, seen_queries.copy())
                 current_queries = novel_follow_ups[
-                    : self.config.max_followups_per_round
+                    : max(0, self.config.max_followups_per_round)
                 ]
+                if not current_queries:
+                    break
+                seen_queries.update(_norm_query(q) for q in current_queries)
 
         t_syn = time.perf_counter()
         # Offloaded, like the sufficiency and gap-analysis calls below it.
