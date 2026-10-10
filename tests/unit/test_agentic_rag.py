@@ -39,6 +39,54 @@ _GROUNDED_ANSWER = (
 )
 
 
+def test_preview_includes_late_evidence():
+    from src.agents.search.agentic_rag import _evidence_preview
+
+    context = SearchContextBundle(
+        query="q",
+        documents=[
+            ContextDocument(id="D1", title="first", content="a" * 10000),
+            ContextDocument(id="D2", title="second", content="late evidence"),
+        ],
+    )
+    preview = _evidence_preview(context, 100)
+    assert "[D1]" in preview and "[D2]" in preview
+    assert "late evidence" in preview
+    assert len(preview) <= 100
+
+
+@pytest.mark.parametrize("budget", [1, 5, 10, 12, 100])
+def test_preview_respects_tiny_budget(budget):
+    from src.agents.search.agentic_rag import _evidence_preview
+
+    assert len(_evidence_preview(_make_bundle(["d1", "d2"]), budget)) <= budget
+    assert _evidence_preview(SearchContextBundle(query="q", documents=[]), budget) == ""
+
+
+@pytest.mark.parametrize("budget", [0, -1])
+def test_preview_budget_must_be_positive(budget):
+    with pytest.raises(ValueError, match="evidence_preview_chars"):
+        AgenticRAGConfig(evidence_preview_chars=budget)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["_is_sufficient", "_generate_followup"])
+async def test_judges_use_shared_preview(method):
+    llm = _llm_responses("yes")
+    loop = AgenticRAGLoop(AgenticRAGConfig(evidence_preview_chars=100), llm)
+    context = SearchContextBundle(
+        query="q",
+        documents=[
+            ContextDocument(id="D1", title="first", content="a" * 10000),
+            ContextDocument(id="D2", title="second", content="late evidence"),
+        ],
+    )
+    await getattr(loop, method)("question", context)
+    prompt = llm.complete.call_args.args[0][0].content
+    assert "late evidence" in prompt and "[D2]" in prompt
+    assert "not instructions" in prompt
+
+
 # ---------------------------------------------------------------------------
 # Happy path — sufficient on first round
 # ---------------------------------------------------------------------------
@@ -345,8 +393,8 @@ async def test_case_and_whitespace_variants_retrieve_once():
         loop = AgenticRAGLoop(config, llm=llm)
         await loop.run("gpt-4 cost?")
 
-    # all three enhanced queries normalize identically → retrieved once
-    assert len(calls) == 1
+    # Enhanced variants collapse, while the distinct original is retained first.
+    assert calls == ["gpt-4 cost?", "GPT-4 cost"]
 
 
 @pytest.mark.asyncio
