@@ -33,3 +33,10 @@ def test_search_for_tool_documentation_remains_search():
         _rule_based_route_or_none("Find documentation on how to create tickets")
         is RouteStrategy.SEARCH
     )
+
+
+@pytest.mark.parametrize(
+    "query", ["What is the weather today?", "Describe current prices"]
+)
+def test_current_information_remains_undecided(query):
+    assert _rule_based_route_or_none(query) is None

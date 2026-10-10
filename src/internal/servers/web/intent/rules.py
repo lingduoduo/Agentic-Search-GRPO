@@ -97,7 +97,7 @@ def _rule_based_route_or_none(query: str) -> RouteStrategy | None:
     if _SEARCH_LOOKUP_RE.search(q):
         return RouteStrategy.SEARCH
     if _CHAT_START_RE.search(q) or _GENERATIVE_START_RE.search(q):
-        return RouteStrategy.CHAT
+        return None if _CURRENCY_RE.search(q) else RouteStrategy.CHAT
     if _TOOL_RE.search(q):
         return RouteStrategy.TOOL
     if _SEARCH_RE.search(q):
