@@ -35,6 +35,20 @@ def test_query_bundle_all_queries_deduped():
     assert queries.count("what is FAISS?") == 1
 
 
+def test_bundle_retains_original_and_normalizes_variants():
+    bundle = QueryBundle(
+        original="Original query",
+        sub_queries=[" original  QUERY ", " ", "detail"],
+        hyde_text="DETAIL",
+        step_back_query="background",
+    )
+    assert bundle.all_queries() == ["Original query", "detail", "background"]
+
+
+def test_blank_bundle_has_no_queries():
+    assert QueryBundle(original=" ", sub_queries=["", "\t"]).all_queries() == []
+
+
 # ---------------------------------------------------------------------------
 # decompose
 # ---------------------------------------------------------------------------

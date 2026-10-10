@@ -62,19 +62,22 @@ class QueryBundle:
     step_back_query: str | None = None
 
     def all_queries(self) -> list[str]:
-        """Return deduplicated list: sub_queries first, then hyde_text, then step_back_query."""
+        """Keep original intent first, then novel, nonblank enhancement variants."""
         seen: set[str] = set()
         result: list[str] = []
-        for q in self.sub_queries:
-            if q not in seen:
-                seen.add(q)
+        for q in [
+            self.original,
+            *self.sub_queries,
+            self.hyde_text,
+            self.step_back_query,
+        ]:
+            if not q:
+                continue
+            key = " ".join(q.lower().split())
+            if key and key not in seen:
+                seen.add(key)
                 result.append(q)
-        if self.hyde_text and self.hyde_text not in seen:
-            seen.add(self.hyde_text)
-            result.append(self.hyde_text)
-        if self.step_back_query and self.step_back_query not in seen:
-            result.append(self.step_back_query)
-        return result or [self.original]
+        return result
 
 
 class QueryEnhancer:
