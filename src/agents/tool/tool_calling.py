@@ -337,6 +337,24 @@ class ToolAgentLoop(AgentLoopBase):
             self.tool_config.tool_response_truncate_side,
         )
 
+    def _invalid_arguments_result(
+        self, tool_call: FunctionCall
+    ) -> ToolExecutionResult | None:
+        """Preflight decoding before approval or execution; preserve corrective feedback."""
+        start = time.perf_counter()
+        try:
+            tool_call.parsed_arguments()
+        except ValueError as exc:
+            return self._result(
+                tool_call.name,
+                {},
+                TaskStatus.FAILED,
+                start,
+                error_code="invalid_arguments",
+                error_message=str(exc),
+            )
+        return None
+
     async def _call_tool(
         self,
         tool_call: FunctionCall,
@@ -352,6 +370,9 @@ class ToolAgentLoop(AgentLoopBase):
         that failure (plus the tool's effect and this run's retry state) into
         a retry / feed-back / degrade / escalate decision.
         """
+        invalid = self._invalid_arguments_result(tool_call)
+        if invalid is not None:
+            return invalid
         state = state or RecoveryState(budget_left=self._recovery.retry_budget)
         start = time.perf_counter()
         args = tool_call.parsed_arguments()
@@ -721,10 +742,15 @@ class ToolAgentLoop(AgentLoopBase):
 
             # Resolve the whole batch before any tool may execute.
             truncated_calls = tool_calls[: self.tool_config.max_parallel_calls]
+            invalid_results = [
+                self._invalid_arguments_result(tc) for tc in truncated_calls
+            ]
             decisions = await asyncio.gather(
                 *[
                     self._request_approval(tc, on_approval, metrics)
-                    for tc in truncated_calls
+                    if invalid is None
+                    else asyncio.sleep(0, result=ApprovalDecision.DENY)
+                    for tc, invalid in zip(truncated_calls, invalid_results)
                 ]
             )
 
@@ -732,12 +758,16 @@ class ToolAgentLoop(AgentLoopBase):
             with simple_timer("tool_calls", metrics):
                 tool_execution_results = await asyncio.gather(
                     *[
-                        self._call_tool(tc, state, on_escalation)
+                        asyncio.sleep(0, result=invalid)
+                        if invalid is not None
+                        else self._call_tool(tc, state, on_escalation)
                         if decision is ApprovalDecision.APPROVE
                         else asyncio.sleep(
                             0, result=self._skipped_tool_result(tc, decision)
                         )
-                        for tc, decision in zip(truncated_calls, decisions)
+                        for tc, decision, invalid in zip(
+                            truncated_calls, decisions, invalid_results
+                        )
                     ]
                 )
             tool_results.extend(tool_execution_results)

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from src.agents.core.state import TaskStatus
 from src.internal.tools import FunctionTool, ToolEffect
 from src.internal.tools.validation import validate_arguments
+from src.internal.tools.parsers import FunctionCall
 from tests.unit.test_tool_approval import _loop, _trace
 
 _INT_SCHEMA = {
@@ -14,6 +18,113 @@ _INT_SCHEMA = {
     "properties": {"value": {"type": "integer"}},
     "required": ["value"],
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["{broken", "[]", '"text"', "42", "null", "true"])
+async def test_invalid_json_arguments_never_execute_zero_argument_tool(raw):
+    executions = []
+
+    @FunctionTool.from_fn(effect=ToolEffect.READ_ONLY)
+    def zero():
+        executions.append("executed")
+        return "ok"
+
+    loop, _ = _loop([zero], [])
+    result = await loop._call_tool(FunctionCall(name="zero", arguments=raw))
+    assert result.status is TaskStatus.FAILED
+    assert result.error_code == "invalid_arguments"
+    assert result.arguments == {}
+    assert "JSON" in result.error_message
+    assert executions == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_side_effecting_call_is_corrected_before_approval():
+    from src.agents import ApprovalDecision
+
+    executions = []
+
+    @FunctionTool.from_fn(effect=ToolEffect.SIDE_EFFECTING, parameters=_INT_SCHEMA)
+    def mutate(value):
+        executions.append(value)
+        return "ok"
+
+    loop, manager = _loop([mutate], ["invalid", "corrected", "done"])
+    approve = AsyncMock(return_value=ApprovalDecision.APPROVE)
+    with patch.object(
+        loop.tool_parser,
+        "extract_tool_calls",
+        AsyncMock(
+            side_effect=[
+                ("", [FunctionCall(name="mutate", arguments="{broken")]),
+                ("", [FunctionCall(name="mutate", arguments='{"value": 3}')]),
+                ("done", []),
+            ]
+        ),
+    ):
+        output = await loop.run(
+            [{"role": "user", "content": "go"}], {}, on_approval=approve
+        )
+    results = _trace(output)
+    assert [r["error_code"] for r in results] == ["invalid_arguments", None]
+    assert executions == [3]
+    assert approve.await_count == 1
+    assert approve.await_args.args[0].arguments == {"value": 3}
+    assert output.metrics["tool_approvals_requested"] == 1
+    assert "invalid_arguments" in manager.prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_mixed_invalid_and_valid_calls_preserve_approval_and_order():
+    from src.agents import ApprovalDecision
+
+    executions = []
+
+    @FunctionTool.from_fn(effect=ToolEffect.SIDE_EFFECTING, parameters=_INT_SCHEMA)
+    def mutate(value):
+        executions.append(value)
+        return "ok"
+
+    loop, _ = _loop([mutate], ["batch", "done"])
+    approve = AsyncMock(return_value=ApprovalDecision.APPROVE)
+    with patch.object(
+        loop.tool_parser,
+        "extract_tool_calls",
+        AsyncMock(
+            side_effect=[
+                (
+                    "",
+                    [
+                        FunctionCall(name="mutate", arguments="null"),
+                        FunctionCall(name="mutate", arguments='{"value": 2}'),
+                    ],
+                ),
+                ("done", []),
+            ]
+        ),
+    ):
+        output = await loop.run(
+            [{"role": "user", "content": "go"}], {}, on_approval=approve
+        )
+    assert [r["error_code"] for r in _trace(output)] == ["invalid_arguments", None]
+    assert executions == [2]
+    approve.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_parser_to_dispatch_rejects_scalar_arguments():
+    executions = []
+
+    @FunctionTool.from_fn(effect=ToolEffect.READ_ONLY)
+    def zero():
+        executions.append(True)
+        return "ok"
+
+    loop, _ = _loop([zero], [json.dumps({"name": "zero", "arguments": None}), "done"])
+    output = await loop.run([{"role": "user", "content": "go"}], {})
+    assert _trace(output)[0]["error_code"] == "invalid_arguments"
+    assert executions == []
 
 
 def test_validate_arguments_missing_and_wrong_type():
