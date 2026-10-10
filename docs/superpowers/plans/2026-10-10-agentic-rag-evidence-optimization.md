@@ -102,8 +102,14 @@ def test_empty_followups_are_not_queries():
 - [x] Add empty retrieval with an LLM that would fabricate an answer if called for synthesis; assert the guarded path abstains without that synthesis call.
 - [x] Run `pytest tests/unit/test_query_enhancer.py tests/unit/test_agentic_rag.py tests/unit/test_grounded_generation.py tests/unit/test_grounding.py -q`.
 - [x] Review the diff against every spec requirement, run the repository's available Python lint check on changed files, and commit tests with `test(rag): cover multi-turn grounded synthesis`.
-- [ ] Push the feature branch and create one PR with the concrete behavioral changes and actual verification results. Do not merge.
+- [x] Push the feature branch and create one PR with the concrete behavioral changes and actual verification results. Do not merge.
 
 ## Execution handoff
 
 Review the spec and plan before implementation. Native execution is recommended: the changes share one retrieval loop and need coordinated regression coverage. After approval, use executing-plans, verification-before-completion, requesting-code-review, and finishing-a-development-branch as applicable.
+
+## Delivery result
+
+PR: https://github.com/lingduoduo/Agentic-Search-GRPO/pull/677
+
+Verification: 106 targeted tests passed after rebasing onto main; Ruff lint and format checks passed. Independent review reported no branch findings and independently ran five retrieval contract tests. Live-provider answer quality and adversarial prompt-injection resistance were not measured.
