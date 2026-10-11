@@ -14,6 +14,7 @@ import pytest
 
 from src.internal.retrieval.domain_eval import (
     DEFAULT_LABELS_PATH,
+    HISTORICAL_TOPIC_HINTS,
     ArmResult,
     DiskCache,
     LabelledQuery,
@@ -21,10 +22,10 @@ from src.internal.retrieval.domain_eval import (
     authority_precision,
     host_matches,
     jaccard,
+    historical_topic_query,
     load_labels,
     run_query,
 )
-from src.internal.tools.search import AVAILABLE_DOMAINS
 
 
 @pytest.mark.parametrize(
@@ -85,13 +86,52 @@ def test_jaccard_of_two_empty_arms_is_one():
     assert jaccard([], []) == 1.0
 
 
-def test_labels_cover_every_topic_domain():
-    # The taxonomy and the evaluation must not drift apart. `general` has an
-    # empty hint and is carried separately as a control.
+def test_labels_cover_every_historical_topic():
+    # The labels are the archived topic set, not the source taxonomy.
+    # `general` has an empty hint and is carried separately as a control.
     labels = load_labels(DEFAULT_LABELS_PATH)
     covered = {lab.domain for lab in labels}
-    expected = {d for d in AVAILABLE_DOMAINS if d != "general"}
-    assert covered == expected
+    assert covered == set(HISTORICAL_TOPIC_HINTS) - {"general"}
+
+
+@pytest.mark.parametrize(
+    "topic,expected",
+    [
+        ("finance", "etf fees finance"),
+        # These topics became web aliases in the source taxonomy; the archived
+        # evaluation must keep their hint, or both arms collapse into one.
+        ("health", "etf fees health"),
+        ("gaming", "etf fees video games"),
+        ("ip", "etf fees intellectual property"),
+        ("general", "etf fees"),
+    ],
+)
+def test_historical_topics_keep_their_archived_hint(topic, expected):
+    assert historical_topic_query("etf fees", topic) == expected
+
+
+def test_a_source_category_is_not_a_historical_topic():
+    # "financial" is a canonical source, not an archived topic label.
+    with pytest.raises(ValueError, match="historical topic"):
+        historical_topic_query("q", "financial")
+
+
+def test_a_label_file_with_a_non_historical_topic_fails_loudly(tmp_path):
+    bad = tmp_path / "labels.json"
+    bad.write_text(
+        '{"domains": {"financial": [{"query": "q", "authority_hosts": ["a.com"]}]}}'
+    )
+    with pytest.raises(ValueError, match="historical topic"):
+        load_labels(bad)
+
+
+@pytest.mark.asyncio
+async def test_run_query_hints_a_web_aliased_topic(tmp_path):
+    label = LabelledQuery("health", "flu symptoms", {"cdc.gov"})
+    stub = _StubSearch({"flu symptoms health": ["https://cdc.gov/a"]})
+    out = await run_query(label, search_fn=stub, cache=DiskCache(tmp_path))
+    assert stub.calls == ["flu symptoms", "flu symptoms health"]
+    assert out.domain_arm.urls == ["https://cdc.gov/a"]
 
 
 def test_every_domain_has_three_queries():

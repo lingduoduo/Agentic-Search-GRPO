@@ -98,7 +98,7 @@ Dynamic tools registered via `FunctionTool` / `ApiToolRegistry` can be mirrored 
 ## Web-search domain hints
 
 `search_web` accepts an optional `domain` from the
-[search topic taxonomy](search-engine.md#search-topic-domains). For example:
+[search-source taxonomy](search-engine.md#search-source-agents). For example:
 
 ```json
 {"query": "battery recycling", "limit": 5, "domain": "academic"}
@@ -116,7 +116,7 @@ response includes the original and executed queries; an empty result looks like:
 }
 ```
 
-The same metadata accompanies provider-exception responses. Omitted or `general`
+The same metadata accompanies provider-exception responses. Omitted or `web`
 domains preserve the existing response shape (`results` and `query`, plus `error`
 when the provider raises). Invalid domain values produce a tool error before any
 provider call. The tool description lists the accepted domains; MCP exposes a

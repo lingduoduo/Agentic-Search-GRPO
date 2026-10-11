@@ -17,9 +17,42 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from src.internal.tools.search import prepare_domain_query
-
 TOP_K = 10
+
+# The label file predates the search-source taxonomy: its keys are the topic
+# domains measured in #588, not source categories. Their hints are frozen here
+# so a rerun reproduces that measurement (and its cache keys) instead of
+# silently reading health/gaming/... as web aliases with an empty hint.
+HISTORICAL_TOPIC_HINTS: dict[str, str] = {
+    "general": "",
+    "resource": "resources",
+    "social_media": "social media",
+    "finance": "finance",
+    "academic": "academic research",
+    "legal": "law",
+    "health": "health",
+    "business": "business",
+    "security": "cybersecurity",
+    "ip": "intellectual property",
+    "code": "programming",
+    "energy": "energy",
+    "environment": "environment",
+    "agriculture": "agriculture",
+    "travel": "travel",
+    "film": "film",
+    "gaming": "video games",
+}
+
+
+def historical_topic_query(query: str, topic: str) -> str:
+    """Append an archived topic hint; ``general`` leaves the query unchanged."""
+    if topic not in HISTORICAL_TOPIC_HINTS:
+        raise ValueError(
+            f"{topic!r} is not a historical topic label; this evaluation "
+            "measures the archived topic hints, not search-source categories"
+        )
+    hint = HISTORICAL_TOPIC_HINTS[topic]
+    return f"{query} {hint}" if hint and query.strip() else query
 
 
 def host_matches(host: str, pattern: str) -> bool:
@@ -88,6 +121,11 @@ def load_labels(path: str | Path = DEFAULT_LABELS_PATH) -> list[LabelledQuery]:
         raise ValueError(f"label file is not valid JSON: {path}") from exc
     out: list[LabelledQuery] = []
     for domain, entries in raw.get("domains", {}).items():
+        if domain not in HISTORICAL_TOPIC_HINTS:
+            raise ValueError(
+                f"label file {path} uses {domain!r}, which is not a historical "
+                "topic label"
+            )
         for entry in entries:
             out.append(
                 LabelledQuery(
@@ -169,7 +207,7 @@ async def run_query(
     label: LabelledQuery, *, search_fn, cache: DiskCache, provider: str = "serpapi"
 ) -> QueryOutcome:
     """Run one labelled query through both arms and score them."""
-    hinted = prepare_domain_query(label.query, label.domain)
+    hinted = historical_topic_query(label.query, label.domain)
     general = await _run_arm(
         label.query, search_fn=search_fn, cache=cache, provider=provider
     )

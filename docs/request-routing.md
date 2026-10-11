@@ -68,7 +68,7 @@ The JSON body uses `AgentExperienceRequest`:
 | `source_provider` | `auto` | Source policy: `auto`, `retrieval`, `serpapi`, `google`, `browser`, or `all`. |
 | `route` | omitted | User-selected `chat`, `search`, or `tool` route; bypasses recognition in auto mode. |
 | `mode` | omitted | Explicit dispatch override: `search_tool`, `hybrid_search`, `chat_once`, `chat_loop`, `search_agent`, or `tool_agent`. |
-| `domain` | `general` | Topic hint appended to web-provider queries only. An unknown value, or a non-`general` value with a `mode` other than `search_tool`/`hybrid_search`, returns `400`. See [Search engine](search-engine.md#domains-over-http-and-in-the-web-ui). |
+| `domain` | `web` | Search-source hint appended to web-provider queries only; legacy topic identifiers are accepted as aliases. An unknown value, or a non-`web` value with a `mode` other than `search_tool`/`hybrid_search`, returns `400`. See [Search engine](search-engine.md#domains-over-http-and-in-the-web-ui). |
 
 The backend, not the browser client, normally owns service URLs. In production, keep client retrieval URL overrides disabled.
 

@@ -174,7 +174,7 @@ The intent itself comes from the backend's routing decision — see the `respons
 
 | Component | What it does |
 |-----------|--------------|
-| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, a **Domain** selector (options from `GET /api/search-domains`, default `general`, sent as the agent request's `domain`: a query hint for web search providers, not a result filter), source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
+| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, a **Search source** selector (options from `GET /api/search-domains`, default `web`, tooltip shows each category's topics and typical sources, sent as the agent request's `domain`: a query hint for web search providers, not a result filter), source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
 | `AnswerPanel` | Streamed markdown answer + intent badge + `[D1]` citation anchor links |
 | `SourceGrid` | Expand/collapse source cards with copy-to-clipboard and citation `id` anchors |
 | `SessionTimeline` | Chat-bubble history (user right, assistant left; system filtered) |
