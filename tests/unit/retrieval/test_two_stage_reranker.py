@@ -1,11 +1,74 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
+import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 from src.internal.retrieval.backends.base import RetrievalResult
 from src.internal.retrieval.two_stage_reranker import TwoStageReranker
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["rerank", "arerank"])
+async def test_requested_top_k_exceeds_prefilter_without_underfilling(method):
+    inputs = [_result(f"d{i}") for i in range(5)]
+    stage = SimpleNamespace(rerank=lambda query, results, top_k: results[:top_k])
+    reranker = TwoStageReranker(stage, stage, pre_filter_top_n=2)
+    output = (
+        reranker.rerank("q", inputs, 4)
+        if method == "rerank"
+        else await reranker.arerank("q", inputs, 4)
+    )
+    assert output == inputs[:4]
+
+
+@pytest.mark.parametrize("budget", [0, -1])
+def test_prefilter_budget_must_be_positive(budget):
+    with pytest.raises(ValueError, match="pre_filter_top_n"):
+        TwoStageReranker(MagicMock(), MagicMock(), pre_filter_top_n=budget)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("top_k", [0, -1])
+async def test_nonpositive_top_k_skips_both_stages(top_k):
+    fast, heavy = MagicMock(), MagicMock()
+    reranker = TwoStageReranker(fast, heavy)
+    assert reranker.rerank("q", [_result("d1")], top_k) == []
+    assert await reranker.arerank("q", [_result("d1")], top_k) == []
+    fast.rerank.assert_not_called()
+    heavy.rerank.assert_not_called()
+    fast.arerank.assert_not_called()
+    heavy.arerank.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_sync_fallback_runs_both_stages_off_loop():
+    event_thread = threading.get_ident()
+    called_on = []
+
+    def score(query, results, top_k):
+        called_on.append(threading.get_ident())
+        return results[:top_k]
+
+    stage = SimpleNamespace(rerank=score)
+    reranker = TwoStageReranker(stage, stage)
+    assert await reranker.arerank("q", [_result("d1")], 1) == [_result("d1")]
+    assert len(called_on) == 2
+    assert all(thread != event_thread for thread in called_on)
+
+
+@pytest.mark.asyncio
+async def test_native_async_stages_are_awaited():
+    inputs = [_result("d1")]
+    fast = SimpleNamespace(arerank=AsyncMock(return_value=inputs))
+    heavy = SimpleNamespace(arerank=AsyncMock(return_value=inputs))
+    reranker = TwoStageReranker(fast, heavy, pre_filter_top_n=2)
+    assert await reranker.arerank("q", inputs, 1) == inputs
+    fast.arerank.assert_awaited_once_with("q", inputs, 2)
+    heavy.arerank.assert_awaited_once_with("q", inputs, 1)
 
 
 def _result(doc_id: str, score: float = 1.0) -> RetrievalResult:

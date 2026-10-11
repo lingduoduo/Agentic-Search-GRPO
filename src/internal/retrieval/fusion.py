@@ -38,8 +38,9 @@ def rrf_rank(
 ) -> list[tuple[_K, float]]:
     """Reciprocal Rank Fusion scoring — the shared core for every RRF site.
 
-    ``score(key) = Σ_i wᵢ · 1/(rrf_k + rank)`` where ``rank`` is 1-based within
-    each set. Returns ``(key, score)`` pairs sorted by score descending; ties
+    ``score(key) = Σ_i wᵢ · 1/(rrf_k + rank)`` where ``rank`` is 1-based among
+    unique keys within each set. Repeated keys contribute only once per source.
+    Returns ``(key, score)`` pairs sorted by score descending; ties
     preserve first-seen order (stable sort over insertion order). ``weights``
     defaults to all-1.0 (standard RRF) and falls back to uniform when its length
     does not match ``result_sets``. Scale-invariant — no score normalisation
@@ -50,8 +51,15 @@ def rrf_rank(
 
     rrf_scores: dict[_K, float] = defaultdict(float)
     for weight, result_set in zip(weights, result_sets):
-        for rank, item in enumerate(result_set, 1):
-            rrf_scores[key_fn(item)] += weight * (1.0 / (rrf_k + rank))
+        seen: set[_K] = set()
+        rank = 0
+        for item in result_set:
+            key = key_fn(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            rank += 1
+            rrf_scores[key] += weight * (1.0 / (rrf_k + rank))
 
     return sorted(rrf_scores.items(), key=lambda kv: kv[1], reverse=True)
 

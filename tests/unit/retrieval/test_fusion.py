@@ -9,8 +9,28 @@ from src.internal.retrieval.fusion import (
     dedup_variants,
     mmr_rerank,
     rrf_fuse,
+    rrf_rank,
     variant_weighted_rrf_fuse,
 )
+
+
+@pytest.mark.parametrize("weights", [None, [0.2, 0.8]])
+def test_rrf_duplicate_entries_do_not_change_ranks_or_scores(weights):
+    assert rrf_rank(
+        [["a", "a", "b", "b"], ["b", "b", "c"]],
+        lambda item: item,
+        weights=weights,
+    ) == rrf_rank([["a", "b"], ["b", "c"]], lambda item: item, weights=weights)
+
+
+def test_rrf_counts_independent_sources_and_preserves_first_payload():
+    first = _r("a", 1)
+    first.title = "first"
+    duplicate = _r("a", 2)
+    results = rrf_fuse([[first, duplicate], [duplicate]])
+    assert len(results) == 1
+    assert results[0].score == pytest.approx(2 / 61)
+    assert results[0].title == "first"
 
 
 def _r(doc_id: str, score: float = 0.5) -> RetrievalResult:
