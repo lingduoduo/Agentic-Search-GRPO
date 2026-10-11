@@ -282,3 +282,98 @@ def test_summary_reports_fallback_rate_and_circularity_share():
     assert summary["fallback_added_seconds"] == 1.0
     assert summary["fallback_added_seconds_n"] == 1
     assert summary["on_list_share"] == 0.25
+
+
+# --- pilot flags: --per-category and --no-plain ------------------------------
+
+
+def test_per_category_keeps_the_first_n_in_file_order():
+    cli = _cli()
+    labels = [
+        SourceLabelledQuery("academic", "a1", {"x"}),
+        SourceLabelledQuery("code", "c1", {"x"}),
+        SourceLabelledQuery("academic", "a2", {"x"}),
+        SourceLabelledQuery("code", "c2", {"x"}),
+        SourceLabelledQuery("academic", "a3", {"x"}),
+    ]
+    assert [x.query for x in cli.select_labels(labels, 1)] == ["a1", "c1"]
+    assert [x.query for x in cli.select_labels(labels, 2)] == ["a1", "c1", "a2", "c2"]
+    assert cli.select_labels(labels, None) == labels
+
+
+def test_per_category_one_over_the_frozen_file_is_one_query_each():
+    cli = _cli()
+    picked = cli.select_labels(load_source_labels(), 1)
+    assert len(picked) == 16
+    assert len({x.domain for x in picked}) == 16
+
+
+@pytest.mark.asyncio
+async def test_no_plain_never_calls_the_plain_query(tmp_path):
+    scoped = restricted_query("etf fees", "financial")
+    stub = _Stub({SUFFIX: ["https://blog.example/a"], scoped: ["https://sec.gov/x"]})
+    label = SourceLabelledQuery("financial", "etf fees", {"sec.gov"})
+    out = await run_source_query(
+        label, search_fn=stub, cache=DiskCache(tmp_path), include_plain=False
+    )
+    assert "etf fees" not in stub.calls
+    assert stub.calls == [SUFFIX, scoped]
+    assert out.plain is None and out.delta_vs_plain is None
+    # A skipped plain arm is not a failed arm.
+    assert not out.excluded
+
+
+def test_pending_calls_counts_the_pilot_selection(tmp_path):
+    cli = _cli()
+    labels = cli.select_labels(load_source_labels(), 1)
+    labels += [SourceLabelledQuery("web", "what is a bond", {"example.com"})]
+    cache = DiskCache(tmp_path)
+    assert cli._pending_calls(labels, cache, "serpapi", include_plain=False) == 33
+    assert cli._pending_calls(labels, cache, "serpapi", include_plain=True) == 49
+
+
+def test_summary_without_plain_reports_it_as_not_run():
+    from src.internal.retrieval.domain_eval import ArmResult, SourceQueryOutcome
+
+    cli = _cli()
+    arm = ArmResult(urls=["u"], empty=False, seconds=1.0)
+
+    def row(domain, delta):
+        return SourceQueryOutcome(
+            domain,
+            "q",
+            None,
+            arm,
+            arm,
+            False,
+            delta,
+            None,
+            1.0 if domain == "web" else 0.5,
+            False,
+            0.25,
+        )
+
+    summary = cli.summarise_source([row("web", 0.0)] + [row("financial", 0.5)] * 12)
+    assert summary["paired_vs_plain"] is None
+    assert summary["empty_rate"]["plain"] is None
+    assert summary["paired_vs_suffix"]["n"] == 12
+    assert summary["decision"] == "better"
+
+
+def test_main_dry_run_reports_the_pilot_call_count(tmp_path, capsys):
+    cli = _cli()
+    cli.main(
+        [
+            "--per-category",
+            "1",
+            "--no-plain",
+            "--control",
+            "what is a bond",
+            "--cache-dir",
+            str(tmp_path),
+            "--dry-run",
+        ]
+    )
+    assert (
+        "17 labelled queries; 33 live provider calls needed." in capsys.readouterr().out
+    )
