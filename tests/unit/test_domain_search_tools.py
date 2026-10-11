@@ -32,7 +32,7 @@ async def test_tool_registry_supports_all_four_features():
     result, _, errors = await registry.invoke("get_sub_domains", {"domains": ["film"]})
     assert not errors
     assert (
-        json.loads(result)["domains"][0]["sub_domains"][0]["sub_domain"] == "film.web"
+        json.loads(result)["domains"][0]["sub_domains"][0]["sub_domain"] == "media.web"
     )
     result, _, errors = await registry.invoke(
         "extract_page", {"url": "https://example.test"}
@@ -144,3 +144,38 @@ async def test_extract_page_bad_url_or_dead_link_feeds_back(url, fetched, error)
     outcome = await registry.invoke_detailed("extract_page", {"url": url})
     assert outcome.failure.category is FailureCategory.INVALID_INPUT
     assert json.loads(outcome.response) == {"error": error}  # same text as before
+
+
+@pytest.mark.asyncio
+async def test_registry_accepts_legacy_selectors_without_mutating_arguments():
+    async def web(query, **kwargs):
+        return [SearchPage(title="Page", summary=query, url="https://example.test")]
+
+    registry = ToolRegistry()
+    for tool in build_domain_search_tools(
+        service=DomainSearch(web_search_fn=web, tools=[])
+    ):
+        registry.register(tool)
+    for arguments in (
+        {"query": "earnings", "domain": " Finance "},
+        {"queries": [{"query": "earnings", "domain": "finance"}]},
+        {"domains": ["general", "film"]},
+    ):
+        import copy
+
+        before = copy.deepcopy(arguments)
+        name = (
+            "get_sub_domains"
+            if "domains" in arguments
+            else "batch_search"
+            if "queries" in arguments
+            else "search_domain"
+        )
+        response, _, errors = await registry.invoke(name, arguments)
+        assert not errors
+        assert "error" not in json.loads(response)
+        assert arguments == before
+    _, _, errors = await registry.invoke(
+        "search_domain", {"query": "q", "domain": "unknown"}
+    )
+    assert errors
