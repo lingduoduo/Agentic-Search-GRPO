@@ -63,6 +63,7 @@ class SearchDomain:
     description: str
     query_hint: str
     capabilities: tuple["Capability", ...] = ()
+    typical_sources: tuple[str, ...] = ()
 
 
 # Every domain can be searched on the public web; the hint is what differs.
@@ -71,102 +72,148 @@ WEB_CAPABILITY = Capability(name="web", query_parameter="query", returns="docume
 
 
 DOMAIN_REGISTRY: dict[str, SearchDomain] = {
-    "general": SearchDomain(
-        "Broad or mixed-topic search; default",
+    "web": SearchDomain(
+        "General information, websites, explanations, references",
         "",
         (
             WEB_CAPABILITY,
             Capability("wikipedia", "query", "documents", "search_wikipedia"),
         ),
+        ("Web search engines",),
     ),
-    "resource": SearchDomain(
-        "Datasets, reference materials, directories, and reusable tools",
-        "resources",
-        (WEB_CAPABILITY, Capability("wayback", "url", "documents", "search_wayback")),
+    "academic": SearchDomain(
+        "Papers, preprints, citations, conferences, research",
+        "academic research",
+        (
+            WEB_CAPABILITY,
+            Capability("arxiv", "query", "documents", "search_arxiv"),
+        ),
+        ("arXiv", "Semantic Scholar", "OpenAlex"),
+    ),
+    "code": SearchDomain(
+        "Repositories, APIs, libraries, examples, issues",
+        "programming repositories",
+        (WEB_CAPABILITY,),
+        ("GitHub", "GitLab", "package registries"),
     ),
     "social_media": SearchDomain(
-        "Public social posts, communities, and discussions",
-        "social media",
+        "Discussions, opinions, trends, community experiences",
+        "social media discussions",
         (WEB_CAPABILITY,),
+        ("Reddit", "Hacker News", "public social platforms"),
     ),
-    "finance": SearchDomain(
-        "Markets, investments, banking, and financial analysis",
-        "finance",
+    "resource": SearchDomain(
+        "Datasets, directories, tools, templates, benchmarks",
+        "datasets resources tools",
+        (
+            WEB_CAPABILITY,
+            Capability("wayback", "url", "documents", "search_wayback"),
+        ),
+        ("Hugging Face", "Kaggle", "open-data portals"),
+    ),
+    "news": SearchDomain(
+        "Breaking news, reporting, investigations, press releases",
+        "news reporting",
+        (WEB_CAPABILITY,),
+        ("News publishers", "news aggregators"),
+    ),
+    "official": SearchDomain(
+        "Official announcements, documentation, authoritative statements",
+        "official documentation announcements",
+        (WEB_CAPABILITY,),
+        ("Government agencies", "organizations", "official websites"),
+    ),
+    "legal": SearchDomain(
+        "Statutes, regulations, case law, legal decisions",
+        "law statutes case law",
+        (WEB_CAPABILITY,),
+        ("Court databases", "legal repositories"),
+    ),
+    "financial": SearchDomain(
+        "Market data, filings, earnings, financial statements",
+        "financial market data filings",
         (
             WEB_CAPABILITY,
             Capability("quote", "symbol", "records", "get_stock_quote"),
             Capability("crypto", "symbol", "records", "get_crypto_price"),
             Capability("currency", "from_currency", "records", "convert_currency"),
         ),
+        ("SEC EDGAR", "exchange data", "financial providers"),
     ),
-    "academic": SearchDomain(
-        "Scholarly literature, research methods, and publications",
-        "academic research",
-        (WEB_CAPABILITY, Capability("arxiv", "query", "documents", "search_arxiv")),
-    ),
-    "legal": SearchDomain(
-        "Law, regulation, case law, and legal procedure",
-        "law",
+    "patent": SearchDomain(
+        "Patents, trademarks, inventions, intellectual property",
+        "patents intellectual property",
         (WEB_CAPABILITY,),
+        ("Google Patents", "USPTO", "WIPO"),
     ),
-    "health": SearchDomain(
-        "Medicine, public health, and clinical information",
-        "health",
+    "product": SearchDomain(
+        "Product catalogs, specifications, prices, reviews",
+        "product specifications prices reviews",
         (WEB_CAPABILITY,),
+        ("Retailers", "manufacturers", "shopping indexes"),
     ),
     "business": SearchDomain(
-        "Companies, operations, strategy, and commerce",
-        "business",
+        "Company profiles, industry information, organizations",
+        "company industry information",
         (WEB_CAPABILITY,),
+        ("Company registries", "corporate websites"),
     ),
-    "security": SearchDomain(
-        "Cybersecurity, vulnerabilities, and defensive practices",
-        "cybersecurity",
-        (WEB_CAPABILITY,),
-    ),
-    "ip": SearchDomain(
-        "Intellectual property: patents, trademarks, copyright, and licensing",
-        "intellectual property",
-        (WEB_CAPABILITY,),
-    ),
-    "code": SearchDomain(
-        "Source code, programming, APIs, and developer documentation",
-        "programming",
-        (WEB_CAPABILITY,),
-    ),
-    "energy": SearchDomain(
-        "Generation, fuels, storage, and energy systems",
-        "energy",
-        (WEB_CAPABILITY,),
-    ),
-    "environment": SearchDomain(
-        "Climate, ecosystems, conservation, and pollution",
-        "environment",
-        (WEB_CAPABILITY, Capability("weather", "location", "records", "get_weather")),
-    ),
-    "agriculture": SearchDomain(
-        "Farming, crops, livestock, and agricultural systems",
-        "agriculture",
-        (WEB_CAPABILITY,),
+    "local": SearchDomain(
+        "Businesses, locations, hours, local services",
+        "local businesses locations services",
+        (
+            WEB_CAPABILITY,
+            Capability("weather", "location", "records", "get_weather"),
+            Capability("location", "query", "records", "search_location"),
+            Capability("nearby", "query", "records", "search_nearby_places"),
+        ),
+        ("Maps", "business directories"),
     ),
     "travel": SearchDomain(
-        "Destinations, transport, lodging, and trip planning",
-        "travel",
+        "Flights, hotels, destinations, transportation",
+        "travel flights hotels",
         (
             WEB_CAPABILITY,
             Capability("location", "query", "records", "search_location"),
             Capability("nearby", "query", "records", "search_nearby_places"),
         ),
+        ("Travel providers", "tourism websites"),
     ),
-    "film": SearchDomain(
-        "Cinema, films, filmmaking, and the film industry",
-        "film",
+    "media": SearchDomain(
+        "Images, videos, audio, podcasts, multimedia",
+        "images videos audio",
         (WEB_CAPABILITY,),
+        ("YouTube", "Wikimedia Commons", "media platforms"),
     ),
-    "gaming": SearchDomain(
-        "Video games, game development, and gaming communities",
-        "video games",
+    "books": SearchDomain(
+        "Books, authors, editions, publications, libraries",
+        "books authors libraries",
         (WEB_CAPABILITY,),
+        ("Open Library", "Google Books", "library catalogs"),
+    ),
+    "education": SearchDomain(
+        "Courses, tutorials, textbooks, educational programs",
+        "courses tutorials education",
+        (WEB_CAPABILITY,),
+        ("University websites", "course catalogs", "learning platforms"),
+    ),
+    "events": SearchDomain(
+        "Conferences, concerts, meetups, schedules",
+        "events conferences schedules",
+        (WEB_CAPABILITY,),
+        ("Event platforms", "official event sites"),
+    ),
+    "jobs": SearchDomain(
+        "Job openings, careers, salaries, employment opportunities",
+        "job openings careers",
+        (WEB_CAPABILITY,),
+        ("Employer career pages", "job boards"),
+    ),
+    "statistics": SearchDomain(
+        "Public statistics, indicators, surveys, census data",
+        "public statistics census indicators",
+        (WEB_CAPABILITY,),
+        ("Census Bureau", "World Bank", "OECD"),
     ),
 }
 
@@ -181,17 +228,78 @@ def iter_capabilities() -> Iterator[tuple[str, Capability]]:
 AVAILABLE_DOMAINS: list[str] = list(DOMAIN_REGISTRY)
 
 
-def normalize_search_domain(value: str = "general") -> str:
-    """Normalize an explicit topic selector or reject it before dispatch."""
+DOMAIN_ALIASES = {
+    "general": "web",
+    "finance": "financial",
+    "ip": "patent",
+    "health": "web",
+    "security": "web",
+    "energy": "web",
+    "environment": "web",
+    "agriculture": "web",
+    "gaming": "web",
+    "film": "media",
+}
+
+
+def _selector_key(value: str) -> str:
+    """Spelling normalization only; aliases are applied separately."""
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def normalize_search_domain(value: str = "web") -> str:
+    """Normalize an explicit source selector or reject it before dispatch."""
     if isinstance(value, str):
-        canonical = value.strip().lower().replace("-", "_").replace(" ", "_")
+        canonical = _selector_key(value)
+        canonical = DOMAIN_ALIASES.get(canonical, canonical)
         if canonical in DOMAIN_REGISTRY:
             return canonical
     raise InvalidToolInput("domain must be one of: " + ", ".join(DOMAIN_REGISTRY))
 
 
-def prepare_domain_query(query: str, domain: str = "general") -> str:
-    """Append a topic hint once at a tool entry point; general is unchanged."""
+def normalize_search_tag(tag: str) -> str:
+    """Migrate legacy capability tags before domain/tag agreement checks."""
+    if not isinstance(tag, str) or "." not in tag:
+        raise InvalidToolInput("tag must be a capability returned by get_sub_domains")
+    prefix, capability = tag.split(".", 1)
+    normalized = _selector_key(prefix)
+    if normalized == "environment" and capability == "weather":
+        return "local.weather"
+    return f"{normalize_search_domain(prefix)}.{capability}"
+
+
+def _source_validation_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Normalize selectors on a copy for canonical-enum validation only."""
+    result = dict(arguments)
+    if "domain" in result:
+        try:
+            result["domain"] = normalize_search_domain(result["domain"])
+        except InvalidToolInput:
+            pass
+    if isinstance(result.get("domains"), list):
+        values = []
+        for value in result["domains"]:
+            try:
+                value = normalize_search_domain(value)
+            except InvalidToolInput:
+                pass
+            values.append(value)
+        result["domains"] = values
+    if isinstance(result.get("queries"), list):
+        result["queries"] = [
+            _source_validation_arguments(item) if isinstance(item, dict) else item
+            for item in result["queries"]
+        ]
+    return result
+
+
+class _SourceFunctionTool(FunctionTool):
+    def validation_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return _source_validation_arguments(arguments)
+
+
+def prepare_domain_query(query: str, domain: str = "web") -> str:
+    """Append a source hint once at a tool entry point; web is unchanged."""
     canonical = normalize_search_domain(domain)
     hint = DOMAIN_REGISTRY[canonical].query_hint
     return f"{query} {hint}" if hint and query.strip() else query
@@ -205,10 +313,10 @@ def search_domain_parameter() -> dict[str, object]:
     return {
         "type": "string",
         "enum": list(DOMAIN_REGISTRY),
-        "default": "general",
+        "default": "web",
         "description": (
-            "Optional topic query hint, not a guaranteed result filter. "
-            "Use general for broad or mixed topics. " + descriptions
+            "Optional search-source category hint, not a guaranteed result filter. "
+            "Use web for broad or mixed topics. " + descriptions
         ),
     }
 
@@ -877,7 +985,7 @@ class MultiQueryWebSearchTool(Tool):
 
     Designed for use with ToolAgentLoop. The LLM passes {"queries": ["q1", "q2"]}
     and all queries execute concurrently, with results deduplicated by URL.
-    An optional domain applies the same topic hint to every query in the call.
+    An optional domain applies the same source hint to every query in the call.
     """
 
     def __init__(
@@ -941,11 +1049,14 @@ class MultiQueryWebSearchTool(Tool):
     def result_kind(self) -> ResultKind:
         return ResultKind.DOCUMENTS
 
+    def validation_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return _source_validation_arguments(arguments)
+
     async def execute(
         self, instance_id: str, arguments: dict[str, Any]
     ) -> tuple[str, Any, Any]:
         del instance_id
-        domain = normalize_search_domain(arguments.get("domain", "general"))
+        domain = normalize_search_domain(arguments.get("domain", "web"))
         raw_queries = arguments.get("queries", [])
         queries = _normalize_queries_input(raw_queries)
 
@@ -981,7 +1092,7 @@ class MultiQueryWebSearchTool(Tool):
                 merged.append(page)
 
         metadata: dict[str, Any] = {"queries": queries}
-        if domain != "general":
+        if domain != "web":
             metadata.update(domain=domain, executed_queries=executed_queries)
         if not merged and errors:
             # A Tool subclass (unlike FunctionTool) must put the failure into
@@ -1136,8 +1247,13 @@ class DomainSearch:
         if not isinstance(domains, list) or not 1 <= len(domains) <= 5:
             raise InvalidToolInput("provide one to five domains")
         directories = []
+        seen: set[str] = set()
         for value in domains:
             domain = normalize_search_domain(value)
+            # Several legacy names alias to web; describe each category once.
+            if domain in seen:
+                continue
+            seen.add(domain)
             entries = []
             for capability in DOMAIN_REGISTRY[domain].capabilities:
                 tag = f"{domain}.{capability.name}"
@@ -1147,7 +1263,7 @@ class DomainSearch:
                             "sub_domain": tag,
                             "tool_name": "web_search",
                             "description": (
-                                f"Search the public web with the {domain} topic hint."
+                                f"Search the public web with the {domain} source hint."
                             ),
                             "query_parameter": capability.query_parameter,
                             "query_format": "Natural-language search query",
@@ -1198,6 +1314,7 @@ class DomainSearch:
                 {
                     "domain": domain,
                     "description": DOMAIN_REGISTRY[domain].description,
+                    "typical_sources": list(DOMAIN_REGISTRY[domain].typical_sources),
                     "sub_domains": entries,
                 }
             )
@@ -1221,10 +1338,18 @@ class DomainSearch:
             raise InvalidToolInput(
                 "tag must be a capability returned by get_sub_domains"
             )
+        if tag is not None:
+            raw_prefix = tag.split(".", 1)[0]
+            tag = normalize_search_tag(tag)
+            # A domain spelled like the tag's own legacy prefix (as old
+            # discovery output paired them) defers to the tag migration:
+            # environment + environment.weather is local, not web.
+            if isinstance(domain, str) and _selector_key(domain) == _selector_key(
+                raw_prefix
+            ):
+                domain = None
         canonical = normalize_search_domain(
-            domain
-            if domain is not None
-            else (tag.split(".", 1)[0] if tag else "general")
+            domain if domain is not None else (tag.split(".", 1)[0] if tag else "web")
         )
         tag = tag if tag is not None else f"{canonical}.web"
         if not tag.startswith(canonical + "."):
@@ -1350,11 +1475,11 @@ def _search_properties() -> dict:
         "domain": {
             "type": "string",
             "enum": list(AVAILABLE_DOMAINS),
-            "description": "Topic domain. With no tag, selects its web-search route.",
+            "description": "Search-source category. With no tag, selects its web-search route.",
         },
         "tag": {
             "type": "string",
-            "description": "An implemented capability returned by get_sub_domains, e.g. finance.quote or academic.arxiv.",
+            "description": "An implemented capability returned by get_sub_domains, e.g. financial.quote or academic.arxiv.",
         },
         "params": {
             "type": "object",
@@ -1396,7 +1521,7 @@ def build_domain_search_tools(
         (
             "search_domain",
             search,
-            "Search a topic using the current web providers or an implemented public-data capability. Call get_sub_domains to discover tags and required parameters.",
+            "Search a source category using the current web providers or an implemented public-data capability. Call get_sub_domains to discover tags and required parameters.",
             single_schema,
             False,
             ResultKind.JSON,
@@ -1458,7 +1583,7 @@ def build_domain_search_tools(
         ),
     ]
     return [
-        FunctionTool(
+        _SourceFunctionTool(
             fn=guarded(fn),
             name=name,
             description=description,

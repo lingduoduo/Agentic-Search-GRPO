@@ -38,8 +38,8 @@ interface SearchComposerProps {
   // When false (default), the Source picker is hidden — the backend uses "auto"
   // fan-out. Shown only in dev (?dev=1).
   showSourcePicker?: boolean;
-  // The topic domain is a product control, not a dev affordance: it is always
-  // rendered. Options come from GET /api/search-domains so the 17 identifiers
+  // The search source is a product control, not a dev affordance: it is always
+  // rendered. Options come from GET /api/search-domains so the 20 categories
   // and their order live in one place.
   domain?: string;
   domainOptions?: SearchDomainOption[];
@@ -53,7 +53,7 @@ interface SearchComposerProps {
 }
 
 const DEFAULT_DOMAIN_OPTIONS: SearchDomainOption[] = [
-  { name: "general", description: "Broad or mixed-topic search; default" },
+  { name: "web", description: "General information, websites, explanations, references" },
 ];
 
 export const SearchComposer = memo(function SearchComposer({
@@ -64,7 +64,7 @@ export const SearchComposer = memo(function SearchComposer({
   isLoading,
   showUrlField = false,
   showSourcePicker = false,
-  domain = "general",
+  domain = "web",
   domainOptions = DEFAULT_DOMAIN_OPTIONS,
   onQueryChange,
   onSearchUrlChange,
@@ -131,13 +131,19 @@ export const SearchComposer = memo(function SearchComposer({
         )}
 
         <label>
-          Domain
+          Search source
           <select
             value={domain}
             onChange={(e) => onDomainChange(e.currentTarget.value)}
           >
             {domainOptions.map((opt) => (
-              <option key={opt.name} value={opt.name} title={opt.description}>
+              <option
+                key={opt.name}
+                value={opt.name}
+                title={[opt.description, opt.typical_sources?.join(", ")]
+                  .filter(Boolean)
+                  .join(" — ")}
+              >
                 {opt.name.replace(/_/g, " ")}
               </option>
             ))}

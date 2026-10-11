@@ -283,8 +283,10 @@ details such as `search_mode`, `external_provider`, `tier`, and `top_score`.
 The complete field-level contract, explicit-source behavior, and worked examples
 are in [API request routing](request-routing.md).
 
-The request's optional `domain` (default `general`) adds a topic hint to web
-provider queries; `GET /api/search-domains` lists the accepted identifiers. See
+The request's optional `domain` (default `web`) adds a search-source hint to web
+provider queries; `GET /api/search-domains` lists the 20 accepted categories with
+their `description` and `typical_sources`. Legacy topic identifiers are accepted
+as aliases. See
 [Domains over HTTP](search-engine.md#domains-over-http-and-in-the-web-ui).
 
 ## Chat and session API

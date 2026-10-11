@@ -17,6 +17,7 @@ from src.internal.tools.search import (
     DOMAIN_REGISTRY,
     Capability,
     iter_capabilities,
+    normalize_search_tag,
 )
 
 # Exactly what CAPABILITY_ROUTES mapped before this change.
@@ -36,6 +37,7 @@ LEGACY_ROUTES = {
 def test_every_legacy_tag_still_resolves_identically():
     by_tag = dict(iter_capabilities())
     for tag, (tool_name, query_parameter) in LEGACY_ROUTES.items():
+        tag = normalize_search_tag(tag)
         assert tag in by_tag, f"{tag} disappeared"
         assert by_tag[tag].tool_name == tool_name, tag
         assert by_tag[tag].query_parameter == query_parameter, tag
@@ -44,7 +46,10 @@ def test_every_legacy_tag_still_resolves_identically():
 def test_no_extra_tool_backed_capabilities_were_invented():
     # A refactor adds no routes. `web` is tool-less and excluded.
     tool_backed = {tag for tag, cap in iter_capabilities() if cap.tool_name}
-    assert tool_backed == set(LEGACY_ROUTES)
+    assert tool_backed == {normalize_search_tag(tag) for tag in LEGACY_ROUTES} | {
+        "local.location",
+        "local.nearby",
+    }
 
 
 def test_every_domain_declares_a_web_capability():
@@ -61,10 +66,10 @@ def test_the_web_capability_is_tool_less():
         assert web.returns == "documents"
 
 
-def test_registry_keeps_its_seventeen_keys_in_order():
-    assert len(DOMAIN_REGISTRY) == 17
+def test_registry_keeps_its_twenty_keys_in_order():
+    assert len(DOMAIN_REGISTRY) == 20
     assert list(DOMAIN_REGISTRY) == AVAILABLE_DOMAINS
-    assert AVAILABLE_DOMAINS[0] == "general"
+    assert AVAILABLE_DOMAINS[0] == "web"
 
 
 def test_returns_is_one_of_two_values():
@@ -86,7 +91,7 @@ def test_capability_names_carry_no_dot():
 
 @pytest.mark.parametrize("tag", sorted(LEGACY_ROUTES))
 def test_tags_are_derived_from_their_domain(tag):
-    domain, _, capability = tag.partition(".")
+    domain, _, capability = normalize_search_tag(tag).partition(".")
     assert domain in DOMAIN_REGISTRY
     assert capability in {c.name for c in DOMAIN_REGISTRY[domain].capabilities}
 
@@ -102,7 +107,16 @@ def test_routes_match_the_legacy_table():
     resolved = {
         tag: (tool.name, parameter) for tag, (tool, parameter) in service.routes.items()
     }
-    assert resolved == LEGACY_ROUTES
+    expected = {
+        normalize_search_tag(tag): target for tag, target in LEGACY_ROUTES.items()
+    }
+    expected.update(
+        {
+            "local.location": expected["travel.location"],
+            "local.nearby": expected["travel.nearby"],
+        }
+    )
+    assert resolved == expected
 
 
 def test_a_capability_naming_an_unseeded_tool_is_dropped():
@@ -114,12 +128,12 @@ def test_a_capability_naming_an_unseeded_tool_is_dropped():
 def test_discovery_lists_web_first_then_capabilities():
     service = DomainSearch(tools=public_data_tools())
     entries = service.get_sub_domains(["finance"])["domains"][0]["sub_domains"]
-    assert entries[0]["sub_domain"] == "finance.web"
+    assert entries[0]["sub_domain"] == "financial.web"
     assert {e["sub_domain"] for e in entries} == {
-        "finance.web",
-        "finance.quote",
-        "finance.crypto",
-        "finance.currency",
+        "financial.web",
+        "financial.quote",
+        "financial.crypto",
+        "financial.currency",
     }
 
 
@@ -127,14 +141,14 @@ def test_discovery_reports_what_each_capability_returns():
     service = DomainSearch(tools=public_data_tools())
     entries = service.get_sub_domains(["finance"])["domains"][0]["sub_domains"]
     by_tag = {e["sub_domain"]: e for e in entries}
-    assert by_tag["finance.web"]["returns"] == "documents"
-    assert by_tag["finance.quote"]["returns"] == "records"
+    assert by_tag["financial.web"]["returns"] == "documents"
+    assert by_tag["financial.quote"]["returns"] == "records"
 
 
 def test_discovery_omits_capabilities_whose_tool_is_absent():
     service = DomainSearch(tools=[])
     entries = service.get_sub_domains(["finance"])["domains"][0]["sub_domains"]
-    assert [e["sub_domain"] for e in entries] == ["finance.web"]
+    assert [e["sub_domain"] for e in entries] == ["financial.web"]
 
 
 def test_discovery_still_rejects_bad_domain_counts():
@@ -157,7 +171,7 @@ async def test_passing_a_removed_alias_is_rejected_not_ignored():
     # Silently dropping it would send an unintended query to a provider.
     service = DomainSearch(tools=[])
     with pytest.raises(TypeError):
-        await service.search("q", sub_domain="finance.quote")
+        await service.search("q", sub_domain="financial.quote")
 
 
 def test_the_schema_no_longer_advertises_the_aliases():

@@ -41,8 +41,9 @@ export interface AgentExperienceRequest {
   source_provider?: SearchSourceProvider;
   mode?: AgentMode;
   route?: "chat" | "search" | "tool";
-  // One of the 17 DOMAIN_REGISTRY identifiers, or "general". Honored by auto,
-  // search_tool, and hybrid_search; other modes reject a non-general value.
+  // One of the 20 DOMAIN_REGISTRY source categories; "web" is the default.
+  // Honored by auto, search_tool, and hybrid_search; other modes reject a
+  // non-web value.
   domain?: string;
 }
 
@@ -531,4 +532,6 @@ export interface ConversationTurn {
 export interface SearchDomainOption {
   name: string;
   description: string;
+  // Descriptive source families, not a list of integrated providers.
+  typical_sources?: string[];
 }

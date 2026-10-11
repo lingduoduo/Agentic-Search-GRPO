@@ -53,11 +53,17 @@ JSON/SSE response tail. This internal simplification introduces no new public AP
 and does not change the request or response schemas.
 
 
-## Search topic domains
+## Search-source agents
 
 The function-calling `search` and `web_search` tools accept an optional `domain`.
 MCP's `search_web` accepts it too. The shared taxonomy lives in
-`src/internal/tools/search.py`, which exports `AVAILABLE_DOMAINS`.
+`src/internal/tools/search.py`, which exports `AVAILABLE_DOMAINS`. The field keeps
+its name, but each value is now a **search-source category** — the kind of source
+a query should reach — rather than a subject. Subjects such as health, energy,
+security, or gaming are part of the query, and one subject can suit several
+sources: a medical-research question fits `academic` or `official`; a
+vulnerability fits `code`, `official`, or `news`; company earnings fit
+`financial`, `business`, or `news`.
 
 Single-query tool arguments:
 
@@ -71,51 +77,74 @@ Multi-query tool arguments:
 {"queries": ["battery recycling", "lithium recovery"], "domain": "academic"}
 ```
 
-The selected domain applies to every query in that call. To search different
-categories, issue separate calls. Omission or `general` preserves existing query
-behavior. Domain names accept case, surrounding whitespace, spaces, and hyphens:
-`Social Media` and `social-media` normalize to `social_media`. Empty names, unknown
-names, and explicit null values are rejected before searching.
+The selected category applies to every query in that call. To search different
+categories, issue separate calls; nothing fans a query out across several
+categories or fuses their results automatically. Omission or `web` preserves
+existing query behavior. Names accept case, surrounding whitespace, spaces, and
+hyphens: `Social Media` and `social-media` normalize to `social_media`. Empty
+names, unknown names, and explicit null values are rejected before searching.
 
-For a non-general domain, the tool appends the fixed query hint below exactly
-once. For example, `battery recycling` becomes
+For any category other than `web`, the tool appends the fixed query hint below
+exactly once. For example, `battery recycling` becomes
 `battery recycling academic research`. Existing provider selection, fallback
 order, and authorization filters continue to apply.
 
-| ID | Meaning and boundaries | Query hint |
-| --- | --- | --- |
-| general | Broad or mixed-topic search; default | empty string |
-| resource | Datasets, reference materials, directories, and reusable tools | resources |
-| social_media | Public social posts, communities, and discussions | social media |
-| finance | Markets, investments, banking, and financial analysis | finance |
-| academic | Scholarly literature, research methods, and publications | academic research |
-| legal | Law, regulation, case law, and legal procedure | law |
-| health | Medicine, public health, and clinical information | health |
-| business | Companies, operations, strategy, and commerce | business |
-| security | Cybersecurity, vulnerabilities, and defensive practices | cybersecurity |
-| ip | Intellectual property: patents, trademarks, copyright, and licensing | intellectual property |
-| code | Source code, programming, APIs, and developer documentation | programming |
-| energy | Generation, fuels, storage, and energy systems | energy |
-| environment | Climate, ecosystems, conservation, and pollution | environment |
-| agriculture | Farming, crops, livestock, and agricultural systems | agriculture |
-| travel | Destinations, transport, lodging, and trip planning | travel |
-| film | Cinema, films, filmmaking, and the film industry | film |
-| gaming | Video games, game development, and gaming communities | video games |
+| ID | Primary search topics | Typical sources | Query hint |
+| --- | --- | --- | --- |
+| web | General information, websites, explanations, references | Web search engines | empty string |
+| academic | Papers, preprints, citations, conferences, research | arXiv, Semantic Scholar, OpenAlex | academic research |
+| code | Repositories, APIs, libraries, examples, issues | GitHub, GitLab, package registries | programming repositories |
+| social_media | Discussions, opinions, trends, community experiences | Reddit, Hacker News, public social platforms | social media discussions |
+| resource | Datasets, directories, tools, templates, benchmarks | Hugging Face, Kaggle, open-data portals | datasets resources tools |
+| news | Breaking news, reporting, investigations, press releases | News publishers, news aggregators | news reporting |
+| official | Official announcements, documentation, authoritative statements | Government agencies, organizations, official websites | official documentation announcements |
+| legal | Statutes, regulations, case law, legal decisions | Court databases, legal repositories | law statutes case law |
+| financial | Market data, filings, earnings, financial statements | SEC EDGAR, exchange data, financial providers | financial market data filings |
+| patent | Patents, trademarks, inventions, intellectual property | Google Patents, USPTO, WIPO | patents intellectual property |
+| product | Product catalogs, specifications, prices, reviews | Retailers, manufacturers, shopping indexes | product specifications prices reviews |
+| business | Company profiles, industry information, organizations | Company registries, corporate websites | company industry information |
+| local | Businesses, locations, hours, local services | Maps, business directories | local businesses locations services |
+| travel | Flights, hotels, destinations, transportation | Travel providers, tourism websites | travel flights hotels |
+| media | Images, videos, audio, podcasts, multimedia | YouTube, Wikimedia Commons, media platforms | images videos audio |
+| books | Books, authors, editions, publications, libraries | Open Library, Google Books, library catalogs | books authors libraries |
+| education | Courses, tutorials, textbooks, educational programs | University websites, course catalogs, learning platforms | courses tutorials education |
+| events | Conferences, concerts, meetups, schedules | Event platforms, official event sites | events conferences schedules |
+| jobs | Job openings, careers, salaries, employment opportunities | Employer career pages, job boards | job openings careers |
+| statistics | Public statistics, indicators, surveys, census data | Census Bureau, World Bank, OECD | public statistics census indicators |
 
-These categories overlap. `resource` describes the purpose of material and
-`social_media` describes its source; most other categories describe subjects.
-Finance/business, legal/ip, and health/academic can all overlap. Choose the
-category that best expresses the question, or use `general` for mixed topics.
-`ip` means intellectual property, not Internet Protocol; networking questions
-usually fit `security` or `code`.
+**Typical sources are descriptive metadata, not integrations.** They name the
+source family a category is meant to reach, and they shape the query hint, but
+no dedicated connector exists for most of them: every category searches through
+the configured web providers, and only the public-data routes listed under
+[native domain search](#native-domain-search-features) call a specific service.
+Twenty categories do not mean twenty running agents.
 
-Domains are query hints, not guaranteed category filters. They do not promise
+Categories are query hints, not guaranteed category filters. They do not promise
 source authority, freshness, or access to private social content. Added words
-can reduce recall; use `general` to search without the hint. Unit tests verify
+can reduce recall; use `web` to search without the hint. Unit tests verify
 query handling, not improvements in real-world search relevance; the measured
-relevance result is below and found no detectable improvement.
+relevance result below predates this taxonomy and found no detectable
+improvement from the old topic hints.
 
-For non-general multi-query calls, tool metadata includes the original sanitized
+### Legacy identifiers
+
+The previous seventeen topic identifiers are still accepted as input, so
+existing clients keep working, but discovery, schemas, and responses advertise
+and return canonical names only:
+
+| Legacy input | Canonical category |
+| --- | --- |
+| `general` | `web` |
+| `finance` | `financial` |
+| `ip` | `patent` |
+| `film` | `media` |
+| `health`, `security`, `energy`, `environment`, `agriculture`, `gaming` | `web` |
+
+`academic`, `code`, `social_media`, `resource`, `legal`, `business`, and `travel`
+were already canonical and keep their names. A legacy topic that maps to `web`
+no longer appends its old subject word — the caller's query carries the subject.
+
+For non-`web` multi-query calls, tool metadata includes the original sanitized
 `queries`, canonical `domain`, and `executed_queries`. Single-query tool output
 keeps its existing formatted response. See [MCP](mcp.md#web-search-domain-hints)
 for MCP response metadata.
@@ -126,6 +155,16 @@ The taxonomy shipped with a standing condition — no quality claim without
 comparing general and domain runs on labelled queries across every category.
 That comparison has now been run, and it did not find an effect.
 
+**This measures the old topic hints, not the source categories.** The labels
+are keyed by the sixteen pre-source topic identifiers, and their authority hosts
+were chosen for those subjects. `HISTORICAL_TOPIC_HINTS` in
+`src/internal/retrieval/domain_eval.py` freezes those topics' hints, so a rerun
+reproduces the original measurement (and hits the same cache) rather than
+silently reading `health` or `gaming` as a `web` alias with an empty hint — which
+would make both arms identical. A label file keyed by a source category is
+rejected. No source-category relevance has been measured; that would need new
+labels, not relabelled old ones.
+
 Run it yourself:
 
 ```bash
@@ -133,7 +172,8 @@ python -m examples.run_domain_relevance_eval --dry-run   # cost, no calls
 python -m examples.run_domain_relevance_eval
 ```
 
-The labelled set is `data/eval/domain_relevance_queries.json`: 16 topic domains,
+The labelled set is `data/eval/domain_relevance_queries.json`: 16 topic domains
+from the pre-source taxonomy,
 three queries each, every query carrying the URL hosts an on-topic result should
 come from. `general` is excluded because its hint is empty. Each query runs
 twice against SerpAPI — once raw, once hinted — and each arm is scored by
@@ -180,25 +220,28 @@ and the run is rejected rather than reported.
 ### Domains over HTTP and in the web UI
 
 `POST /api/agent` accepts an optional `domain` alongside `query`. It defaults to
-`general`, which leaves the query unchanged and keeps behavior identical to
-requests that omit the field.
+`web`, which leaves the query unchanged and keeps behavior identical to
+requests that omit the field. Legacy identifiers are normalized first, so
+`"finance"` arrives as `financial` and `"health"` as `web`.
 
 ```json
-{"query": "etf fees", "domain": "finance"}
+{"query": "etf fees", "domain": "financial"}
 ```
 
-`GET /api/search-domains` returns each identifier and its description in
-registry order. The Assist page uses it to populate the selector next to the
-question box, so the 17 identifiers are not copied into the frontend bundle.
-The selector is always visible, unlike the Source and retrieval-URL fields,
+`GET /api/search-domains` returns each category's `name`, `description` (its
+primary topics), and `typical_sources` array in registry order. The Assist page
+uses it to populate the "Search source" selector next to the question box, so
+the 20 categories are not copied into the frontend bundle; an option's tooltip
+shows its topics and typical sources. If discovery fails, the selector keeps a
+single `web` option. The selector is always visible, unlike the Source and retrieval-URL fields,
 which appear only under `?dev=1`.
 
 Three modes honor the field, because in each one a single caller-supplied query
 reaches a provider: the default auto mode, `search_tool`, and `hybrid_search`.
 `chat_once` retrieves from the local corpus only, where the hint never applies,
 and `chat_loop`, `search_agent`, and
-`tool_agent` build their own per-round queries internally, so a non-`general`
-domain combined with an explicit one of those modes returns 400 rather than
+`tool_agent` build their own per-round queries internally, so a non-`web`
+category combined with an explicit one of those modes returns 400 rather than
 being dropped without notice. An unrecognized domain also returns 400, before
 any provider is called.
 
@@ -227,23 +270,24 @@ integration, credentials, or CLI. The taxonomy remains in `search.py`.
 ### One registry, derived tags
 
 A domain and its capabilities are a single declaration. `DOMAIN_REGISTRY` maps
-each of the 17 identifiers to a `SearchDomain` carrying its description, its
-query hint, and its capabilities:
+each of the 20 categories to a `SearchDomain` carrying its description, its
+query hint, its capabilities, and its typical sources:
 
 ```python
-"finance": SearchDomain(
-    "Markets, investments, banking, and financial analysis",
-    "finance",
+"financial": SearchDomain(
+    "Market data, filings, earnings, financial statements",
+    "financial market data filings",
     (
         WEB_CAPABILITY,
         Capability("quote", "symbol", "records", "get_stock_quote"),
         Capability("crypto", "symbol", "records", "get_crypto_price"),
         Capability("currency", "from_currency", "records", "convert_currency"),
     ),
+    ("SEC EDGAR", "exchange data", "financial providers"),
 ),
 ```
 
-A tag such as `finance.quote` is **derived** — `f"{domain}.{capability.name}"`
+A tag such as `financial.quote` is **derived** — `f"{domain}.{capability.name}"`
 — not a key anyone writes. Previously the domain and its routes were two
 structures joined only by a string convention, so `"fnance.quote"` was an
 accepted key belonging to no domain, and reading the relationship back out took
@@ -265,8 +309,8 @@ values name local retrieval mechanisms rather than result shape.
 
 The routing layer's own route list in `src/internal/routing/registry.py` stays
 separate. Its entries name modalities — docs, structured, graph, live — and a
-topic is orthogonal to a modality: a finance question may be an article, a
-table, or a live quote.
+source category is orthogonal to a modality: a financial question may be an
+article, a table, or a live quote.
 
 ### One name per concept
 
@@ -297,24 +341,31 @@ URL.
 | `extract_page(url, max_length)` | Reuse the existing HTTP(S) fetcher and HTML-to-text extraction |
 | `batch_search(queries, ...)` | Run 1–5 searches concurrently, preserving input order and per-query errors |
 
-All 17 domains offer `<domain>.web`, which appends the existing topic hint and
+All 20 categories offer `<domain>.web`, which appends the category's query hint and
 uses the configured web-search flow. These are broad searches, not guaranteed
 category filters. Specialized routes use these existing tools:
 
 | Tag | Existing tool | Supply `query` as |
 | --- | --- | --- |
-| `general.wikipedia` | `search_wikipedia` | Search text |
+| `web.wikipedia` | `search_wikipedia` | Search text |
 | `academic.arxiv` | `search_arxiv` | Paper search text |
 | `resource.wayback` | `search_wayback` | Archived page URL |
-| `finance.quote` | `get_stock_quote` | Ticker symbol |
-| `finance.crypto` | `get_crypto_price` | Cryptocurrency symbol |
-| `finance.currency` | `convert_currency` | Source currency; put amount and target currency in params |
-| `environment.weather` | `get_weather` | Place name |
-| `travel.location` | `search_location` | Place/address query |
-| `travel.nearby` | `search_nearby_places` | Place type; put latitude and longitude in params |
+| `financial.quote` | `get_stock_quote` | Ticker symbol |
+| `financial.crypto` | `get_crypto_price` | Cryptocurrency symbol |
+| `financial.currency` | `convert_currency` | Source currency; put amount and target currency in params |
+| `local.weather` | `get_weather` | Place name |
+| `local.location`, `travel.location` | `search_location` | Place/address query |
+| `local.nearby`, `travel.nearby` | `search_nearby_places` | Place type; put latitude and longitude in params |
 
-Discovery returns each route's `tool_name`, `query_parameter`, `query_format`,
-complete `parameters` schema, and additional `params`. It lists only available
+Legacy tags are migrated before the domain/tag agreement check, so they still
+reach the same tool with the same arguments: `general.wikipedia` → `web.wikipedia`,
+`finance.quote`/`crypto`/`currency` → `financial.*`, and `environment.weather` →
+`local.weather`. Any other legacy prefix follows the identifier aliases above, so
+`environment.web` is `web.web`. Discovery lists canonical tags only.
+
+Discovery returns each domain's `typical_sources` and, for each route, its
+`tool_name`, `query_parameter`, `query_format`, complete `parameters` schema, and
+additional `params`. It lists only available
 read-only public-data implementations, plus web routes. It is a local capability
 catalog, not a check of upstream service availability. Private corpus search and
 arbitrary registered tools are outside this routing table.
@@ -324,13 +375,13 @@ arbitrary registered tools are outside this routing table.
 Discover first:
 
 ```json
-{"domains": ["finance", "academic"]}
+{"domains": ["financial", "academic"]}
 ```
 
 Search with the resulting tag:
 
 ```json
-{"query": "AAPL", "tag": "finance.quote"}
+{"query": "AAPL", "tag": "financial.quote"}
 ```
 
 ```json
@@ -359,7 +410,7 @@ Batch requests accept the same search fields per item and shared defaults:
   "domain": "academic",
   "queries": [
     {"query": "dense retrieval"},
-    {"query": "AAPL", "tag": "finance.quote"}
+    {"query": "AAPL", "tag": "financial.quote"}
   ]
 }
 ```
@@ -376,8 +427,8 @@ from src.internal.tools import DomainSearch
 
 async def lookup():
     search = DomainSearch()
-    directory = search.get_sub_domains(["finance"])
-    result = await search.search("AAPL", tag="finance.quote")
+    directory = search.get_sub_domains(["financial"])
+    result = await search.search("AAPL", tag="financial.quote")
     return directory, result
 ```
 

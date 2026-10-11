@@ -89,18 +89,18 @@ async def search_indexed_documents(
 async def search_web(
     query: str,
     limit: int = 5,
-    domain: str = "general",
+    domain: str = "web",
 ) -> dict[str, Any]:
     """
     Search the public internet for general knowledge and current events.
     Use this tool for publicly available information such as news, documentation,
     or general facts.
 
-    `domain` optionally appends a topic hint to the query. It does not filter
-    results by category. Omit it or use `general` to preserve the original query.
+    `domain` optionally appends a source-category hint to the query. It does not filter
+    results by category. Omit it or use `web` to preserve the original query.
 
     Returns ``{"results": [{title, url, snippet}, ...], "query": query}``.
-    Non-general calls also return `domain` and `executed_query`, including when
+    Non-web calls also return `domain` and `executed_query`, including when
     the provider raises an error. Invalid domains fail before provider dispatch.
     Use ``open_urls`` to fetch full content from returned URLs.
 
@@ -115,9 +115,7 @@ async def search_web(
     domain = normalize_search_domain(domain)
     executed_query = prepare_domain_query(query, domain)
     domain_metadata = (
-        {"domain": domain, "executed_query": executed_query}
-        if domain != "general"
-        else {}
+        {"domain": domain, "executed_query": executed_query} if domain != "web" else {}
     )
     logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
 
@@ -207,8 +205,9 @@ async def search_domain(
 ) -> dict[str, Any]:
     """Search through existing web providers or a local public-data capability.
 
-    Discover tags with get_sub_domains. Without a tag, domain selects a topic
-    hint for web search. With a tag, query uses that capability's query format.
+    Discover tags with get_sub_domains. Without a tag, domain selects a
+    search-source hint for web search. With a tag, query uses that
+    capability's query format.
     Returns the original query, selected domain/tag, and results.
     """
     return await _domain_service().search(

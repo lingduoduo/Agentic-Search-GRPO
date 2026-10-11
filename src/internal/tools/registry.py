@@ -375,7 +375,7 @@ class ToolRegistry:
             return None, [f"Tool {name!r} not found."]
         if validate and entry.tool.schema.parameters:
             return entry.tool, validate_arguments(
-                entry.tool.schema.parameters, arguments
+                entry.tool.schema.parameters, entry.tool.validation_arguments(arguments)
             )
         return entry.tool, []
 

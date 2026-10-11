@@ -71,7 +71,7 @@ def test_discovery_uses_real_schemas_and_all_domains(service):
         assert directory["domain"] == domain
         assert directory["sub_domains"][0]["sub_domain"] == f"{domain}.web"
     finance = client.get_sub_domains(["Finance"])["domains"][0]["sub_domains"]
-    quote = next(item for item in finance if item["sub_domain"] == "finance.quote")
+    quote = next(item for item in finance if item["sub_domain"] == "financial.quote")
     assert quote["tool_name"] == "get_stock_quote"
     assert quote["query_parameter"] == "symbol"
     assert quote["parameters"]["properties"]["symbol"]["description"] == "Ticker"
@@ -79,6 +79,12 @@ def test_discovery_uses_real_schemas_and_all_domains(service):
     fresh = client.get_sub_domains(["finance"])["domains"][0]["sub_domains"][1]
     assert "symbol" in fresh["parameters"]["properties"]
     assert calls == []
+
+
+def test_discovery_describes_an_aliased_category_once(service):
+    client, _ = service
+    directories = client.get_sub_domains(["environment", "health", "web"])["domains"]
+    assert [d["domain"] for d in directories] == ["web"]
 
 
 @pytest.mark.asyncio
@@ -98,6 +104,8 @@ async def test_native_capability_uses_actual_tool_without_hints(service):
     result = await client.search("AAPL", tag="finance.quote")
     assert calls == [("quote", "AAPL")]
     assert result["results"] == {"symbol": "AAPL", "price": 123}
+    assert result["domain"] == "financial"
+    assert result["tag"] == "financial.quote"
     result = await client.search(
         "battery",
         domain="academic",
@@ -223,7 +231,7 @@ def test_discovery_excludes_side_effecting_and_arbitrary_tools():
     ]
     directory = DomainSearch(tools=tools).get_sub_domains(["finance"])
     assert [item["sub_domain"] for item in directory["domains"][0]["sub_domains"]] == [
-        "finance.web"
+        "financial.web"
     ]
 
 
@@ -252,3 +260,68 @@ async def test_batch_cancellation_cancels_workers(service, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert set(cancelled) == {"one", "two"}
+
+
+@pytest.mark.parametrize(
+    "tag,canonical",
+    [
+        ("general.wikipedia", "web.wikipedia"),
+        ("finance.quote", "financial.quote"),
+        ("environment.weather", "local.weather"),
+        ("environment.web", "web.web"),
+    ],
+)
+def test_legacy_tag_alias(tag, canonical):
+    from src.internal.tools.search import normalize_search_tag
+
+    assert normalize_search_tag(tag) == canonical
+
+
+@pytest.mark.asyncio
+async def test_legacy_environment_capabilities_migrate_by_tag():
+    calls = []
+
+    async def weather(location):
+        calls.append(("weather", location))
+        return {"location": location}
+
+    async def web(query, **kwargs):
+        calls.append(("web", query))
+        return []
+
+    tool = FunctionTool(
+        fn=weather,
+        name="get_weather",
+        description="Weather",
+        parameters={
+            "type": "object",
+            "properties": {"location": {"type": "string"}},
+            "required": ["location"],
+        },
+        effect=ToolEffect.READ_ONLY,
+    )
+    client = DomainSearch(web_search_fn=web, tools=[tool])
+    result = await client.search("Boston", tag="environment.weather")
+    assert result["domain"] == "local" and result["tag"] == "local.weather"
+    result = await client.search("climate", tag="environment.web")
+    assert result["domain"] == "web" and result["executed_query"] == "climate"
+    # Old get_sub_domains output paired this domain with this tag; a client
+    # replaying it must still reach the weather tool.
+    result = await client.search(
+        "Boston", domain="environment", tag="environment.weather"
+    )
+    assert result["domain"] == "local" and result["tag"] == "local.weather"
+    result = await client.search("climate", domain="environment", tag="environment.web")
+    assert result["domain"] == "web"
+    assert calls == [
+        ("weather", "Boston"),
+        ("web", "climate"),
+        ("weather", "Boston"),
+        ("web", "climate"),
+    ]
+    # A genuine conflict is still rejected before dispatch.
+    with pytest.raises(ValueError, match="domain must match"):
+        await client.search("Boston", domain="finance", tag="environment.weather")
+    with pytest.raises(ValueError, match="domain must match"):
+        await client.search("Boston", domain="health", tag="environment.weather")
+    assert len(calls) == 4

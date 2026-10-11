@@ -29,7 +29,7 @@ async def test_mcp_domain_features_share_service(monkeypatch):
     result = await module.batch_search(
         [{"query": "one"}, {"query": ""}], domain="finance"
     )
-    assert result["queries"][0]["executed_query"] == "one finance"
+    assert result["queries"][0]["executed_query"] == "one financial market data filings"
     assert "error" in result["queries"][1]
     result = await module.extract_page("https://example.test")
     assert result[0]["content"] == "Full text"

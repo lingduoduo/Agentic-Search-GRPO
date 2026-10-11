@@ -55,3 +55,30 @@ describe("AssistPage claim streaming", () => {
     expect(screen.queryByText(/FAISS is a library\. FAISS is a library\./)).not.toBeInTheDocument();
   });
 });
+
+
+describe("AssistPage search-source taxonomy", () => {
+  it("keeps web available when discovery fails", async () => {
+    vi.spyOn(api, "fetchSearchDomains").mockRejectedValue(new Error("unavailable"));
+    render(<AssistPage />);
+    await waitFor(() => expect(api.fetchSearchDomains).toHaveBeenCalled());
+    expect(screen.getByLabelText("Search source")).toHaveValue("web");
+  });
+
+  it("submits the selected canonical source", async () => {
+    vi.spyOn(api, "fetchSearchDomains").mockResolvedValue({domains: [
+      {name: "web", description: "General information", typical_sources: ["Web search engines"]},
+      {name: "financial", description: "Market data", typical_sources: ["SEC EDGAR"]},
+    ]});
+    vi.spyOn(api, "createSession").mockResolvedValue({id: "source-session", messages: []} as never);
+    async function* fake() { yield {type: "answer", text: "Result"} as const; }
+    const stream = vi.spyOn(api, "streamAgent").mockImplementation(fake as never);
+    render(<AssistPage />);
+    await screen.findByRole("option", {name: "financial"});
+    fireEvent.change(screen.getByLabelText("Search source"), {target: {value: "financial"}});
+    fireEvent.change(screen.getByLabelText("Question"), {target: {value: "earnings"}});
+    fireEvent.click(screen.getByText("Search"));
+    await waitFor(() => expect(stream).toHaveBeenCalled());
+    expect(stream.mock.calls[0][0].domain).toBe("financial");
+  });
+});

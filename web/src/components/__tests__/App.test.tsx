@@ -555,27 +555,27 @@ describe("App search domain", () => {
   it("sends the selected domain in the agent request", async () => {
     (api.fetchSearchDomains as ReturnType<typeof vi.fn>).mockResolvedValue({
       domains: [
-        { name: "general", description: "Broad or mixed-topic search; default" },
-        { name: "finance", description: "Markets, investments, banking" },
+        { name: "web", description: "General information, websites, explanations, references" },
+        { name: "financial", description: "Market data, filings, earnings, financial statements" },
       ],
     });
     mockStreamAgent.mockReturnValue(fakeStream("search"));
     render(<App />);
-    const select = await screen.findByLabelText("Domain");
-    await userEvent.selectOptions(select, "finance");
+    const select = await screen.findByLabelText("Search source");
+    await userEvent.selectOptions(select, "financial");
     await submitQuery("etf fees");
     await waitFor(() => expect(mockStreamAgent).toHaveBeenCalled());
     expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({
       query: "etf fees",
-      domain: "finance",
+      domain: "financial",
     });
   });
 
-  it("defaults to general when the user picks nothing", async () => {
+  it("defaults to web when the user picks nothing", async () => {
     mockStreamAgent.mockReturnValue(fakeStream("search"));
     render(<App />);
     await submitQuery("etf fees");
     await waitFor(() => expect(mockStreamAgent).toHaveBeenCalled());
-    expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({ domain: "general" });
+    expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({ domain: "web" });
   });
 });

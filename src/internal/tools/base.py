@@ -138,6 +138,10 @@ class Tool(ABC):
     @abstractmethod
     def schema(self) -> ToolSchema: ...
 
+    def validation_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return schema-validation input; execution receives original arguments."""
+        return arguments
+
     async def create(self) -> str:
         """Allocate a tool instance. Returns an opaque instance_id."""
         return "default"

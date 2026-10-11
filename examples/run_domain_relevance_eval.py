@@ -27,10 +27,11 @@ from src.internal.retrieval.domain_eval import (
     DiskCache,
     QueryOutcome,
     cache_key,
+    historical_topic_query,
     load_labels,
     run_query,
 )
-from src.internal.tools.search import prepare_domain_query, search_tool
+from src.internal.tools.search import search_tool
 from src.model.post_training.eval.stats import cliffs_delta, paired_permutation_p
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -124,7 +125,7 @@ def _pending_calls(labels, cache: DiskCache, provider: str) -> int:
     """How many live provider calls a run would still need."""
     pending: set[str] = set()
     for label in labels:
-        for query in {label.query, prepare_domain_query(label.query, label.domain)}:
+        for query in {label.query, historical_topic_query(label.query, label.domain)}:
             if cache.get(cache_key(query, provider=provider)) is None:
                 pending.add(query)
     return len(pending)
