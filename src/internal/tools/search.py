@@ -353,6 +353,33 @@ def restricted_query(query: str, domain: str) -> str | None:
     return f"{query} ({' OR '.join('site:' + site for site in sites)})"
 
 
+def site_matches(url: str, sites: Iterable[str]) -> bool:
+    """Whether ``url`` is served by one of ``sites`` (host or host/path).
+
+    A host matches itself or a subdomain, at a dot boundary, so "notsec.gov"
+    and "sec.gov.evil.com" do not match "sec.gov". A host/path entry such as
+    "linkedin.com/jobs" also requires the path to be that segment or below it.
+    """
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    path = parts.path or "/"
+    for site in sites:
+        site_host, _, site_path = site.lower().partition("/")
+        if host != site_host and not host.endswith("." + site_host):
+            continue
+        if not site_path:
+            return True
+        prefix = "/" + site_path
+        if path == prefix or path.startswith(prefix + "/"):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class CategorySearch:
     pages: list["SearchPage"]
@@ -403,9 +430,14 @@ async def search_category(
         pages = await search_fn(suffix, page_size)
         return CategorySearch(_tag_pages(pages, canonical, "hint", suffix), [suffix])
 
+    sites = DOMAIN_REGISTRY[canonical].source_sites
     try:
+        # Enforced here, not only requested: providers relax the site: clause
+        # (24% of restricted results were on-list in the 2026-10-11 pilot).
         restricted = [
-            p for p in await restricted_fn(scoped, page_size) if _usable_page(p)
+            p
+            for p in await restricted_fn(scoped, page_size)
+            if _usable_page(p) and site_matches(p.url, sites)
         ]
     except Exception as exc:  # timeout or provider error: the fallback decides
         logger.info("restricted %s search failed: %s", canonical, exc)
