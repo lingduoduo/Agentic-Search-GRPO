@@ -8,6 +8,8 @@ docs/superpowers/specs/2026-10-10-category-source-sites-design.md.
 Usage:
     python -m examples.run_source_category_eval --dry-run
     python -m examples.run_source_category_eval --control "what is a bond"
+    # pilot: first label per category, no plain arm (33 calls with one control)
+    python -m examples.run_source_category_eval --per-category 1 --no-plain --control "what is a bond"
 """
 
 from __future__ import annotations
@@ -66,7 +68,10 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
     usable = [o for o in data if not o.excluded]
     interpretable = bool(data) and len(usable) >= MIN_USABLE_SHARE * len(data)
     vs_suffix = _paired([o.delta_vs_suffix for o in usable], interpretable)
-    vs_plain = _paired([o.delta_vs_plain for o in usable], interpretable)
+    # None when the plain arm was skipped (--no-plain): reported as not run.
+    plain_deltas = [o.delta_vs_plain for o in usable if o.delta_vs_plain is not None]
+    ran_plain = any(o.plain is not None for o in data)
+    vs_plain = _paired(plain_deltas, interpretable) if ran_plain else None
 
     control_stats = {
         "n": len(control),
@@ -112,8 +117,11 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
         "paired_vs_suffix": vs_suffix,
         "paired_vs_plain": vs_plain,
         "empty_rate": {
-            arm: _mean([float(getattr(o, arm).empty) for o in data])
-            for arm in ("plain", "suffix", "category")
+            "plain": _mean([float(o.plain.empty) for o in data if o.plain is not None])
+            if ran_plain
+            else None,
+            "suffix": _mean([float(o.suffix.empty) for o in data]),
+            "category": _mean([float(o.category.empty) for o in data]),
         },
         "fallback_rate": _mean([float(o.fallback_fired) for o in data]),
         "fallback_added_seconds": _mean(live_fallback_seconds)
@@ -138,10 +146,31 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
     }
 
 
-def _pending_calls(labels, cache: DiskCache, provider: str) -> int:
+def select_labels(labels, per_category: int | None):
+    """The first ``per_category`` labels of each category, in file order.
+
+    Mechanical on purpose: a pilot subset chosen before any result exists
+    cannot be cherry-picked. None keeps every label.
+    """
+    if per_category is None:
+        return list(labels)
+    counts: dict[str, int] = {}
+    picked = []
+    for label in labels:
+        if counts.get(label.domain, 0) < per_category:
+            counts[label.domain] = counts.get(label.domain, 0) + 1
+            picked.append(label)
+    return picked
+
+
+def _pending_calls(
+    labels, cache: DiskCache, provider: str, include_plain: bool = True
+) -> int:
     pending: set[str] = set()
     for label in labels:
-        queries = {label.query, prepare_domain_query(label.query, label.domain)}
+        queries = {prepare_domain_query(label.query, label.domain)}
+        if include_plain:
+            queries.add(label.query)
         scoped = restricted_query(label.query, label.domain)
         if scoped is not None:
             queries.add(scoped)
@@ -151,12 +180,18 @@ def _pending_calls(labels, cache: DiskCache, provider: str) -> int:
     return len(pending)
 
 
-async def _run(labels, cache: DiskCache, provider: str) -> dict:
+async def _run(
+    labels, cache: DiskCache, provider: str, include_plain: bool = True
+) -> dict:
     outcomes = []
     for index, label in enumerate(labels, start=1):
         outcomes.append(
             await run_source_query(
-                label, search_fn=search_tool, cache=cache, provider=provider
+                label,
+                search_fn=search_tool,
+                cache=cache,
+                provider=provider,
+                include_plain=include_plain,
             )
         )
         print(f"  [{index:>2}/{len(labels)}] {label.domain:<14} {label.query[:48]}")
@@ -176,21 +211,43 @@ def main(argv: list[str] | None = None) -> None:
         help="A query run as a `web` control: all three arms are identical.",
     )
     parser.add_argument(
+        "--per-category",
+        type=int,
+        default=None,
+        help="Pilot: keep only the first N labels of each category, in file order.",
+    )
+    parser.add_argument(
+        "--no-plain",
+        action="store_true",
+        help="Skip the plain arm; the pre-registered rule compares category with suffix only.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Report how many live provider calls the run would make, then exit.",
     )
     args = parser.parse_args(argv)
 
-    labels = load_source_labels(args.labels)
+    if args.per_category is not None and args.per_category < 1:
+        parser.error("--per-category must be at least 1")
+    include_plain = not args.no_plain
+    labels = select_labels(load_source_labels(args.labels), args.per_category)
     labels += [SourceLabelledQuery("web", q, {"example.com"}) for q in args.control]
     cache = DiskCache(args.cache_dir)
     print(
-        f"{len(labels)} labelled queries; {_pending_calls(labels, cache, args.provider)} live provider calls needed."
+        f"{len(labels)} labelled queries; {_pending_calls(labels, cache, args.provider, include_plain)} live provider calls needed."
     )
     if args.dry_run:
         return
-    report = _finite(asyncio.run(_run(labels, cache, args.provider)))
+    report = _finite(asyncio.run(_run(labels, cache, args.provider, include_plain)))
+    # Record the sample that produced the numbers, so a pilot is never read
+    # as the full pre-registered run.
+    report["sample"] = {
+        "per_category": args.per_category,
+        "plain_arm": include_plain,
+        "n_labels": len(labels) - len(args.control),
+        "provider": args.provider,
+    }
     Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
     print(
         json.dumps(

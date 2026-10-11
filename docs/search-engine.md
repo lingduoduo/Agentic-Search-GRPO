@@ -336,6 +336,22 @@ python -m examples.run_source_category_eval --control "what is a bond" --control
 
 The report is written to `data/eval/source_category_relevance.json`.
 
+A cheaper **pilot** takes the first label of each category in file order (16
+queries) and skips the plain arm, which the decision rule does not use: 33 live
+calls with one control.
+
+```bash
+python -m examples.run_source_category_eval --per-category 1 --no-plain --control "what is a bond" --dry-run
+python -m examples.run_source_category_eval --per-category 1 --no-plain --control "what is a bond"
+```
+
+The subset is mechanical, so it is fixed before any result exists, and the
+report's `sample` field records the flags. Sixteen paired queries can only
+detect a large effect: a pilot can show that restriction clearly helps or
+clearly hurts (and a clear harm still turns the setting off by default), but a
+null pilot means the sample was too small to tell, not that restriction does
+not help. `--provider serper` runs the same comparison on Serper's free tier.
+
 The measured result is pending; this section will report it, whichever way it falls.
 
 ### Domains over HTTP and in the web UI

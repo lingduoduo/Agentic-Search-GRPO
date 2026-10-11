@@ -334,12 +334,13 @@ def on_list_share(domain: str, hosts: set[str]) -> float:
 class SourceQueryOutcome:
     domain: str
     query: str
-    plain: ArmResult
+    # None when the plain arm was skipped (--no-plain); not a failed arm.
+    plain: ArmResult | None
     suffix: ArmResult
     category: ArmResult
     fallback_fired: bool
     delta_vs_suffix: float
-    delta_vs_plain: float
+    delta_vs_plain: float | None
     jaccard_vs_suffix: float
     excluded: bool
     on_list_share: float
@@ -366,9 +367,12 @@ async def run_source_query(
     search_fn,
     cache: DiskCache,
     provider: str = "serpapi",
+    include_plain: bool = True,
 ) -> SourceQueryOutcome:
-    plain = await _run_arm(
-        label.query, search_fn=search_fn, cache=cache, provider=provider
+    plain = (
+        await _run_arm(label.query, search_fn=search_fn, cache=cache, provider=provider)
+        if include_plain
+        else None
     )
     suffix = await _run_arm(
         prepare_domain_query(label.query, label.domain),
@@ -405,7 +409,7 @@ async def run_source_query(
         fallback = False
     hosts = label.authority_hosts
     excluded = restricted_failed or any(
-        arm.error or arm.empty for arm in (plain, suffix, category)
+        arm.error or arm.empty for arm in (plain, suffix, category) if arm is not None
     )
     return SourceQueryOutcome(
         domain=label.domain,
@@ -416,8 +420,12 @@ async def run_source_query(
         fallback_fired=fallback,
         delta_vs_suffix=authority_precision(category.urls, hosts)
         - authority_precision(suffix.urls, hosts),
-        delta_vs_plain=authority_precision(category.urls, hosts)
-        - authority_precision(plain.urls, hosts),
+        delta_vs_plain=(
+            authority_precision(category.urls, hosts)
+            - authority_precision(plain.urls, hosts)
+            if plain is not None
+            else None
+        ),
         jaccard_vs_suffix=jaccard(suffix.urls, category.urls),
         excluded=excluded,
         on_list_share=on_list_share(label.domain, hosts)
