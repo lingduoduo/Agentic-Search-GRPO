@@ -70,7 +70,7 @@ For a remote deployment, replace the URL with `https://[YOUR_DOMAIN]:8090/`. Oth
 | Tool | What it does |
 |------|-------------|
 | `search_indexed_documents` | Search the private knowledge base with optional document-set narrowing |
-| `search_web` | Web search via Google Custom Search, SerpAPI, or Serper, with optional topic hints |
+| `search_web` | Web search via Google Custom Search, SerpAPI, or Serper, with optional search-source hints |
 | `open_urls` | Fetch full page text from a list of URLs |
 | `get_sub_domains` | Discover local domain routes and their real parameter schemas |
 | `search_domain` | Route a query through existing web search or a supported public-data tool |

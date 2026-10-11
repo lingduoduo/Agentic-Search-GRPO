@@ -91,7 +91,7 @@ async def test_direct_search_hints_web_providers(monkeypatch):
         source_provider="serpapi",
         search_url="http://x/retrieve",
         top_k=2,
-        domain="finance",
+        domain="financial",
     )
     assert seen["serpapi"] == "etf fees financial market data filings"
 
@@ -110,7 +110,7 @@ async def test_direct_search_hints_providers_outside_web_provider_set(
         source_provider=provider,
         search_url="http://x/retrieve",
         top_k=2,
-        domain="finance",
+        domain="financial",
     )
     assert seen[provider] == "etf fees financial market data filings"
 
@@ -124,7 +124,7 @@ async def test_direct_search_leaves_the_corpus_query_raw(monkeypatch):
         source_provider="retrieval",
         search_url="http://x/retrieve",
         top_k=2,
-        domain="finance",
+        domain="financial",
     )
     assert seen["retrieval"] == "etf fees"
 
@@ -171,7 +171,7 @@ async def test_hybrid_hints_each_expanded_query_exactly_once(monkeypatch):
         top_k=2,
         filters=None,
         source_provider="serpapi",
-        domain="finance",
+        domain="financial",
     )
     assert seen == [
         "etf fees financial market data filings",
@@ -202,7 +202,7 @@ async def test_hybrid_corpus_branch_stays_raw(monkeypatch):
         top_k=2,
         filters=None,
         source_provider="retrieval",
-        domain="finance",
+        domain="financial",
     )
     assert seen == ["etf fees"]
 
@@ -221,7 +221,7 @@ _NON_HONORING_MODES = ["chat_once", "chat_loop", "search_agent", "tool_agent"]
 @pytest.mark.parametrize("mode", _NON_HONORING_MODES)
 def test_non_honoring_mode_rejects_a_domain(mode):
     with pytest.raises(HTTPException) as exc:
-        _reject_domain_for_mode("finance", mode)
+        _reject_domain_for_mode("financial", mode)
     assert exc.value.status_code == 400
     assert "does not support" in exc.value.detail
 
@@ -239,7 +239,7 @@ def test_honoring_modes_accept_a_domain(mode):
 def test_mode_aliases_resolve_before_the_guard():
     # "agentic_rag" aliases to chat_loop, which does not honor domains.
     with pytest.raises(HTTPException):
-        _reject_domain_for_mode("finance", "agentic_rag")
+        _reject_domain_for_mode("financial", "agentic_rag")
 
 
 def test_rejection_happens_over_http_before_any_dispatch(client):
@@ -323,9 +323,9 @@ async def test_auto_pipeline_forwards_the_domain_to_the_hybrid_leaf(monkeypatch)
         history=[],
         source_provider="auto",
         extra={},
-        domain="finance",
+        domain="financial",
     )
-    assert captured["domain"] == "finance"
+    assert captured["domain"] == "financial"
 
 
 def test_persisted_transcript_keeps_the_unhinted_question(client, monkeypatch):
@@ -374,13 +374,13 @@ async def test_direct_or_escalate_forwards_the_domain_to_external_fallback(monke
         filters=None,
         history=[],
         source_provider="auto",
-        domain="finance",
+        domain="financial",
     )
     assert seen, "the direct-first path never dispatched"
     by_provider = dict(seen)
     # The corpus leg is called without a domain; web legs carry it.
     assert by_provider.get("retrieval") in (None, "web")
-    assert any(d == "finance" for p, d in seen if p != "retrieval")
+    assert any(d == "financial" for p, d in seen if p != "retrieval")
 
 
 def test_registry_endpoint_exposes_source_metadata(client):

@@ -242,10 +242,15 @@ DOMAIN_ALIASES = {
 }
 
 
+def _selector_key(value: str) -> str:
+    """Spelling normalization only; aliases are applied separately."""
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
 def normalize_search_domain(value: str = "web") -> str:
     """Normalize an explicit source selector or reject it before dispatch."""
     if isinstance(value, str):
-        canonical = value.strip().lower().replace("-", "_").replace(" ", "_")
+        canonical = _selector_key(value)
         canonical = DOMAIN_ALIASES.get(canonical, canonical)
         if canonical in DOMAIN_REGISTRY:
             return canonical
@@ -257,7 +262,7 @@ def normalize_search_tag(tag: str) -> str:
     if not isinstance(tag, str) or "." not in tag:
         raise InvalidToolInput("tag must be a capability returned by get_sub_domains")
     prefix, capability = tag.split(".", 1)
-    normalized = prefix.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = _selector_key(prefix)
     if normalized == "environment" and capability == "weather":
         return "local.weather"
     return f"{normalize_search_domain(prefix)}.{capability}"
@@ -294,7 +299,7 @@ class _SourceFunctionTool(FunctionTool):
 
 
 def prepare_domain_query(query: str, domain: str = "web") -> str:
-    """Append a topic hint once at a tool entry point; web is unchanged."""
+    """Append a source hint once at a tool entry point; web is unchanged."""
     canonical = normalize_search_domain(domain)
     hint = DOMAIN_REGISTRY[canonical].query_hint
     return f"{query} {hint}" if hint and query.strip() else query
@@ -980,7 +985,7 @@ class MultiQueryWebSearchTool(Tool):
 
     Designed for use with ToolAgentLoop. The LLM passes {"queries": ["q1", "q2"]}
     and all queries execute concurrently, with results deduplicated by URL.
-    An optional domain applies the same topic hint to every query in the call.
+    An optional domain applies the same source hint to every query in the call.
     """
 
     def __init__(
@@ -1242,8 +1247,13 @@ class DomainSearch:
         if not isinstance(domains, list) or not 1 <= len(domains) <= 5:
             raise InvalidToolInput("provide one to five domains")
         directories = []
+        seen: set[str] = set()
         for value in domains:
             domain = normalize_search_domain(value)
+            # Several legacy names alias to web; describe each category once.
+            if domain in seen:
+                continue
+            seen.add(domain)
             entries = []
             for capability in DOMAIN_REGISTRY[domain].capabilities:
                 tag = f"{domain}.{capability.name}"
@@ -1329,7 +1339,15 @@ class DomainSearch:
                 "tag must be a capability returned by get_sub_domains"
             )
         if tag is not None:
+            raw_prefix = tag.split(".", 1)[0]
             tag = normalize_search_tag(tag)
+            # A domain spelled like the tag's own legacy prefix (as old
+            # discovery output paired them) defers to the tag migration:
+            # environment + environment.weather is local, not web.
+            if isinstance(domain, str) and _selector_key(domain) == _selector_key(
+                raw_prefix
+            ):
+                domain = None
         canonical = normalize_search_domain(
             domain if domain is not None else (tag.split(".", 1)[0] if tag else "web")
         )

@@ -205,8 +205,9 @@ async def search_domain(
 ) -> dict[str, Any]:
     """Search through existing web providers or a local public-data capability.
 
-    Discover tags with get_sub_domains. Without a tag, domain selects a topic
-    hint for web search. With a tag, query uses that capability's query format.
+    Discover tags with get_sub_domains. Without a tag, domain selects a
+    search-source hint for web search. With a tag, query uses that
+    capability's query format.
     Returns the original query, selected domain/tag, and results.
     """
     return await _domain_service().search(

@@ -81,6 +81,12 @@ def test_discovery_uses_real_schemas_and_all_domains(service):
     assert calls == []
 
 
+def test_discovery_describes_an_aliased_category_once(service):
+    client, _ = service
+    directories = client.get_sub_domains(["environment", "health", "web"])["domains"]
+    assert [d["domain"] for d in directories] == ["web"]
+
+
 @pytest.mark.asyncio
 async def test_domain_query_routes_existing_web_search_once(service):
     client, calls = service
@@ -299,6 +305,23 @@ async def test_legacy_environment_capabilities_migrate_by_tag():
     assert result["domain"] == "local" and result["tag"] == "local.weather"
     result = await client.search("climate", tag="environment.web")
     assert result["domain"] == "web" and result["executed_query"] == "climate"
-    assert calls == [("weather", "Boston"), ("web", "climate")]
+    # Old get_sub_domains output paired this domain with this tag; a client
+    # replaying it must still reach the weather tool.
+    result = await client.search(
+        "Boston", domain="environment", tag="environment.weather"
+    )
+    assert result["domain"] == "local" and result["tag"] == "local.weather"
+    result = await client.search("climate", domain="environment", tag="environment.web")
+    assert result["domain"] == "web"
+    assert calls == [
+        ("weather", "Boston"),
+        ("web", "climate"),
+        ("weather", "Boston"),
+        ("web", "climate"),
+    ]
+    # A genuine conflict is still rejected before dispatch.
     with pytest.raises(ValueError, match="domain must match"):
-        await client.search("Boston", domain="environment", tag="environment.weather")
+        await client.search("Boston", domain="finance", tag="environment.weather")
+    with pytest.raises(ValueError, match="domain must match"):
+        await client.search("Boston", domain="health", tag="environment.weather")
+    assert len(calls) == 4
