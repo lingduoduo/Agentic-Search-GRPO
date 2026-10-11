@@ -186,8 +186,11 @@ behavior; `official` has none because `site:gov` would be US-only.
 
 **Restricted first, then fallback.** For a site-listed category, `search_category`
 first sends the query with a `site:` clause (`query (site:a OR site:b ...)`, no
-suffix words). If that yields at least `min(3, page_size)` usable results (a URL,
-no error, not blank), it stops. Otherwise it also runs the suffix query and
+suffix words). A restricted result counts only if its host is on the list
+(`site_matches`: the host or a subdomain at a dot boundary, plus the path prefix
+for entries such as `linkedin.com/jobs`). Providers relax the `site:` clause, so
+off-list results are dropped rather than trusted. If at least `min(3, page_size)`
+usable on-list results (a URL, no error, not blank) remain, it stops. Otherwise it also runs the suffix query and
 merges: restricted results first, then fallback results not already present,
 truncated to `page_size`. A restricted leg that raises or times out counts as
 zero results, so the fallback runs; a fallback that fails never hides restricted
@@ -375,10 +378,38 @@ come back anyway, the "fewer than three usable" fallback never fired.
 
 So the pilot compared the hint query with a hint query plus ignored `site:`
 words. **It does not measure whether restricting to source sites helps**, and
-it is not reported as such. The setting is off by default until restriction is
-enforced on the results rather than requested in the query. The pilot report is
+it is not reported as such. The pilot report is
 `data/eval/source_category_relevance.json`. The pilot used about 20 SerpAPI
 searches and the probes 4 more.
+
+**Re-score with enforced restriction (2026-10-11).** Restriction is now enforced
+on the results (off-list hosts are dropped, as described above). The same 16
+pilot queries were re-scored from the cached responses, which needed no new
+SerpAPI calls:
+
+| Measure | Pilot (query-only `site:`) | Re-score (host filter) |
+| --- | --- | --- |
+| Category − suffix authority precision, pooled mean | +0.022 | **+0.126** |
+| Paired permutation p (two-sided) | 0.77 | 0.064 |
+| Cliff's delta | 0.00 | 0.33 |
+| Queries better / worse / unchanged | 5 / 5 / 5 | 5 / 0 / 10 |
+| Fallback rate | 0.00 | 0.69 |
+
+Five categories improved: `resource` +0.70, `social_media` +0.63, `code` +0.37,
+`jobs` +0.13 and `patent` +0.07. None got worse. The ten unchanged queries are
+categories where no on-list result came back, so the fallback returned exactly
+the suffix results. Under the pre-registered rule the verdict is still **null**
+(p > 0.05). The result also carries less weight than a fresh run: it re-analyses
+data already seen, after the mechanism was changed because that data showed it
+was broken. A confirmatory run on the 48 labels the pilot did not use would
+settle it. The `statistics` query stays excluded: its suffix arm failed in both
+pilot attempts, so it was never cached, and the re-score made no live calls.
+The report is `data/eval/source_category_relevance_hostfilter.json`.
+
+The setting stays **off by default**. Two costs remain unresolved. The `site:`
+OR query is slow: up to 90 s in probes, capped by the 15 s client timeout in
+production. And with the setting on, the fallback fires for most queries, so
+most category searches would make two provider calls.
 
 ### Domains over HTTP and in the web UI
 

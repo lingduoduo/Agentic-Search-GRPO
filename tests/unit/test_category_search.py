@@ -249,3 +249,74 @@ async def test_a_slow_fallback_with_nothing_restricted_times_out():
         )
     # The budget raised it, not the outer one-second guard.
     assert loop.time() - start < 0.5
+
+
+# --- restriction is enforced on the results, not only requested -------------
+
+from src.internal.tools.search import site_matches  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "url,sites,expected",
+    [
+        ("https://www.sec.gov/x", ("sec.gov",), True),
+        ("https://sec.gov", ("sec.gov",), True),
+        ("https://notsec.gov/x", ("sec.gov",), False),
+        ("https://sec.gov.evil.com/x", ("sec.gov",), False),
+        ("https://www.linkedin.com/jobs/view/1", ("linkedin.com/jobs",), True),
+        ("https://www.linkedin.com/jobsearch", ("linkedin.com/jobs",), False),
+        ("https://www.linkedin.com/in/someone", ("linkedin.com/jobs",), False),
+        ("", ("sec.gov",), False),
+        ("not a url", ("sec.gov",), False),
+    ],
+)
+def test_site_matches_hosts_subdomains_and_paths(url, sites, expected):
+    assert site_matches(url, sites) is expected
+
+
+@pytest.mark.asyncio
+async def test_off_list_restricted_results_do_not_count():
+    # Google relaxes site: — the restricted leg returns mostly other hosts.
+    p = _Provider(
+        {
+            SCOPED: _pages(
+                "https://www.sec.gov/a",
+                "https://studocu.com/b",
+                "https://scribd.com/c",
+                "https://stocktitan.net/d",
+            ),
+            SUFFIX: _pages("https://blog.example/x", "https://news.example/y"),
+        }
+    )
+    out = await search_category(
+        "etf fees", domain="financial", page_size=4, search_fn=p, restricted_fn=p
+    )
+    # One on-list page is below the threshold, so the fallback tops it up.
+    assert [q for q, _ in p.calls] == [SCOPED, SUFFIX]
+    assert [pg.url for pg in out.pages] == [
+        "https://www.sec.gov/a",
+        "https://blog.example/x",
+        "https://news.example/y",
+    ]
+    assert [pg.metadata["category_leg"] for pg in out.pages] == [
+        "restricted",
+        "fallback",
+        "fallback",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_on_list_results_returns_the_fallback_as_today():
+    p = _Provider(
+        {
+            SCOPED: _pages(
+                "https://studocu.com/b", "https://scribd.com/c", "https://x.example/d"
+            ),
+            SUFFIX: _pages("https://blog.example/x"),
+        }
+    )
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert [pg.url for pg in out.pages] == ["https://blog.example/x"]
+    assert out.pages[0].metadata["category_leg"] == "fallback"
