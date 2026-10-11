@@ -420,7 +420,11 @@ def test_direct_search_enriches_web_provider_content(monkeypatch):
         return serpapi_pages
 
     async def _fake_fetch_pages(pages, *, max_chars, timeout_seconds=10):
-        assert pages == serpapi_pages
+        # search_category tags pages with metadata, so compare by identity of
+        # the result rather than whole-object equality.
+        assert [(p.title, p.url) for p in pages] == [
+            (p.title, p.url) for p in serpapi_pages
+        ]
         return fetched_pages
 
     monkeypatch.setattr("src.internal.servers.web.app.search_tool", _fake_search_tool)
