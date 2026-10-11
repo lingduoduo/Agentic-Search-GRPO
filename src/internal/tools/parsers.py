@@ -42,11 +42,14 @@ class FunctionCall:
     call_id: str = field(default_factory=lambda: uuid4().hex[:8])
 
     def parsed_arguments(self) -> dict[str, Any]:
-        """Return arguments as a dict, or {} on parse failure."""
+        """Decode an argument object; reject malformed JSON and nonobjects."""
         try:
-            return json.loads(self.arguments) if self.arguments else {}
-        except json.JSONDecodeError:
-            return {}
+            arguments = json.loads(self.arguments) if self.arguments else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError("Tool arguments must be valid JSON: " + exc.msg) from exc
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool arguments must be a JSON object.")
+        return arguments
 
 
 class ToolParser(ABC):

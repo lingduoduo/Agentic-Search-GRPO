@@ -49,7 +49,7 @@ ALLOWED = {
     "src/internal/tools/public_data/_http.py:68 attempts",
     # _unavailable_result's `retries` parameter: the retry_count to report on an
     # already-decided unavailable outcome (0 = none happened), not a policy default.
-    "src/agents/tool/tool_calling.py:544 retries",
+    "src/agents/tool/tool_calling.py:565 retries",
     # RecoveryState.retries: a per-run counter initialized to 0, not a
     # tool_loop.recovery.max_retries policy default.
     "src/agents/tool/recovery.py:88 retries",

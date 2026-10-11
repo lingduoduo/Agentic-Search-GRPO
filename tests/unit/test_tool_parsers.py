@@ -4,7 +4,37 @@ from __future__ import annotations
 
 import pytest
 
-from src.internal.tools.parsers import ToolParser
+from src.internal.tools.parsers import FunctionCall, ToolParser
+
+
+@pytest.mark.parametrize("raw", ["{broken", "[]", '"text"', "42", "null", "true"])
+def test_function_call_rejects_invalid_argument_objects(raw):
+    with pytest.raises(ValueError, match="JSON"):
+        FunctionCall(name="tool", arguments=raw).parsed_arguments()
+
+
+@pytest.mark.parametrize(
+    "raw,expected", [("", {}), ("{}", {}), ('{"value": 1}', {"value": 1})]
+)
+def test_function_call_keeps_valid_objects(raw, expected):
+    assert FunctionCall(name="tool", arguments=raw).parsed_arguments() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fmt", ["json", "hermes", "llama3"])
+@pytest.mark.parametrize("arguments", [{"value": 1}, '{"value": 1}'])
+async def test_parser_preserves_object_argument_formats(fmt, arguments):
+    import json
+
+    text = json.dumps({"name": "tool", "arguments": arguments})
+    if fmt == "hermes":
+        text = f"<tool_call>{text}</tool_call>"
+    elif fmt == "llama3":
+        text = f"<|python_tag|>{text}<|eom_id|>"
+    parser = ToolParser.get_tool_parser(fmt, _RecordingTokenizer(text))
+    _, calls = await parser.extract_tool_calls([1])
+    assert len(calls) == 1
+    assert calls[0].parsed_arguments() == {"value": 1}
 
 
 class _RecordingTokenizer:

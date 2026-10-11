@@ -141,6 +141,12 @@ def load_working_memory(
     off) skips state entirely: the result is exactly the tail, and ``pending``
     is empty so no compression is ever scheduled.
     """
+    if keep_last < 0:
+        raise ValueError("keep_last must be nonnegative")
+    if token_budget is not None and token_budget <= 0:
+        raise ValueError("token_budget must be positive")
+    if keep_last == 0:
+        return WorkingMemory(messages=[], summary="", pending=[])
     records = store.list_chat_messages(session_id)
     tail = records[-keep_last:]
     if token_budget is not None:
@@ -153,13 +159,30 @@ def load_working_memory(
     state = load_state(cache, session_id)
     dropped_ids = [r.id for r in dropped]
     if state.summary and state.summarized_through in dropped_ids:
+        summary = state.summary
+        if token_budget is not None:
+            # Reserve the newest message, even when it alone exceeds the budget.
+            available = (
+                token_budget - _record_tokens(tail[-1]) - _MESSAGE_OVERHEAD_TOKENS
+            )
+            content_chars = max(0, available * 4 - len(SUMMARY_PREFIX))
+            summary = summary[:content_chars]
+            if summary:
+                summary_tokens = (
+                    estimate_tokens(SUMMARY_PREFIX + summary) + _MESSAGE_OVERHEAD_TOKENS
+                )
+                tail = _fit_budget(tail, token_budget - summary_tokens)
+                dropped = records[: len(records) - len(tail)]
+                dropped_ids = [r.id for r in dropped]
+                messages = [ChatMessage(role=r.role, content=r.content) for r in tail]
         cut = dropped_ids.index(state.summarized_through) + 1
-        summary_message = ChatMessage(
-            role="system", content=SUMMARY_PREFIX + state.summary
-        )
+        if summary:
+            messages.insert(
+                0, ChatMessage(role="system", content=SUMMARY_PREFIX + summary)
+            )
         return WorkingMemory(
-            messages=[summary_message, *messages],
-            summary=state.summary,
+            messages=messages,
+            summary=summary,
             pending=dropped[cut:],
         )
     # No summary, or its cursor is not in this session's dropped prefix (state

@@ -251,6 +251,54 @@ def test_empty_session_under_a_budget(store, cache):
     assert wm == WorkingMemory(messages=[], summary="", pending=[])
 
 
+@pytest.mark.parametrize(
+    "limits", [{"keep_last": -1}, {"token_budget": 0}, {"token_budget": -1}]
+)
+def test_invalid_history_limits_are_rejected(store, cache, limits):
+    sid, _ = _seed(store, 3)
+    with pytest.raises(ValueError):
+        load_working_memory(store, sid, cache=cache, **limits)
+
+
+def test_zero_history_limit_disables_memory(store, cache):
+    sid, records = _seed(store, 3)
+    save_state(
+        cache,
+        sid,
+        SessionMemoryState(summary="stored", summarized_through=records[0].id),
+    )
+    assert load_working_memory(store, sid, keep_last=0, cache=cache) == WorkingMemory(
+        messages=[], summary="", pending=[]
+    )
+
+
+@pytest.mark.parametrize(
+    "summary", ["S", "long summary " * 1000], ids=["short", "long"]
+)
+def test_summary_and_history_share_token_budget(store, cache, summary):
+    sid, records = _seed_sized(store, [400] * 10)
+    state = SessionMemoryState(summary=summary, summarized_through=records[2].id)
+    save_state(cache, sid, state)
+    wm = load_working_memory(store, sid, token_budget=312, cache=cache)
+    assert sum(estimate_tokens(m.content) + 4 for m in wm.messages) <= 312
+    assert wm.messages[-1].content == records[-1].content
+    assert wm.messages[0].content == SUMMARY_PREFIX + wm.summary
+    assert wm.pending[0].id == records[3].id
+    assert load_state(cache, sid) == state  # clipping is prompt-local
+
+
+@pytest.mark.parametrize("budget", [1, 104, 105])
+def test_summary_omitted_when_newest_uses_budget(store, cache, budget):
+    sid, records = _seed_sized(store, [400] * 10)
+    save_state(
+        cache, sid, SessionMemoryState(summary="S", summarized_through=records[2].id)
+    )
+    wm = load_working_memory(store, sid, token_budget=budget, cache=cache)
+    assert wm.summary == ""
+    assert [m.content for m in wm.messages] == [records[-1].content]
+    assert [r.id for r in wm.pending] == [r.id for r in records[3:-1]]
+
+
 def test_budget_dropped_prefix_with_cursor_gives_summary_and_pending(store, cache):
     sid, records = _seed_sized(store, [400] * 10)
     save_state(
@@ -258,8 +306,8 @@ def test_budget_dropped_prefix_with_cursor_gives_summary_and_pending(store, cach
     )
     wm = load_working_memory(store, sid, token_budget=312, cache=cache)
     assert wm.messages[0].content == SUMMARY_PREFIX + "S"
-    assert [m.content for m in wm.messages[1:]] == [r.content for r in records[7:]]
-    assert [r.id for r in wm.pending] == [r.id for r in records[3:7]]
+    assert [m.content for m in wm.messages[1:]] == [r.content for r in records[8:]]
+    assert [r.id for r in wm.pending] == [r.id for r in records[3:8]]
 
 
 def test_cursor_inside_the_budgeted_tail_ignores_summary(store, cache):
