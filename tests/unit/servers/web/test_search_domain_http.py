@@ -310,6 +310,36 @@ async def test_direct_search_tags_documents_with_their_leg(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_direct_search_keeps_leg_tags_through_the_real_page_fetch(monkeypatch):
+    scoped = restricted_query("etf fees", "financial")
+    answers = {
+        scoped: [
+            SearchPage(title=f"t{i}", url=f"https://sec.gov/{i}", summary="snippet")
+            for i in range(3)
+        ]
+    }
+
+    async def fake_fetch_url(url, **_kwargs):
+        return "FETCHED BODY"
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool",
+        _recording_search_tool([], answers),
+    )
+    monkeypatch.setattr("src.internal.tools.search.fetch_url", fake_fetch_url)
+    docs = await _run_direct_search(
+        "etf fees",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=3,
+        domain="financial",
+    )
+    assert docs
+    assert all(d.metadata["category_leg"] == "restricted" for d in docs)
+    assert all("FETCHED BODY" in d.content for d in docs)
+
+
+@pytest.mark.asyncio
 async def test_hybrid_scopes_each_expanded_query_once(monkeypatch):
     calls: list = []
     monkeypatch.setattr(

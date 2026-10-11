@@ -1065,13 +1065,11 @@ async def fetch_pages_concurrently(
             url_to_content[page.url] = content
 
     return [
-        SearchPage(
-            title=p.title,
+        replace(
+            p,
             summary=url_to_content.get(p.url, p.summary)
             if (p.url and not p.error)
             else p.summary,
-            url=p.url,
-            error=p.error,
         )
         for p in pages
     ]
