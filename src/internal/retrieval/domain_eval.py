@@ -199,6 +199,31 @@ def cache_key(query: str, *, provider: str) -> str:
     return f"{provider}|{TOP_K}|{query}"
 
 
+def _usable_urls(pages) -> list[str]:
+    return [
+        p.url
+        for p in pages
+        if getattr(p, "url", None) and not getattr(p, "error", None)
+    ]
+
+
+def _failure_of(pages) -> str | None:
+    """The error text when *pages* is a failed response, else None.
+
+    Providers such as SerpAPI return error pages rather than raising; a
+    response with no usable page and at least one error is a failure, not
+    an empty result.
+    """
+    if _usable_urls(pages):
+        return None
+    for p in pages:
+        if getattr(p, "error", None):
+            return str(p.error)
+        if getattr(p, "timed_out", False):
+            return "timed out"
+    return None
+
+
 async def _run_arm(
     query: str, *, search_fn, cache: DiskCache, provider: str
 ) -> ArmResult:
@@ -210,11 +235,10 @@ async def _run_arm(
         pages = await search_fn(query, provider=provider, page_size=TOP_K)
     except Exception as exc:  # provider error -> this arm is unusable
         return ArmResult(urls=[], empty=True, error=str(exc))
-    urls = [
-        p.url
-        for p in pages
-        if getattr(p, "url", None) and not getattr(p, "error", None)
-    ]
+    failure = _failure_of(pages)
+    if failure is not None:
+        return ArmResult(urls=[], empty=True, error=failure)
+    urls = _usable_urls(pages)
     cache.set(cache_key(query, provider=provider), urls)
     return ArmResult(urls=urls, empty=not urls, seconds=time.perf_counter() - started)
 
@@ -276,10 +300,16 @@ def load_source_labels(
     if raw.get("taxonomy") != SOURCE_TAXONOMY_MARKER:
         raise ValueError(f"label file {path} lacks taxonomy={SOURCE_TAXONOMY_MARKER!r}")
     out: list[SourceLabelledQuery] = []
+    seen: set[tuple[str, str]] = set()
     for domain, entries in raw.get("domains", {}).items():
         if domain not in DOMAIN_REGISTRY or not DOMAIN_REGISTRY[domain].source_sites:
             raise ValueError(f"{domain!r} has no source_sites; it cannot be labelled")
         for entry in entries:
+            if (domain, entry["query"]) in seen:
+                raise ValueError(
+                    f"duplicate label ({domain!r}, {entry['query']!r}) in {path}"
+                )
+            seen.add((domain, entry["query"]))
             out.append(
                 SourceLabelledQuery(
                     domain, entry["query"], set(entry["authority_hosts"])
@@ -322,11 +352,10 @@ async def _cached_pages(query, page_size, *, search_fn, cache, provider):
     cached = cache.get(cache_key(query, provider=provider))
     if cached is None:
         pages = await search_fn(query, provider=provider, page_size=TOP_K)
-        cached = [
-            p.url
-            for p in pages
-            if getattr(p, "url", None) and not getattr(p, "error", None)
-        ]
+        failure = _failure_of(pages)
+        if failure is not None:
+            raise RuntimeError(failure)  # never cache a failed response
+        cached = _usable_urls(pages)
         cache.set(cache_key(query, provider=provider), cached)
     return [SearchPage(url=url) for url in cached]
 
@@ -348,6 +377,16 @@ async def run_source_query(
         provider=provider,
     )
     fetch = partial(_cached_pages, search_fn=search_fn, cache=cache, provider=provider)
+    restricted_failed = False
+
+    async def restricted(query, page_size):
+        nonlocal restricted_failed
+        try:
+            return await fetch(query, page_size)
+        except Exception:
+            restricted_failed = True
+            raise
+
     try:
         # restricted_fn is passed unconditionally: the eval measures the
         # category arm whatever the operator's AGENTIC_SEARCH_CATEGORY_SITES.
@@ -356,7 +395,7 @@ async def run_source_query(
             domain=label.domain,
             page_size=TOP_K,
             search_fn=fetch,
-            restricted_fn=fetch,
+            restricted_fn=restricted,
         )
         urls = [page.url for page in result.pages]
         category = ArmResult(urls=urls, empty=not urls)
@@ -365,7 +404,9 @@ async def run_source_query(
         category = ArmResult(urls=[], empty=True, error=str(exc))
         fallback = False
     hosts = label.authority_hosts
-    excluded = any(arm.error or arm.empty for arm in (plain, suffix, category))
+    excluded = restricted_failed or any(
+        arm.error or arm.empty for arm in (plain, suffix, category)
+    )
     return SourceQueryOutcome(
         domain=label.domain,
         query=label.query,

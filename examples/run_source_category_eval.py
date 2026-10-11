@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 
 from examples.run_domain_relevance_eval import (
-    DEFAULT_CACHE_DIR,
     MIN_USABLE_SHARE,
     _finite,
     _mean,
@@ -40,6 +39,8 @@ from src.internal.tools.search import (
 from src.model.post_training.eval.stats import cliffs_delta, paired_permutation_p
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Own cache, so all three arms are fetched in one time window.
+DEFAULT_CACHE_DIR = REPO_ROOT / "data" / "eval" / "source_cache"
 DEFAULT_REPORT_PATH = REPO_ROOT / "data" / "eval" / "source_category_relevance.json"
 ALPHA = 0.05
 
@@ -67,8 +68,19 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
     vs_suffix = _paired([o.delta_vs_suffix for o in usable], interpretable)
     vs_plain = _paired([o.delta_vs_plain for o in usable], interpretable)
 
+    control_stats = {
+        "n": len(control),
+        "max_abs_delta": max((abs(o.delta_vs_suffix) for o in control), default=0.0),
+        "min_jaccard": min((o.jaccard_vs_suffix for o in control), default=1.0),
+    }
+    # An absent or disagreeing control withholds the decision.
+    control_ok = (
+        control_stats["n"] >= 1
+        and control_stats["max_abs_delta"] == 0
+        and control_stats["min_jaccard"] == 1.0
+    )
     decision = None
-    if vs_suffix["p_value"] is not None:
+    if control_ok and vs_suffix["p_value"] is not None:
         if vs_suffix["p_value"] < ALPHA and vs_suffix["mean_delta"] < 0:
             decision = "worse"
         elif vs_suffix["p_value"] < ALPHA and vs_suffix["mean_delta"] > 0:
@@ -105,14 +117,10 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
         "fallback_added_seconds": _mean(live_fallback_seconds)
         if live_fallback_seconds
         else None,
+        "fallback_added_seconds_n": len(live_fallback_seconds),
         "on_list_share": _mean([o.on_list_share for o in data]),
-        "control": {
-            "n": len(control),
-            "max_abs_delta": max(
-                (abs(o.delta_vs_suffix) for o in control), default=0.0
-            ),
-            "min_jaccard": min((o.jaccard_vs_suffix for o in control), default=1.0),
-        },
+        "control": control_stats,
+        "control_ok": control_ok,
         # Descriptive only: four queries cannot support a per-category claim.
         "per_domain": {
             name: {
