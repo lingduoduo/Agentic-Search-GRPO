@@ -1,6 +1,6 @@
 # Category Source Sites Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A search-source category with a site list first searches only those sites, falls back to today's suffix query when that comes back thin, and a pre-registered three-arm evaluation measures whether it helps.
 
@@ -54,7 +54,7 @@
 **Interfaces:**
 - Produces: `SearchDomain.source_sites: tuple[str, ...] = ()` (5th field, after `typical_sources`); `ServiceSettings.category_sites: bool = True`; `category_sites_enabled() -> bool` in `src/internal/tools/search.py`; discovery dicts carry `"source_sites": list[str]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_search_domains.py`:
 
@@ -124,12 +124,12 @@ def test_registry_endpoint_exposes_source_sites(client):
     assert domains["web"]["source_sites"] == []
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `pytest tests/unit/test_search_domains.py tests/unit/servers/web/test_search_domain_http.py -q`
 Expected: ImportError on `category_sites_enabled`, then (after a stub) failures on missing `source_sites`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/internal/tools/search.py` add the field and populate the sixteen entries as the 5th positional argument (after `typical_sources`), exactly per `EXPECTED_SITES`:
 
@@ -188,14 +188,14 @@ In `docs/configuration.md` Web request routing table, add after the browser row:
 
 (The anchor is created in Task 6; `tests/unit/test_documented_env_vars.py` needs the row and the `src` reference.)
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `pytest tests/unit/test_search_domains.py tests/unit/servers/web/test_search_domain_http.py tests/unit/test_configs.py tests/unit/test_documented_env_vars.py -q && (cd web && npm run typecheck)`
 Expected: PASS.
 
-- [ ] **Step 5: Mutation check** — delete one site from `financial`, re-run `test_source_sites_match_the_spec`: FAIL; restore.
+- [x] **Step 5: Mutation check** — delete one site from `financial`, re-run `test_source_sites_match_the_spec`: FAIL; restore.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/internal/tools/search.py src/internal/configs/app_configs.py src/internal/servers/web/app.py web/src/types.ts docs/configuration.md tests/unit/test_search_domains.py tests/unit/servers/web/test_search_domain_http.py
@@ -227,7 +227,7 @@ async def search_category(query: str, *, domain: str, page_size: int,
                           restricted_fn: PageSearch | None = None) -> CategorySearch
 ```
 
-- [ ] **Step 1: Write the failing tests** — create `tests/unit/test_category_search.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/unit/test_category_search.py`:
 
 ```python
 """search_category: restricted leg first, suffix fallback when thin."""
@@ -372,12 +372,12 @@ async def test_empty_query_is_never_scoped():
     assert p.calls == [("  ", 5)]
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `pytest tests/unit/test_category_search.py -q`
 Expected: ImportError (`CategorySearch` not defined).
 
-- [ ] **Step 3: Implement** — in `src/internal/tools/search.py` below `prepare_domain_query` (add `Awaitable` to the `collections.abc` import; `replace` is already imported from `dataclasses`):
+- [x] **Step 3: Implement** — in `src/internal/tools/search.py` below `prepare_domain_query` (add `Awaitable` to the `collections.abc` import; `replace` is already imported from `dataclasses`):
 
 ```python
 PageSearch = Callable[[str, int], Awaitable[list["SearchPage"]]]
@@ -469,14 +469,14 @@ async def search_category(
 
 (`logger` is defined further down the module; that is fine — it is looked up when `search_category` runs, not at import.)
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `pytest tests/unit/test_category_search.py -q`
 Expected: all PASS.
 
-- [ ] **Step 5: Mutation checks** — (a) change `>=` to `>` in the threshold: `test_enough_restricted_results_skip_the_fallback` FAILS; (b) delete the `if restricted: return ...` in the fallback `except`: `test_a_failed_fallback_never_hides_restricted_results` FAILS; (c) drop `_usable_page(p) and` from `extra`: the error-page assertion FAILS. Restore each.
+- [x] **Step 5: Mutation checks** — (a) change `>=` to `>` in the threshold: `test_enough_restricted_results_skip_the_fallback` FAILS; (b) delete the `if restricted: return ...` in the fallback `except`: `test_a_failed_fallback_never_hides_restricted_results` FAILS; (c) drop `_usable_page(p) and` from `extra`: the error-page assertion FAILS. Restore each.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/internal/tools/search.py tests/unit/test_category_search.py
@@ -492,7 +492,7 @@ git commit -m "feat: search_category restricts to source sites with a suffix fal
 **Interfaces:**
 - Consumes: `search_category`, `CategorySearch`, `RESTRICTABLE_PROVIDERS`, `category_sites_enabled`, `restricted_query` (Tasks 1–2).
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/unit/servers/web/test_search_domain_http.py`:
+- [x] **Step 1: Write the failing tests** — append to `tests/unit/servers/web/test_search_domain_http.py`:
 
 ```python
 from src.internal.tools.search import restricted_query
@@ -562,12 +562,12 @@ async def test_hybrid_scopes_each_expanded_query_once(monkeypatch):
     assert sorted(q for p, q in calls if p == "retrieval") == ["etf fees", "etf fees alt"]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `pytest tests/unit/servers/web/test_search_domain_http.py -q`
 Expected: the five new tests FAIL (only suffix queries are issued).
 
-- [ ] **Step 3: Implement** — in `app.py` import `RESTRICTABLE_PROVIDERS, category_sites_enabled, search_category` from `...tools.search` alongside `prepare_domain_query`. Add one module helper next to `_is_web_provider`:
+- [x] **Step 3: Implement** — in `app.py` import `RESTRICTABLE_PROVIDERS, category_sites_enabled, search_category` from `...tools.search` alongside `prepare_domain_query`. Add one module helper next to `_is_web_provider`:
 
 ```python
 def _category_search_fns(provider: str, **search_kwargs):
@@ -653,16 +653,16 @@ In `_run_hybrid_search._fetch_provider`, replace the `dispatched = [...]` list a
 
 Everything after (`_is_web_provider` page fetch, `zip(dispatched, page_lists)`, `_enforce_access`) is unchanged.
 
-- [ ] **Step 4: Audit existing hint tests (Review Focus 5)** — tests in this file that assert a single suffix query for a site-listed category (`test_direct_search_hints_web_providers`, `test_direct_search_hints_providers_outside_web_provider_set`, `test_hybrid_hints_each_expanded_query_exactly_once`) now pass only because their fake returns `[]` and the suffix is the last call. Add `monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")` to each and keep their assertions: they now pin hint-only behavior explicitly, while the new tests pin the scoped behavior.
+- [x] **Step 4: Audit existing hint tests (Review Focus 5)** — tests in this file that assert a single suffix query for a site-listed category (`test_direct_search_hints_web_providers`, `test_direct_search_hints_providers_outside_web_provider_set`, `test_hybrid_hints_each_expanded_query_exactly_once`) now pass only because their fake returns `[]` and the suffix is the last call. Add `monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")` to each and keep their assertions: they now pin hint-only behavior explicitly, while the new tests pin the scoped behavior.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `pytest tests/unit/servers/web/ tests/unit/test_category_search.py -q`
 Expected: PASS.
 
-- [ ] **Step 6: Mutation check** — in `_category_search_fns` return `(provider_search, None)` unconditionally: the scoped tests FAIL; restore.
+- [x] **Step 6: Mutation check** — in `_category_search_fns` return `(provider_search, None)` unconditionally: the scoped tests FAIL; restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/internal/servers/web/app.py tests/unit/servers/web/test_search_domain_http.py
@@ -688,7 +688,7 @@ Restricted-function rules (Plan ruling 1):
 - MCP `_domain_service` passes its browser-free `web_search` as both functions; `search_web` uses its provider function for both.
 - In every case the setting gates use: `restricted_fn if category_sites_enabled() else None`, evaluated per call.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_domain_search.py`:
 
@@ -833,12 +833,12 @@ and update `test_mcp_web_capability_uses_existing_provider`'s expected `calls` t
     ]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `pytest tests/unit/test_domain_search.py tests/unit/test_domain_search_tools.py tests/unit/test_domain_search_mcp.py -q`
 Expected: new tests FAIL (`restricted_search_fn` unexpected keyword; single suffix call).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `MultiQueryWebSearchTool.__init__` gains `restricted_search_fn: Any = None` and stores:
 
@@ -985,16 +985,16 @@ def _domain_metadata(domain: str, executed_queries: list[str]) -> dict:
 
 used for the success payload too (replacing the old `domain_metadata` dict). Update the `search_web` docstring line "`domain` optionally appends a source-category hint" to: "`domain` optionally scopes the search to the category's source sites (falling back to a category hint when that returns few results). It is not a hard filter."
 
-- [ ] **Step 4: Audit existing hint tests (Review Focus 5)** — run `pytest tests/unit/test_domain_search*.py tests/unit/test_search_domain_tools.py tests/unit/test_mcp_server.py -q`. Any test now failing because it pinned a single suffix call for a site-listed category: if it tests hint semantics, add `monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")`; if it tests call plumbing, update the expected sequence to scoped-then-suffix. Never weaken an assertion to `in`/subset.
+- [x] **Step 4: Audit existing hint tests (Review Focus 5)** — run `pytest tests/unit/test_domain_search*.py tests/unit/test_search_domain_tools.py tests/unit/test_mcp_server.py -q`. Any test now failing because it pinned a single suffix call for a site-listed category: if it tests hint semantics, add `monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")`; if it tests call plumbing, update the expected sequence to scoped-then-suffix. Never weaken an assertion to `in`/subset.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `pytest tests/unit/test_domain_search.py tests/unit/test_domain_search_tools.py tests/unit/test_domain_search_mcp.py tests/unit/test_search_domain_tools.py tests/unit/test_mcp_server.py tests/unit/test_category_search.py -q`
 Expected: PASS.
 
-- [ ] **Step 6: Mutation check** — in `knowledge_base.py` change `browser_search_url=None` to the env value: `test_seeded_tools_share_one_browser_free_restricted_function` FAILS; restore.
+- [x] **Step 6: Mutation check** — in `knowledge_base.py` change `browser_search_url=None` to the env value: `test_seeded_tools_share_one_browser_free_restricted_function` FAILS; restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/internal/tools/search.py src/internal/tools/knowledge_base.py src/internal/mcp_server/tools/search.py tests/unit/test_domain_search.py tests/unit/test_domain_search_tools.py tests/unit/test_domain_search_mcp.py
@@ -1028,7 +1028,7 @@ async def run_source_query(label, *, search_fn, cache, provider="serpapi") -> So
 
 - Produces (in the CLI): `summarise_source(outcomes) -> dict` with keys `interpretable`, `excluded_count`, `paired_vs_suffix`, `paired_vs_plain` (each `{n, mean_delta, p_value, cliffs_delta}`), `empty_rate` (`{plain, suffix, category}`), `fallback_rate`, `fallback_added_seconds`, `on_list_share`, `control` (`{n, max_abs_delta, min_jaccard}`), `per_domain` (descriptive), `decision` (`"worse"|"better"|"null"|None`).
 
-- [ ] **Step 1: Write the failing tests** — create `tests/unit/test_source_category_eval.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/unit/test_source_category_eval.py`:
 
 ```python
 """Offline tests for the three-arm source-category evaluation."""
@@ -1176,12 +1176,12 @@ def test_summary_reports_fallback_rate_and_circularity_share():
     assert summary["on_list_share"] == 0.25
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `pytest tests/unit/test_source_category_eval.py -q`
 Expected: ImportError (`SourceLabelledQuery`).
 
-- [ ] **Step 3: Implement `domain_eval.py` additions**
+- [x] **Step 3: Implement `domain_eval.py` additions**
 
 Imports: `import time`, `from functools import partial`, `from src.internal.tools.search import DOMAIN_REGISTRY, SearchPage, prepare_domain_query, search_category`.
 
@@ -1323,7 +1323,7 @@ async def run_source_query(
 
 Note: `on_list_share` for `web` would fail on an empty site list only through division by `len(hosts)`; the guard keeps controls out of the share regardless.
 
-- [ ] **Step 4: Implement the CLI** — create `examples/run_source_category_eval.py`:
+- [x] **Step 4: Implement the CLI** — create `examples/run_source_category_eval.py`:
 
 ```python
 """Compare plain, suffix, and category (site-scoped) search arms.
@@ -1486,14 +1486,14 @@ if __name__ == "__main__":
 
 `DEFAULT_CACHE_DIR` is imported from `examples/run_domain_relevance_eval.py` so both CLIs share one cache (the plain arm of a repeated query is then free).
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `pytest tests/unit/test_source_category_eval.py tests/unit/test_domain_eval.py -q`
 Expected: PASS (the torch-free guard in `test_domain_eval.py` must still pass — `domain_eval.py` imports only `src.internal.tools.search`).
 
-- [ ] **Step 6: Mutation checks** — (a) drop the `taxonomy` check in `load_labels`: `test_historical_loader_rejects_a_marked_file` FAILS; (b) in `summarise_source` swap `< 0` for `> 0` in the "worse" branch: `test_summary_applies_the_preregistered_rule` FAILS; (c) pass `restricted_fn=None` in `run_source_query`: `test_three_arms_and_a_cached_fallback` FAILS. Restore.
+- [x] **Step 6: Mutation checks** — (a) drop the `taxonomy` check in `load_labels`: `test_historical_loader_rejects_a_marked_file` FAILS; (b) in `summarise_source` swap `< 0` for `> 0` in the "worse" branch: `test_summary_applies_the_preregistered_rule` FAILS; (c) pass `restricted_fn=None` in `run_source_query`: `test_three_arms_and_a_cached_fallback` FAILS. Restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/internal/retrieval/domain_eval.py examples/run_source_category_eval.py tests/unit/test_source_category_eval.py
@@ -1507,13 +1507,13 @@ git commit -m "feat: three-arm source-category relevance evaluation"
 - Modify: `docs/search-engine.md`; `README.md` (only after the run)
 - Modify: this plan's checkboxes and Validation record
 
-- [ ] **Step 1: Draft labels blind.** Dispatch one fresh subagent with this prompt (it must not read `src/internal/tools/search.py`, this plan, or the spec):
+- [x] **Step 1: Draft labels blind.** Dispatch one fresh subagent with this prompt (it must not read `src/internal/tools/search.py`, this plan, or the spec):
 
 > Write `data/eval/source_category_queries.json` in /Users/linghuang/Git/Agentic-Search. Do not open src/internal/tools/search.py, docs/superpowers/, or any file mentioning "source_sites". Format: `{"taxonomy": "source_categories", "k": 10, "domains": {"<category>": [{"query": "...", "authority_hosts": ["host", ...]}, ...]}}`. Categories and what each covers: academic (papers, preprints, citations, research); code (repositories, APIs, libraries, examples, issues); social_media (discussions, opinions, community experiences); resource (datasets, directories, tools, templates, benchmarks); news (breaking news, reporting, investigations); legal (statutes, regulations, case law); financial (market data, filings, earnings, financial statements); patent (patents, trademarks, inventions); business (company profiles, industry information); travel (flights, hotels, destinations, transportation); media (images, videos, audio, podcasts); books (books, authors, editions); education (courses, tutorials, textbooks); events (conferences, concerts, meetups, schedules); jobs (job openings, careers, salaries); statistics (public statistics, indicators, surveys, census). Exactly four realistic user queries per category, phrased as a person would type them, with no site names or category words in the query. For each query list 3–6 hosts (bare hostnames, no scheme) whose pages would directly and authoritatively answer it — judge each query on its own merits, and include hosts of any kind (official bodies, publishers, primary sources, reputable references). Do not commit. Report the file path when done.
 
-- [ ] **Step 2: Validate shape** — `python -c "from src.internal.retrieval.domain_eval import load_source_labels as l; ls=l(); print(len(ls)); assert len(ls)==64"` and `python -m examples.run_source_category_eval --dry-run` (expect `64 labelled queries; N live provider calls needed`, N ≤ 192). Record the pooled `on_list_share` by running `python -c "from src.internal.retrieval.domain_eval import load_source_labels, on_list_share as s; ls=load_source_labels(); print(sum(s(x.domain,x.authority_hosts) for x in ls)/len(ls))"`.
+- [x] **Step 2: Validate shape** — `python -c "from src.internal.retrieval.domain_eval import load_source_labels as l; ls=l(); print(len(ls)); assert len(ls)==64"` and `python -m examples.run_source_category_eval --dry-run` (expect `64 labelled queries; N live provider calls needed`, N ≤ 192). Record the pooled `on_list_share` by running `python -c "from src.internal.retrieval.domain_eval import load_source_labels, on_list_share as s; ls=load_source_labels(); print(sum(s(x.domain,x.authority_hosts) for x in ls)/len(ls))"`.
 
-- [ ] **Step 3: USER GATE — spot-check.** Show the user the label file path, the on-list share, and five random entries; wait for approval. Apply only the user's corrections. Then commit:
+- [x] **Step 3: USER GATE — spot-check.** Show the user the label file path, the on-list share, and five random entries; wait for approval. Apply only the user's corrections. Then commit:
 
 ```bash
 git add data/eval/source_category_queries.json
@@ -1522,13 +1522,13 @@ git commit -m "data: source-category relevance labels (drafted blind to site lis
 
 From this commit on, the label file is frozen.
 
-- [ ] **Step 4: Document** — in `docs/search-engine.md`, add a section `### Category source sites` directly after `### Legacy identifiers`, containing: the `source_sites` table (copy from the spec); the restricted-then-fallback rule (threshold `min(3, page_size)`, leg tags, browser and corpus exceptions); `AGENTIC_SEARCH_CATEGORY_SITES`; that `/api/search-domains` and `get_sub_domains` expose `source_sites`; and a placeholder-free sentence: "Whether this improves relevance is measured below." Add a subsection `### Does restricting to source sites help?` stating the arms, the circularity guard with the measured on-list share, the pre-registered decision rule, and the run command — with the result paragraph written in Step 8. Update the `typical_sources` paragraph ("no dedicated connector exists … every category searches through the configured web providers") to say site-listed categories scope their web search to those sites first.
+- [x] **Step 4: Document** — in `docs/search-engine.md`, add a section `### Category source sites` directly after `### Legacy identifiers`, containing: the `source_sites` table (copy from the spec); the restricted-then-fallback rule (threshold `min(3, page_size)`, leg tags, browser and corpus exceptions); `AGENTIC_SEARCH_CATEGORY_SITES`; that `/api/search-domains` and `get_sub_domains` expose `source_sites`; and a placeholder-free sentence: "Whether this improves relevance is measured below." Add a subsection `### Does restricting to source sites help?` stating the arms, the circularity guard with the measured on-list share, the pre-registered decision rule, and the run command — with the result paragraph written in Step 8. Update the `typical_sources` paragraph ("no dedicated connector exists … every category searches through the configured web providers") to say site-listed categories scope their web search to those sites first.
 
-- [ ] **Step 5: Full verification** — `pytest -q`; `ruff check` and `ruff format --check` on changed Python files; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the link/anchor check used for #680 over the edited docs.
+- [x] **Step 5: Full verification** — `pytest -q`; `ruff check` and `ruff format --check` on changed Python files; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the link/anchor check used for #680 over the edited docs.
 
-- [ ] **Step 6: Whole-branch review** — one fresh reviewer against `origin/main`, the spec, this plan, and Review Focus. Fix material findings RED→GREEN; record rulings below.
+- [x] **Step 6: Whole-branch review** — one fresh reviewer against `origin/main`, the spec, this plan, and Review Focus. Fix material findings RED→GREEN; record rulings below.
 
-- [ ] **Step 7: PR** — push the branch; open a **draft** PR against main titled "Restrict category web searches to their source sites"; body states the behavior, the rulings, and that the measurement is pending. Watch CI for the final commit; fix attributable failures.
+- [x] **Step 7: PR** — push the branch; open a **draft** PR against main titled "Restrict category web searches to their source sites"; body states the behavior, the rulings, and that the measurement is pending. Watch CI for the final commit; fix attributable failures.
 
 - [ ] **Step 8: USER GATE — measured run.** Ask the user to run (with `SERP_API_KEY` set):
 
@@ -1543,4 +1543,10 @@ Then read `data/eval/source_category_relevance.json`. Reject the run if `control
 
 ## Validation record
 
-Spec approved by the user 2026-10-10. Plan awaiting review.
+Spec approved by the user 2026-10-10; plan executed subagent-driven (fresh implementer + reviewer per task).
+
+- Tasks 1–5 complete; Tasks 3, 4, 5 each needed one fix round (fetch dropped leg metadata; setting-off and seeded-wiring tests missing; failed restricted calls scored as 0 and cached, control could not reject).
+- Labels: 64 queries drafted blind to `source_sites`, approved by the user 2026-10-10, frozen at `af576471`. On-list share 90/245 hosts (36.7%); per-query mean 36.4%.
+- Final whole-branch review: 0 critical, 4 important (hybrid fallback cancellation lost restricted pages; control gate passed on failed controls; stale MCP and search-engine docs) — all fixed in `524c2600`, `66b44ed6`, scoped re-review clean.
+- Local: `pytest` 5386 passed, 1 skipped (one wall-clock auth `nbf` flake outside the diff, 3/3 green on rerun); vitest 246 passed; typecheck, Ruff, `git diff --check`, docs link check clean. `--dry-run` with two controls: 66 queries, 194 live calls.
+- Draft PR #681. Remaining: Step 8 (measured run with the user's SerpAPI key, decision rule, result docs) and Step 9.
