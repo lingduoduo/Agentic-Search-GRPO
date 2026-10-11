@@ -134,10 +134,10 @@ describe("SearchComposer", () => {
 describe("SearchComposer domain selector", () => {
   const domainProps = {
     ...defaultProps,
-    domain: "general",
+    domain: "web",
     domainOptions: [
-      { name: "general", description: "Broad or mixed-topic search; default" },
-      { name: "finance", description: "Markets, investments, banking" },
+      { name: "web", description: "Broad or mixed-topic search; default" },
+      { name: "financial", description: "Markets, investments, banking" },
       { name: "social_media", description: "Public social posts" },
     ],
     onDomainChange: vi.fn(),
@@ -146,15 +146,15 @@ describe("SearchComposer domain selector", () => {
   it("renders the selector even without dev mode", () => {
     // Unlike Source and Retrieval URL, the domain is a product control.
     render(<SearchComposer {...domainProps} />);
-    expect(screen.getByLabelText("Domain")).toHaveValue("general");
+    expect(screen.getByLabelText("Search source")).toHaveValue("web");
     expect(screen.queryByLabelText(/^Source$/)).not.toBeInTheDocument();
   });
 
   it("reports the selected domain", async () => {
     const onDomainChange = vi.fn();
     render(<SearchComposer {...domainProps} onDomainChange={onDomainChange} />);
-    await userEvent.selectOptions(screen.getByLabelText("Domain"), "finance");
-    expect(onDomainChange).toHaveBeenCalledWith("finance");
+    await userEvent.selectOptions(screen.getByLabelText("Search source"), "financial");
+    expect(onDomainChange).toHaveBeenCalledWith("financial");
   });
 
   it("labels underscored identifiers readably", () => {

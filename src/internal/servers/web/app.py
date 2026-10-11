@@ -343,11 +343,12 @@ class AgentExperienceRequest(BaseModel):
         ),
     )
     domain: str = Field(
-        default="general",
+        default="web",
         description=(
-            "Optional topic query hint applied to web search providers only. "
-            "One of the 17 identifiers in DOMAIN_REGISTRY, or 'general' "
-            "(default) to leave the query unchanged. Not a result filter."
+            "Optional search-source category hint applied to web search "
+            "providers only. One of the 20 identifiers in DOMAIN_REGISTRY; "
+            "'web' (default) leaves the query unchanged. Legacy topic "
+            "identifiers are accepted as aliases. Not a result filter."
         ),
     )
 
@@ -607,7 +608,7 @@ class _WebHybridRetrievalStage:
         browser_search_url,
         rerank_url,
         source_provider,
-        domain="general",
+        domain="web",
     ) -> None:
         self._llm = llm
         self._search_url = search_url
@@ -696,7 +697,7 @@ async def _auto_search_pipeline(
     history: list,
     source_provider: str,
     extra: dict,
-    domain: str = "general",
+    domain: str = "web",
     retrieval_query: str | None = None,
 ) -> tuple:
     """Run the shared stage composer as the grounded degraded fallback."""
@@ -1068,7 +1069,7 @@ async def _run_search_direct_or_escalate(
     filters,
     history: list,
     source_provider: str,
-    domain: str = "general",
+    domain: str = "web",
     on_turn=None,
     retrieval_query: str | None = None,
 ) -> tuple:
@@ -1324,7 +1325,7 @@ async def _run_auto_routed(
     history: list,
     resolved,
     source_provider: str = "retrieval",
-    domain: str = "general",
+    domain: str = "web",
     on_turn=None,
     on_approval=None,
     on_escalation=None,
@@ -1730,11 +1731,15 @@ def create_web_app(
         )
 
     @app.get("/api/search-domains")
-    def list_search_domains() -> dict[str, list[dict[str, str]]]:
+    def list_search_domains() -> dict[str, list[dict[str, str | list[str]]]]:
         """Expose the taxonomy so the UI has one source for names and order."""
         return {
             "domains": [
-                {"name": name, "description": entry.description}
+                {
+                    "name": name,
+                    "description": entry.description,
+                    "typical_sources": list(entry.typical_sources),
+                }
                 for name, entry in DOMAIN_REGISTRY.items()
             ]
         }
@@ -2650,10 +2655,11 @@ def _reject_domain_for_mode(domain: str, mode: str | None) -> None:
     """Refuse a real domain on a mode that would ignore it.
 
     Dropping the field quietly is what the taxonomy spec's rollout boundary
-    exists to prevent, so this raises rather than shrugging. ``general`` is
+    exists to prevent, so this raises rather than shrugging. ``web`` is
     always fine: it leaves the query unchanged, so no mode can ignore it.
+    ``domain`` must already be canonical (``normalize_search_domain``).
     """
-    if domain == "general" or mode is None:
+    if domain == "web" or mode is None:
         return
     resolved = _MODE_ALIASES.get(mode, mode)
     if resolved not in _DOMAIN_HONORING_MODES:
@@ -2783,7 +2789,7 @@ async def _run_direct_search(
     rerank_url: str | None = None,
     top_k: int,
     filters: dict | None = None,
-    domain: str = "general",
+    domain: str = "web",
 ) -> list[ContextDocument]:
     # Over-fetch so MMR has candidates beyond top_k to diversify from.
     fetch_k = top_k * 2
@@ -2965,7 +2971,7 @@ async def _run_hybrid_search(
     top_k: int,
     filters: SearchFilters | None,
     source_provider: str,
-    domain: str = "general",
+    domain: str = "web",
 ) -> _HybridSearchResult:
     hybrid = get_timeout_policies().retrieval.web_hybrid
     if source_provider == "retrieval":

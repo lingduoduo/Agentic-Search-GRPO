@@ -1,4 +1,4 @@
-"""HTTP surface for the 17-domain search taxonomy.
+"""HTTP surface for the 20-category search-source taxonomy.
 
 Covers the request field, its validation, the registry endpoint that feeds the
 UI selector, and where the topic hint is applied. The load-bearing rule is that
@@ -23,6 +23,7 @@ from src.internal.tools.search import (
     AVAILABLE_DOMAINS,
     DOMAIN_REGISTRY,
     SearchPage,
+    normalize_search_domain,
 )
 
 
@@ -35,20 +36,20 @@ def client():
 # --- request field and registry endpoint ------------------------------------
 
 
-def test_domain_defaults_to_general():
-    assert AgentExperienceRequest(query="q").domain == "general"
+def test_domain_defaults_to_web():
+    assert AgentExperienceRequest(query="q").domain == "web"
 
 
 def test_registry_endpoint_lists_all_domains_in_order(client):
     body = client.get("/api/search-domains").json()
     assert [d["name"] for d in body["domains"]] == AVAILABLE_DOMAINS
-    assert len(body["domains"]) == 17
+    assert len(body["domains"]) == 20
 
 
 def test_registry_endpoint_carries_descriptions(client):
     body = client.get("/api/search-domains").json()
     by_name = {d["name"]: d["description"] for d in body["domains"]}
-    assert by_name["finance"] == DOMAIN_REGISTRY["finance"].description
+    assert by_name["financial"] == DOMAIN_REGISTRY["financial"].description
 
 
 def test_invalid_domain_is_rejected(client):
@@ -92,7 +93,7 @@ async def test_direct_search_hints_web_providers(monkeypatch):
         top_k=2,
         domain="finance",
     )
-    assert seen["serpapi"] == "etf fees finance"
+    assert seen["serpapi"] == "etf fees financial market data filings"
 
 
 @pytest.mark.asyncio
@@ -111,7 +112,7 @@ async def test_direct_search_hints_providers_outside_web_provider_set(
         top_k=2,
         domain="finance",
     )
-    assert seen[provider] == "etf fees finance"
+    assert seen[provider] == "etf fees financial market data filings"
 
 
 @pytest.mark.asyncio
@@ -129,7 +130,8 @@ async def test_direct_search_leaves_the_corpus_query_raw(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_search_general_domain_is_a_no_op(monkeypatch):
+@pytest.mark.parametrize("domain", ["web", "general"])
+async def test_direct_search_web_domain_is_a_no_op(monkeypatch, domain):
     seen: dict[str, str] = {}
     _patch_providers(monkeypatch, seen)
     await _run_direct_search(
@@ -137,7 +139,7 @@ async def test_direct_search_general_domain_is_a_no_op(monkeypatch):
         source_provider="serpapi",
         search_url="http://x/retrieve",
         top_k=2,
-        domain="general",
+        domain=domain,
     )
     assert seen["serpapi"] == "etf fees"
 
@@ -171,8 +173,11 @@ async def test_hybrid_hints_each_expanded_query_exactly_once(monkeypatch):
         source_provider="serpapi",
         domain="finance",
     )
-    assert seen == ["etf fees finance", "etf fees alt finance"]
-    assert all(q.count("finance") == 1 for q in seen)
+    assert seen == [
+        "etf fees financial market data filings",
+        "etf fees alt financial market data filings",
+    ]
+    assert all(q.count("financial") == 1 for q in seen)
 
 
 @pytest.mark.asyncio
@@ -222,13 +227,13 @@ def test_non_honoring_mode_rejects_a_domain(mode):
 
 
 @pytest.mark.parametrize("mode", _NON_HONORING_MODES)
-def test_non_honoring_mode_accepts_general(mode):
-    _reject_domain_for_mode("general", mode)
+def test_non_honoring_mode_accepts_web(mode):
+    _reject_domain_for_mode("web", mode)
 
 
 @pytest.mark.parametrize("mode", ["search_tool", "hybrid_search", None])
 def test_honoring_modes_accept_a_domain(mode):
-    _reject_domain_for_mode("finance", mode)
+    _reject_domain_for_mode("financial", mode)
 
 
 def test_mode_aliases_resolve_before_the_guard():
@@ -268,7 +273,7 @@ def test_explicit_search_tool_mode_forwards_the_domain(client, monkeypatch):
         "/api/agent",
         json={"query": "etf fees", "mode": "search_tool", "domain": "finance"},
     )
-    assert captured["domain"] == "finance"
+    assert captured["domain"] == "financial"
     # The route never rewrites the query: only providers see the hint.
     assert captured["query"] == "etf fees"
 
@@ -290,7 +295,7 @@ def test_explicit_hybrid_mode_forwards_the_domain(client, monkeypatch):
         "/api/agent",
         json={"query": "etf fees", "mode": "hybrid_search", "domain": "finance"},
     )
-    assert captured["domain"] == "finance"
+    assert captured["domain"] == "financial"
     assert captured["query"] == "etf fees"
 
 
@@ -374,5 +379,30 @@ async def test_direct_or_escalate_forwards_the_domain_to_external_fallback(monke
     assert seen, "the direct-first path never dispatched"
     by_provider = dict(seen)
     # The corpus leg is called without a domain; web legs carry it.
-    assert by_provider.get("retrieval") in (None, "general")
+    assert by_provider.get("retrieval") in (None, "web")
     assert any(d == "finance" for p, d in seen if p != "retrieval")
+
+
+def test_registry_endpoint_exposes_source_metadata(client):
+    domains = client.get("/api/search-domains").json()["domains"]
+    assert domains[0]["name"] == "web"
+    assert domains[0]["typical_sources"] == ["Web search engines"]
+    academic = next(d for d in domains if d["name"] == "academic")
+    assert academic["typical_sources"] == ["arXiv", "Semantic Scholar", "OpenAlex"]
+
+
+@pytest.mark.parametrize("domain", ["web", "general", "health", "environment"])
+def test_neutral_sources_are_accepted_by_non_search_modes(domain):
+    # The route normalizes before the mode check; legacy topics become web.
+    _reject_domain_for_mode(normalize_search_domain(domain), "chat_once")
+
+
+def test_legacy_topic_alias_reaches_search_mode_as_web(client, monkeypatch):
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    client.post(
+        "/api/agent",
+        json={"query": "etf fees", "mode": "search_tool", "domain": "health"},
+    )
+    assert captured["domain"] == "web"
+    assert captured["query"] == "etf fees"

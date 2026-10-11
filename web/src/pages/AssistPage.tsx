@@ -53,9 +53,9 @@ export function AssistPage() {
   const [query, setQuery] = useState("");
   const [searchUrl, setSearchUrl] = useState(DEFAULT_SEARCH_URL);
   const [topK, setTopK] = useState(5);
-  const [domain, setDomain] = useState("general");
+  const [domain, setDomain] = useState("web");
   const [domainOptions, setDomainOptions] = useState<SearchDomainOption[]>([
-    { name: "general", description: "Broad or mixed-topic search; default" },
+    { name: "web", description: "General information, websites, explanations, references" },
   ]);
   const [intent, setIntent] = useState<"search" | "chat" | "tool" | undefined>(undefined);
   const [clarification, setClarification] = useState<
@@ -85,9 +85,9 @@ export function AssistPage() {
   const debugPanels = import.meta.env.VITE_DEBUG_PANELS === "1";
   const requestRef = useRef<AbortController | null>(null);
 
-  // The taxonomy lives in DOMAIN_REGISTRY; fetching it keeps the 17
-  // identifiers and their order from being copied into the bundle. On
-  // failure the composer keeps its "general" fallback rather than
+  // The taxonomy lives in DOMAIN_REGISTRY; fetching it keeps the 20
+  // source categories and their order from being copied into the bundle. On
+  // failure the composer keeps its "web" fallback rather than
   // disappearing, since domain selection is optional.
   useEffect(() => {
     let active = true;
