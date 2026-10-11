@@ -179,3 +179,63 @@ async def test_registry_accepts_legacy_selectors_without_mutating_arguments():
         "search_domain", {"query": "q", "domain": "unknown"}
     )
     assert errors
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_scopes_then_falls_back():
+    from src.internal.tools.search import MultiQueryWebSearchTool, restricted_query
+
+    calls = []
+
+    async def cascade(query, **kwargs):
+        calls.append(("cascade", query))
+        return [SearchPage(title="t", summary="s", url="https://x.example/1")]
+
+    async def serp_only(query, **kwargs):
+        calls.append(("serp", query))
+        return []
+
+    tool = MultiQueryWebSearchTool(
+        search_fn=cascade, restricted_search_fn=serp_only, page_size=3
+    )
+    _, _, metadata = await tool.execute(
+        "i", {"queries": ["etf fees"], "domain": "financial"}
+    )
+    assert calls == [
+        ("serp", restricted_query("etf fees", "financial")),
+        ("cascade", "etf fees financial market data filings"),
+    ]
+    assert metadata["executed_queries"] == [
+        restricted_query("etf fees", "financial"),
+        "etf fees financial market data filings",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_injected_without_restricted_fn_issues_todays_query():
+    from src.internal.tools.search import MultiQueryWebSearchTool
+
+    calls = []
+
+    async def fn(query, **kwargs):
+        calls.append(query)
+        return []
+
+    tool = MultiQueryWebSearchTool(search_fn=fn, page_size=3)
+    await tool.execute("i", {"queries": ["etf fees"], "domain": "financial"})
+    assert calls == ["etf fees financial market data filings"]
+
+
+def test_seeded_tools_share_one_browser_free_restricted_function(monkeypatch):
+    import src.internal.tools.search as module
+    from src.internal.tools.knowledge_base import tool_knowledge_base
+
+    built = []
+    real = module.make_web_cascade_search
+    monkeypatch.setattr(
+        "src.internal.tools.knowledge_base.make_web_cascade_search",
+        lambda **kw: built.append(kw) or real(**kw),
+    )
+    monkeypatch.setenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL", "http://browser/retrieve")
+    tool_knowledge_base()
+    assert {"browser_search_url": None} in built

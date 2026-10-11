@@ -43,7 +43,7 @@ def test_invalid_domain_never_dispatches(queries):
 
 def test_domain_queries_use_existing_cache(monkeypatch):
     from src.internal.cache import serving
-    from src.internal.tools.search import SearchPage
+    from src.internal.tools.search import SearchPage, restricted_query
 
     calls = []
 
@@ -57,7 +57,11 @@ def test_domain_queries_use_existing_cache(monkeypatch):
         tool = MultiQueryWebSearchTool(provider="serpapi")
         for domain in ("general", "academic", "academic"):
             asyncio.run(tool.execute("i", {"queries": ["battery"], "domain": domain}))
-        assert calls == ["battery", "battery academic research"]
+        assert calls == [
+            "battery",
+            restricted_query("battery", "academic"),
+            "battery academic research",
+        ]
     finally:
         serving.reset_serving_cache()
 

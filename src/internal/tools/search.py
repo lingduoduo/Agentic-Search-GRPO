@@ -1123,7 +1123,14 @@ class MultiQueryWebSearchTool(Tool):
         search_url: str = DEFAULT_RETRIEVAL_URL,
         page_size: int = 5,
         timeout_seconds: float | None = None,
+        restricted_search_fn: Any = None,
     ) -> None:
+        if restricted_search_fn is not None:
+            self._restricted_search_fn = restricted_search_fn
+        elif search_fn is None and provider in RESTRICTABLE_PROVIDERS:
+            self._restricted_search_fn = search_tool
+        else:
+            self._restricted_search_fn = None
         self._search_fn = search_fn or search_tool
         self._provider = provider
         self._search_url = search_url
@@ -1190,19 +1197,37 @@ class MultiQueryWebSearchTool(Tool):
         if not queries:
             return json.dumps([]), [], {}
 
-        executed_queries = [prepare_domain_query(q, domain) for q in queries]
-        results_per_query: list[list[SearchPage]] = await asyncio.gather(
-            *[
-                self._search_fn(
-                    q,
+        def _bind(fn: Any) -> PageSearch:
+            async def run(query: str, page_size: int) -> list[SearchPage]:
+                return await fn(
+                    query,
                     provider=self._provider,
                     search_url=self._search_url,
-                    page_size=self._page_size,
+                    page_size=page_size,
                     timeout_seconds=self._timeout_seconds,
                 )
-                for q in executed_queries
+
+            return run
+
+        restricted = (
+            _bind(self._restricted_search_fn)
+            if self._restricted_search_fn is not None and category_sites_enabled()
+            else None
+        )
+        searches = await asyncio.gather(
+            *[
+                search_category(
+                    q,
+                    domain=domain,
+                    page_size=self._page_size,
+                    search_fn=_bind(self._search_fn),
+                    restricted_fn=restricted,
+                )
+                for q in queries
             ]
         )
+        results_per_query = [s.pages for s in searches]
+        executed_queries = [q for s in searches for q in s.executed_queries]
 
         seen_urls: set[str] = set()
         merged: list[SearchPage] = []
@@ -1345,7 +1370,12 @@ class DomainSearch:
     """Shared operations for FunctionTools and Python callers; no new backend."""
 
     def __init__(
-        self, *, web_search_fn=None, tools: Iterable[Tool] | None = None, fetch_fn=None
+        self,
+        *,
+        web_search_fn=None,
+        tools: Iterable[Tool] | None = None,
+        fetch_fn=None,
+        restricted_search_fn=None,
     ):
         if tools is None:
             from .public_data import public_data_tools
@@ -1367,6 +1397,13 @@ class DomainSearch:
                 browser_search_url=os.getenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL")
             )
         )
+        if restricted_search_fn is not None:
+            self.restricted_search_fn = restricted_search_fn
+        elif web_search_fn is None:
+            # SerpAPI only: a restricted query must never reach the browser.
+            self.restricted_search_fn = make_web_cascade_search(browser_search_url=None)
+        else:
+            self.restricted_search_fn = None
         self.fetch_fn = fetch_fn if fetch_fn is not None else fetch_url
 
     def get_sub_domains(self, domains: list[str]) -> dict[str, Any]:
@@ -1489,13 +1526,25 @@ class DomainSearch:
                 raise InvalidToolInput(
                     "web capabilities accept max_results, not capability params"
                 )
-            executed_query = prepare_domain_query(query, canonical)
-            pages = await self.web_search_fn(executed_query, page_size=max_results)
+            restricted = (
+                (lambda q, n: self.restricted_search_fn(q, page_size=n))
+                if self.restricted_search_fn is not None and category_sites_enabled()
+                else None
+            )
+            category = await search_category(
+                query,
+                domain=canonical,
+                page_size=max_results,
+                search_fn=lambda q, n: self.web_search_fn(q, page_size=n),
+                restricted_fn=restricted,
+            )
+            pages = category.pages
             errors = [page.error for page in pages if page.error]
             if errors:
                 raise ValueError("; ".join(errors))
             result.update(
-                executed_query=executed_query,
+                executed_query=category.executed_queries[0],
+                executed_queries=category.executed_queries,
                 results=[
                     {"title": page.title, "content": page.summary, "url": page.url}
                     for page in pages[:max_results]
