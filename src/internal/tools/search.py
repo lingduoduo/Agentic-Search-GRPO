@@ -7,7 +7,7 @@ import copy
 import json
 import logging
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl
@@ -334,6 +334,97 @@ def prepare_domain_query(query: str, domain: str = "web") -> str:
     canonical = normalize_search_domain(domain)
     hint = DOMAIN_REGISTRY[canonical].query_hint
     return f"{query} {hint}" if hint and query.strip() else query
+
+
+PageSearch = Callable[[str, int], Awaitable[list["SearchPage"]]]
+
+# Below this many usable restricted pages the suffix query tops the list up.
+RESTRICT_MIN_USABLE = 3
+# Providers whose query string accepts ``site:`` operators and that never fall
+# back to the browser internally.
+RESTRICTABLE_PROVIDERS = frozenset({"google", "serpapi", "serper"})
+
+
+def restricted_query(query: str, domain: str) -> str | None:
+    """The site-scoped query for a category, or None when it has no sites."""
+    sites = DOMAIN_REGISTRY[normalize_search_domain(domain)].source_sites
+    if not sites or not query.strip():
+        return None
+    return f"{query} ({' OR '.join('site:' + site for site in sites)})"
+
+
+@dataclass(frozen=True)
+class CategorySearch:
+    pages: list["SearchPage"]
+    executed_queries: list[str]
+
+
+def _usable_page(page: "SearchPage") -> bool:
+    return bool(page.url) and not page.error and not page.is_blank
+
+
+def _tag_pages(pages, domain: str, leg: str, query: str) -> list["SearchPage"]:
+    return [
+        replace(
+            page,
+            metadata={
+                **(page.metadata or {}),
+                "category": domain,
+                "category_leg": leg,
+                "category_query": query,
+            },
+        )
+        for page in pages
+    ]
+
+
+async def search_category(
+    query: str,
+    *,
+    domain: str,
+    page_size: int,
+    search_fn: PageSearch,
+    restricted_fn: PageSearch | None = None,
+) -> CategorySearch:
+    """Search one category: its source sites first, the suffix query if thin.
+
+    ``restricted_fn`` must not fall back to the browser; pass None (the
+    setting is off, or the provider cannot take ``site:``) for one hint call.
+    """
+    canonical = normalize_search_domain(domain)
+    suffix = prepare_domain_query(query, canonical)
+    scoped = restricted_query(query, canonical) if restricted_fn is not None else None
+    if scoped is None:
+        pages = await search_fn(suffix, page_size)
+        return CategorySearch(_tag_pages(pages, canonical, "hint", suffix), [suffix])
+
+    try:
+        restricted = [
+            p for p in await restricted_fn(scoped, page_size) if _usable_page(p)
+        ]
+    except Exception as exc:  # timeout or provider error: the fallback decides
+        logger.info("restricted %s search failed: %s", canonical, exc)
+        restricted = []
+    restricted = _tag_pages(restricted[:page_size], canonical, "restricted", scoped)
+    if len(restricted) >= min(RESTRICT_MIN_USABLE, page_size):
+        return CategorySearch(restricted, [scoped])
+
+    executed = [scoped, suffix]
+    try:
+        fallback = await search_fn(suffix, page_size)
+    except Exception:
+        if restricted:
+            return CategorySearch(restricted, executed)
+        raise
+    if not restricted:
+        # Exactly what a single suffix call returns today, error pages included.
+        return CategorySearch(
+            _tag_pages(fallback, canonical, "fallback", suffix), executed
+        )
+    seen = {page.url for page in restricted}
+    extra = [p for p in fallback if _usable_page(p) and p.url not in seen]
+    merged = restricted + _tag_pages(extra, canonical, "fallback", suffix)
+    return CategorySearch(merged[:page_size], executed)
 
 
 def search_domain_parameter() -> dict[str, object]:
