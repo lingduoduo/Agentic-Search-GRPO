@@ -406,3 +406,16 @@ def test_legacy_topic_alias_reaches_search_mode_as_web(client, monkeypatch):
     )
     assert captured["domain"] == "web"
     assert captured["query"] == "etf fees"
+
+
+def test_registry_endpoint_exposes_source_sites(client):
+    domains = {
+        d["name"]: d for d in client.get("/api/search-domains").json()["domains"]
+    }
+    assert domains["patent"]["source_sites"] == [
+        "patents.google.com",
+        "uspto.gov",
+        "wipo.int",
+        "epo.org",
+    ]
+    assert domains["web"]["source_sites"] == []

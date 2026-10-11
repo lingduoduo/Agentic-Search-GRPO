@@ -64,6 +64,9 @@ class SearchDomain:
     query_hint: str
     capabilities: tuple["Capability", ...] = ()
     typical_sources: tuple[str, ...] = ()
+    # Hosts (or host/path) the restricted leg searches. Distinct from the
+    # descriptive typical_sources: these are what a query actually runs against.
+    source_sites: tuple[str, ...] = ()
 
 
 # Every domain can be searched on the public web; the hint is what differs.
@@ -89,18 +92,27 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("arxiv", "query", "documents", "search_arxiv"),
         ),
         ("arXiv", "Semantic Scholar", "OpenAlex"),
+        (
+            "arxiv.org",
+            "semanticscholar.org",
+            "pubmed.ncbi.nlm.nih.gov",
+            "openreview.net",
+            "aclanthology.org",
+        ),
     ),
     "code": SearchDomain(
         "Repositories, APIs, libraries, examples, issues",
         "programming repositories",
         (WEB_CAPABILITY,),
         ("GitHub", "GitLab", "package registries"),
+        ("github.com", "gitlab.com", "stackoverflow.com", "pypi.org", "npmjs.com"),
     ),
     "social_media": SearchDomain(
         "Discussions, opinions, trends, community experiences",
         "social media discussions",
         (WEB_CAPABILITY,),
         ("Reddit", "Hacker News", "public social platforms"),
+        ("reddit.com", "news.ycombinator.com", "x.com"),
     ),
     "resource": SearchDomain(
         "Datasets, directories, tools, templates, benchmarks",
@@ -110,12 +122,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("wayback", "url", "documents", "search_wayback"),
         ),
         ("Hugging Face", "Kaggle", "open-data portals"),
+        ("huggingface.co", "kaggle.com", "data.gov", "zenodo.org"),
     ),
     "news": SearchDomain(
         "Breaking news, reporting, investigations, press releases",
         "news reporting",
         (WEB_CAPABILITY,),
         ("News publishers", "news aggregators"),
+        ("reuters.com", "apnews.com", "bbc.com", "npr.org"),
     ),
     "official": SearchDomain(
         "Official announcements, documentation, authoritative statements",
@@ -128,6 +142,13 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         "law statutes case law",
         (WEB_CAPABILITY,),
         ("Court databases", "legal repositories"),
+        (
+            "law.cornell.edu",
+            "courtlistener.com",
+            "justia.com",
+            "govinfo.gov",
+            "eur-lex.europa.eu",
+        ),
     ),
     "financial": SearchDomain(
         "Market data, filings, earnings, financial statements",
@@ -139,12 +160,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("currency", "from_currency", "records", "convert_currency"),
         ),
         ("SEC EDGAR", "exchange data", "financial providers"),
+        ("sec.gov", "nasdaq.com", "finance.yahoo.com", "marketwatch.com"),
     ),
     "patent": SearchDomain(
         "Patents, trademarks, inventions, intellectual property",
         "patents intellectual property",
         (WEB_CAPABILITY,),
         ("Google Patents", "USPTO", "WIPO"),
+        ("patents.google.com", "uspto.gov", "wipo.int", "epo.org"),
     ),
     "product": SearchDomain(
         "Product catalogs, specifications, prices, reviews",
@@ -157,6 +180,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         "company industry information",
         (WEB_CAPABILITY,),
         ("Company registries", "corporate websites"),
+        ("opencorporates.com", "crunchbase.com"),
     ),
     "local": SearchDomain(
         "Businesses, locations, hours, local services",
@@ -178,42 +202,49 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("nearby", "query", "records", "search_nearby_places"),
         ),
         ("Travel providers", "tourism websites"),
+        ("tripadvisor.com", "booking.com", "lonelyplanet.com"),
     ),
     "media": SearchDomain(
         "Images, videos, audio, podcasts, multimedia",
         "images videos audio",
         (WEB_CAPABILITY,),
         ("YouTube", "Wikimedia Commons", "media platforms"),
+        ("youtube.com", "commons.wikimedia.org", "vimeo.com", "podcasts.apple.com"),
     ),
     "books": SearchDomain(
         "Books, authors, editions, publications, libraries",
         "books authors libraries",
         (WEB_CAPABILITY,),
         ("Open Library", "Google Books", "library catalogs"),
+        ("openlibrary.org", "books.google.com", "goodreads.com", "worldcat.org"),
     ),
     "education": SearchDomain(
         "Courses, tutorials, textbooks, educational programs",
         "courses tutorials education",
         (WEB_CAPABILITY,),
         ("University websites", "course catalogs", "learning platforms"),
+        ("coursera.org", "edx.org", "khanacademy.org", "ocw.mit.edu"),
     ),
     "events": SearchDomain(
         "Conferences, concerts, meetups, schedules",
         "events conferences schedules",
         (WEB_CAPABILITY,),
         ("Event platforms", "official event sites"),
+        ("eventbrite.com", "meetup.com"),
     ),
     "jobs": SearchDomain(
         "Job openings, careers, salaries, employment opportunities",
         "job openings careers",
         (WEB_CAPABILITY,),
         ("Employer career pages", "job boards"),
+        ("indeed.com", "linkedin.com/jobs", "glassdoor.com"),
     ),
     "statistics": SearchDomain(
         "Public statistics, indicators, surveys, census data",
         "public statistics census indicators",
         (WEB_CAPABILITY,),
         ("Census Bureau", "World Bank", "OECD"),
+        ("census.gov", "data.worldbank.org", "data.oecd.org", "ourworldindata.org"),
     ),
 }
 
@@ -319,6 +350,13 @@ def search_domain_parameter() -> dict[str, object]:
             "Use web for broad or mixed topics. " + descriptions
         ),
     }
+
+
+def category_sites_enabled() -> bool:
+    """Whether category searches may restrict to their source sites."""
+    from ..configs.app_configs import load_app_settings
+
+    return load_app_settings().services.category_sites
 
 
 logger = logging.getLogger(__name__)
@@ -1315,6 +1353,7 @@ class DomainSearch:
                     "domain": domain,
                     "description": DOMAIN_REGISTRY[domain].description,
                     "typical_sources": list(DOMAIN_REGISTRY[domain].typical_sources),
+                    "source_sites": list(DOMAIN_REGISTRY[domain].source_sites),
                     "sub_domains": entries,
                 }
             )

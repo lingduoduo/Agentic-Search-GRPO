@@ -211,6 +211,16 @@ def test_load_app_settings_reads_browser_search_url():
     assert load_app_settings({}).services.browser_search_url is None
 
 
+def test_load_app_settings_reads_category_sites():
+    assert load_app_settings({}).services.category_sites is True
+    assert (
+        load_app_settings(
+            {"AGENTIC_SEARCH_CATEGORY_SITES": "false"}
+        ).services.category_sites
+        is False
+    )
+
+
 def test_web_settings_can_be_built_from_app_settings():
     app_settings = load_app_settings(
         {

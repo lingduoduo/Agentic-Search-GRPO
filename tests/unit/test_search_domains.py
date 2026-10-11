@@ -1,10 +1,13 @@
 """Contracts for optional search topic domains."""
 
+import re
+
 import pytest
 
 from src.internal.tools.search import (
     AVAILABLE_DOMAINS,
     DOMAIN_REGISTRY,
+    category_sites_enabled,
     normalize_search_domain,
     prepare_domain_query,
     search_domain_parameter,
@@ -80,3 +83,77 @@ def test_typical_sources_are_present_and_immutable():
         isinstance(entry.typical_sources, tuple) and entry.typical_sources
         for entry in DOMAIN_REGISTRY.values()
     )
+
+
+EXPECTED_SITES = {
+    "academic": (
+        "arxiv.org",
+        "semanticscholar.org",
+        "pubmed.ncbi.nlm.nih.gov",
+        "openreview.net",
+        "aclanthology.org",
+    ),
+    "code": ("github.com", "gitlab.com", "stackoverflow.com", "pypi.org", "npmjs.com"),
+    "social_media": ("reddit.com", "news.ycombinator.com", "x.com"),
+    "resource": ("huggingface.co", "kaggle.com", "data.gov", "zenodo.org"),
+    "news": ("reuters.com", "apnews.com", "bbc.com", "npr.org"),
+    "legal": (
+        "law.cornell.edu",
+        "courtlistener.com",
+        "justia.com",
+        "govinfo.gov",
+        "eur-lex.europa.eu",
+    ),
+    "financial": ("sec.gov", "nasdaq.com", "finance.yahoo.com", "marketwatch.com"),
+    "patent": ("patents.google.com", "uspto.gov", "wipo.int", "epo.org"),
+    "business": ("opencorporates.com", "crunchbase.com"),
+    "travel": ("tripadvisor.com", "booking.com", "lonelyplanet.com"),
+    "media": (
+        "youtube.com",
+        "commons.wikimedia.org",
+        "vimeo.com",
+        "podcasts.apple.com",
+    ),
+    "books": ("openlibrary.org", "books.google.com", "goodreads.com", "worldcat.org"),
+    "education": ("coursera.org", "edx.org", "khanacademy.org", "ocw.mit.edu"),
+    "events": ("eventbrite.com", "meetup.com"),
+    "jobs": ("indeed.com", "linkedin.com/jobs", "glassdoor.com"),
+    "statistics": (
+        "census.gov",
+        "data.worldbank.org",
+        "data.oecd.org",
+        "ourworldindata.org",
+    ),
+}
+
+
+def test_source_sites_match_the_spec():
+    actual = {n: e.source_sites for n, e in DOMAIN_REGISTRY.items() if e.source_sites}
+    assert actual == EXPECTED_SITES
+    for name in ("web", "official", "product", "local"):
+        assert DOMAIN_REGISTRY[name].source_sites == ()
+
+
+def test_source_sites_are_bare_hosts_capped_at_five():
+    shape = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}(/[a-z0-9_-]+)*$")
+    for name, entry in DOMAIN_REGISTRY.items():
+        assert len(entry.source_sites) <= 5, name
+        for site in entry.source_sites:
+            assert shape.match(site), (name, site)
+
+
+def test_category_sites_setting_defaults_on(monkeypatch):
+    monkeypatch.delenv("AGENTIC_SEARCH_CATEGORY_SITES", raising=False)
+    assert category_sites_enabled() is True
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    assert category_sites_enabled() is False
+
+
+def test_discovery_directory_exposes_source_sites():
+    from src.internal.tools.search import DomainSearch
+
+    directory = DomainSearch(
+        web_search_fn=lambda *a, **k: [], tools=[]
+    ).get_sub_domains(["financial", "web"])["domains"]
+    assert directory[0]["source_sites"] == list(EXPECTED_SITES["financial"])
+    assert directory[1]["source_sites"] == []

@@ -1739,6 +1739,7 @@ def create_web_app(
                     "name": name,
                     "description": entry.description,
                     "typical_sources": list(entry.typical_sources),
+                    "source_sites": list(entry.source_sites),
                 }
                 for name, entry in DOMAIN_REGISTRY.items()
             ]
