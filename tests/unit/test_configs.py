@@ -212,7 +212,12 @@ def test_load_app_settings_reads_browser_search_url():
 
 
 def test_load_app_settings_reads_category_sites():
-    assert load_app_settings({}).services.category_sites is True
+    # Off by default: query-side site: restriction was mostly ignored by the
+    # provider in the 2026-10-11 pilot (38/158 results on-list).
+    assert load_app_settings({}).services.category_sites is False
+    assert load_app_settings(
+        {"AGENTIC_SEARCH_CATEGORY_SITES": "true"}
+    ).services.category_sites
     assert (
         load_app_settings(
             {"AGENTIC_SEARCH_CATEGORY_SITES": "false"}

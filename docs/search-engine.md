@@ -211,8 +211,10 @@ The same behavior applies on the HTTP direct and hybrid paths
 (`_category_search_fns` in `src/internal/servers/web/app.py`), the multi-query
 `web_search` tool, `DomainSearch`, and the MCP `search_web` tool.
 
-`AGENTIC_SEARCH_CATEGORY_SITES` controls it. It defaults to on; `0` or `false`
-makes every path hint-only, with exactly today's queries.
+`AGENTIC_SEARCH_CATEGORY_SITES` controls it. **It defaults to off**, so every path
+is hint-only and sends exactly the queries it sent before this feature; set it
+to `1` or `true` to opt in. It was switched off after the pilot below found
+that providers mostly ignore the `site:` clause.
 
 Known cost: when SerpAPI is down, a site-listed category query spends two
 SerpAPI attempts (restricted, then the fallback cascade) before it reaches the
@@ -348,11 +350,35 @@ python -m examples.run_source_category_eval --per-category 1 --no-plain --contro
 The subset is mechanical, so it is fixed before any result exists, and the
 report's `sample` field records the flags. Sixteen paired queries can only
 detect a large effect: a pilot can show that restriction clearly helps or
-clearly hurts (and a clear harm still turns the setting off by default), but a
+clearly hurts, but a
 null pilot means the sample was too small to tell, not that restriction does
 not help. `--provider serper` runs the same comparison on Serper's free tier.
 
-The measured result is pending; this section will report it, whichever way it falls.
+**Pilot finding (2026-10-11): the restriction mostly does not happen.** The
+pilot (`--per-category 1 --no-plain --control "what is a bond"`, SerpAPI) was
+interpretable. 15 of 16 queries were usable, the control passed, and the
+comparison came out category − suffix +0.022 authority precision, p = 0.77, a
+pre-registered "null". But inspecting the restricted arm showed that **only 38
+of its 158 results (24%) came from the category's listed sites**:
+
+- `code` (10/10 on-list) and `legal` (10/10) were restricted as intended.
+- `academic`, `news`, `financial`, `business`, `travel`, `books`, `education`
+  and `events` returned no on-list result at all.
+
+Follow-up probes found that Google, via SerpAPI, also ignored a single
+`site:sec.gov` and SerpAPI's `as_sitesearch=sec.gov`. It relaxes a site
+restriction when it prefers results elsewhere. The parenthesised `OR` form was
+also slow: two probes timed out at 90 s. That is why the first pilot attempt
+tripped the SerpAPI circuit breaker, and why production waits up to the 15 s
+client timeout on some restricted queries. Because roughly ten off-list results
+come back anyway, the "fewer than three usable" fallback never fired.
+
+So the pilot compared the hint query with a hint query plus ignored `site:`
+words. **It does not measure whether restricting to source sites helps**, and
+it is not reported as such. The setting is off by default until restriction is
+enforced on the results rather than requested in the query. The pilot report is
+`data/eval/source_category_relevance.json`. The pilot used about 20 SerpAPI
+searches and the probes 4 more.
 
 ### Domains over HTTP and in the web UI
 

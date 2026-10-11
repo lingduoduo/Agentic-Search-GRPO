@@ -864,6 +864,7 @@ async def test_document_sets_returns_empty():
 )
 @pytest.mark.parametrize("broken", [False, True])
 async def test_search_web_domain(monkeypatch, provider, helper, broken):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     from src.internal.mcp_server.tools import search as module
     from src.internal.tools.search import restricted_query
 

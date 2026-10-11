@@ -112,9 +112,9 @@ battery recycling (site:arxiv.org OR site:semanticscholar.org OR site:pubmed.ncb
 
 and then the suffix query `battery recycling academic research` only if the
 scoped query returned fewer than three usable results (fewer than `limit` when
-`limit` is below three). With `AGENTIC_SEARCH_CATEGORY_SITES=0`, or for a
-domain without source sites, the provider receives the single suffix query, as
-before. A non-general response includes the original query, `executed_query`
+`limit` is below three). This applies only when `AGENTIC_SEARCH_CATEGORY_SITES` is on; it is off by
+default. With the setting off, or for a domain without source sites, the
+provider receives the single suffix query, as before. A non-general response includes the original query, `executed_query`
 (the first query sent) and `executed_queries` (every query sent, in order); an
 empty result looks like:
 

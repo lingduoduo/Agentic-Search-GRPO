@@ -231,6 +231,7 @@ def _recording_search_tool(calls, answers=None):
 async def test_direct_search_scopes_web_providers_then_falls_back(
     monkeypatch, provider
 ):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     calls: list = []
     monkeypatch.setattr(
         "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
@@ -289,6 +290,7 @@ async def test_direct_search_setting_off_issues_todays_query(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_direct_search_tags_documents_with_their_leg(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     scoped = restricted_query("etf fees", "financial")
     answers = {
         scoped: [
@@ -315,6 +317,7 @@ async def test_direct_search_tags_documents_with_their_leg(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_direct_search_keeps_leg_tags_through_the_real_page_fetch(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     scoped = restricted_query("etf fees", "financial")
     answers = {
         scoped: [
@@ -345,6 +348,7 @@ async def test_direct_search_keeps_leg_tags_through_the_real_page_fetch(monkeypa
 
 @pytest.mark.asyncio
 async def test_hybrid_scopes_each_expanded_query_once(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     calls: list = []
     monkeypatch.setattr(
         "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
@@ -397,6 +401,7 @@ def _small_hybrid_wait(monkeypatch, wait_seconds: float) -> None:
 
 @pytest.mark.asyncio
 async def test_hybrid_slow_fallback_keeps_restricted_results(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     scoped = restricted_query("etf fees", "financial")
 
     async def fake(query, *, provider, **_kwargs):
@@ -432,6 +437,7 @@ async def test_hybrid_slow_fallback_keeps_restricted_results(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hybrid_auto_browser_fallback_gets_the_suffix_query(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     calls: list = []
     monkeypatch.setattr(
         "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
@@ -675,3 +681,25 @@ def test_registry_endpoint_exposes_source_sites(client):
         "epo.org",
     ]
     assert domains["web"]["source_sites"] == []
+
+
+@pytest.mark.asyncio
+async def test_direct_search_default_issues_only_the_hint_query(monkeypatch):
+    # Off by default since the 2026-10-11 pilot: providers mostly ignored the
+    # site: clause, so restriction is opt-in via AGENTIC_SEARCH_CATEGORY_SITES.
+    monkeypatch.delenv("AGENTIC_SEARCH_CATEGORY_SITES", raising=False)
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    await _run_direct_search(
+        "etf fees",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=2,
+        domain="financial",
+    )
+    assert calls == [("serpapi", "etf fees financial market data filings")]

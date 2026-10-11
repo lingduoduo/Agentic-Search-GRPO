@@ -37,6 +37,7 @@ async def test_mcp_domain_features_share_service(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_web_capability_uses_existing_provider(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     from src.internal.mcp_server.tools import search as module
     from src.internal.tools.search import restricted_query
 
@@ -60,6 +61,7 @@ async def test_mcp_web_capability_uses_existing_provider(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_search_web_scopes_then_falls_back(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     from src.internal.mcp_server.tools import search as module
     from src.internal.tools.search import restricted_query
 

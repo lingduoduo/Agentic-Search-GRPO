@@ -142,11 +142,11 @@ def test_source_sites_are_bare_hosts_capped_at_five():
             assert shape.match(site), (name, site)
 
 
-def test_category_sites_setting_defaults_on(monkeypatch):
+def test_category_sites_setting_defaults_off(monkeypatch):
     monkeypatch.delenv("AGENTIC_SEARCH_CATEGORY_SITES", raising=False)
-    assert category_sites_enabled() is True
-    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
     assert category_sites_enabled() is False
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
+    assert category_sites_enabled() is True
 
 
 def test_discovery_directory_exposes_source_sites():
