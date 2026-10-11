@@ -65,10 +65,13 @@ assert rrf_rank([["a", "a", "b"]], lambda x: x) == rrf_rank([["a", "b"]], lambda
 ### Task 4: Review and remote verification
 
 - [x] Run retrieval/server suites, shared RRF consumers, and timeout-policy drift tests. Run Ruff and diff whitespace checks.
-- [ ] Request one independent whole-branch review against this spec and Review Focus; fix material findings with reproducing tests.
-- [ ] Push the branch and open a focused PR against main. Watch CI for the current commit and fix any attributable failures before claiming completion.
-- [ ] Record test results and PR link in the plan without merging the PR.
+- [x] Request one independent whole-branch review against this spec and Review Focus; fix material findings with reproducing tests.
+- [x] Push the branch and open a focused PR against main.
+- [ ] Watch CI for the current commit and fix any attributable failures before marking the PR ready; the current result is recorded in the PR validation section.
+- [x] Record test results and PR link in the plan without merging the PR.
 
 ## Local verification
 
-440 retrieval/server/hybrid/rerank/policy-guard tests and 12 shared search-query tests passed. Ruff lint and format checks passed on all eight changed Python files. Independent review and full remote CI are required before marking the PR ready.
+440 retrieval/server/hybrid/rerank/policy-guard tests and 12 shared search-query tests passed. Ruff lint and format checks passed on all eight changed Python files. Independent review found no material or minor findings and separately passed 123 tests plus cancellation/error-propagation checks. Full remote CI must pass before marking the PR ready; its final status is recorded in the PR validation section.
+
+PR: https://github.com/lingduoduo/Agentic-Search-GRPO/pull/679
