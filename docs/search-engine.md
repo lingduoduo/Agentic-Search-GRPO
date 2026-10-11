@@ -191,14 +191,20 @@ no error, not blank), it stops. Otherwise it also runs the suffix query and
 merges: restricted results first, then fallback results not already present,
 truncated to `page_size`. A restricted leg that raises or times out counts as
 zero results, so the fallback runs; a fallback that fails never hides restricted
-results. Each page's metadata carries `category`, `category_leg`
+results. On the hybrid path each web leg runs under a per-provider wait, so the
+fallback gets only what remains of 75% of that wait (the rest is left for
+SerpAPI's page fetch); a fallback that overruns it is abandoned and the
+restricted results are returned, or the leg fails if there were none. Each page's metadata carries `category`, `category_leg`
 (`restricted`, `fallback`, or `hint` for a single suffix call), and
 `category_query`; these reach document metadata, including SerpAPI's page-fetch
 step, and `executed_queries` lists every query actually sent.
 
 Two paths never restrict. The browser sidecar always gets the suffix query,
-because a restricted attempt plus a fallback could double a 30-50 s call; so the
-`web_search` tool and `DomainSearch` restrict through SerpAPI only. Corpus
+because a restricted attempt plus a fallback could double a 30-50 s call, so
+restricted queries never reach the browser: the seeded `web_search` tool and the
+default `DomainSearch` restrict through SerpAPI; MCP `search_web` restricts
+through `MCP_WEB_SEARCH_PROVIDER`; and a `web_search` tool built for google or
+serper restricts through that provider. Corpus
 (`retrieval`) legs get the raw query. Categories without a list, and every
 category when the setting is off, make the single suffix call they made before.
 The same behavior applies on the HTTP direct and hybrid paths
@@ -287,10 +293,11 @@ and the run is rejected rather than reported.
 This repeats the measurement above for the source categories, with a third arm.
 Each query runs three ways against SerpAPI: **plain** (raw query), **suffix**
 (the old hint-only query), and **category** (`search_category`). Each arm is
-scored by authority precision@10, paired category-minus-suffix and
-category-minus-plain, one query per unit, with a paired permutation p-value and
-Cliff's delta pooled across categories; per-category figures are descriptive
-only.
+scored by authority precision over its returned results (at most 10): hits ÷
+returned URLs, so a short restricted list has a smaller denominator. Scores are
+paired category-minus-suffix and category-minus-plain, one query per unit, with
+a paired permutation p-value and Cliff's delta pooled across categories;
+per-category figures are descriptive only.
 
 The labels are `data/eval/source_category_queries.json`: 64 queries, four for
 each of the sixteen site-listed categories, each with the `authority_hosts` an
@@ -306,8 +313,10 @@ to 69% (patent).
 
 A failed arm is excluded and never cached, and a query whose arm errored or came
 back empty is dropped from the paired comparison. `web` control queries must
-show a zero delta and an overlap of 1.0; a run without at least one passing
-`web` control is rejected and yields no decision.
+show a zero delta and an overlap of 1.0, and every `web` control must pass (no
+excluded control rows); otherwise the run is rejected and yields no decision.
+For `web` controls all three arms share one cache key, so the control catches
+scoring or pairing asymmetry in the code, not provider nondeterminism.
 
 **Decision rule, fixed before the run.**
 
@@ -318,7 +327,7 @@ show a zero delta and an overlap of 1.0; a run without at least one passing
   fallback keeps results from coming back empty.
 
 Run it yourself (194 live SerpAPI calls; responses are cached under
-`data/eval/cache/`, and failed arms are not):
+`data/eval/source_cache/`, and failed arms are not):
 
 ```bash
 python -m examples.run_source_category_eval --dry-run   # cost, no calls
