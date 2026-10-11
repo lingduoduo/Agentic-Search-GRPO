@@ -41,7 +41,7 @@ class ServiceSettings:
     rerank_url: str | None = None
     browser_search_url: str | None = None
     # Restrict category web searches to their source sites first; see docs/search-engine.md.
-    category_sites: bool = True
+    category_sites: bool = False
     web_db_path: str | Path = DEFAULT_WEB_DB_PATH
     web_top_k: int = 5
     # TTL of the process-local serving cache (retrieval rows, web-provider
@@ -308,7 +308,7 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
             browser_search_url=get_env_str(
                 source, "AGENTIC_SEARCH_BROWSER_SEARCH_URL", None
             ),
-            category_sites=get_env_bool(source, "AGENTIC_SEARCH_CATEGORY_SITES", True),
+            category_sites=get_env_bool(source, "AGENTIC_SEARCH_CATEGORY_SITES", False),
             web_db_path=get_env_str(
                 source, "AGENTIC_SEARCH_WEB_DB_PATH", DEFAULT_WEB_DB_PATH
             ),

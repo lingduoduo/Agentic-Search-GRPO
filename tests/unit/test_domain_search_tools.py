@@ -182,7 +182,8 @@ async def test_registry_accepts_legacy_selectors_without_mutating_arguments():
 
 
 @pytest.mark.asyncio
-async def test_web_search_tool_scopes_then_falls_back():
+async def test_web_search_tool_scopes_then_falls_back(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     from src.internal.tools.search import MultiQueryWebSearchTool, restricted_query
 
     calls = []

@@ -329,7 +329,8 @@ async def test_legacy_environment_capabilities_migrate_by_tag():
 
 
 @pytest.mark.asyncio
-async def test_web_capability_scopes_with_a_browser_free_function():
+async def test_web_capability_scopes_with_a_browser_free_function(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     seen = []
 
     async def cascade(query, *, page_size):
@@ -356,7 +357,11 @@ async def test_web_capability_scopes_with_a_browser_free_function():
 
 
 @pytest.mark.asyncio
-async def test_web_capability_keeps_restricted_results_when_fallback_errors():
+async def test_web_capability_keeps_restricted_results_when_fallback_errors(
+    monkeypatch,
+):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
+
     async def cascade(query, *, page_size):
         return [SearchPage(error="quota exhausted")]
 

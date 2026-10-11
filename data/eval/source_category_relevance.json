@@ -1,0 +1,147 @@
+{
+  "interpretable": true,
+  "excluded_count": 1,
+  "paired_vs_suffix": {
+    "n": 15,
+    "mean_delta": 0.02166666666666667,
+    "p_value": 0.769615192403798,
+    "cliffs_delta": 0.0
+  },
+  "paired_vs_plain": null,
+  "empty_rate": {
+    "plain": null,
+    "suffix": 0.0625,
+    "category": 0.0
+  },
+  "fallback_rate": 0.0,
+  "fallback_added_seconds": null,
+  "fallback_added_seconds_n": 0,
+  "on_list_share": 0.390625,
+  "control": {
+    "n": 1,
+    "max_abs_delta": 0.0,
+    "min_jaccard": 1.0
+  },
+  "control_ok": true,
+  "per_domain": {
+    "academic": {
+      "mean_delta_vs_suffix": -0.1111111111111111,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.5,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "code": {
+      "mean_delta_vs_suffix": 0.36666666666666664,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.5,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "social_media": {
+      "mean_delta_vs_suffix": 0.5138888888888888,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.3333333333333333,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "resource": {
+      "mean_delta_vs_suffix": 0.2,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.5,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "news": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.6,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "legal": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.25,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "financial": {
+      "mean_delta_vs_suffix": 0.07777777777777778,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.6666666666666666,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "patent": {
+      "mean_delta_vs_suffix": -0.2333333333333333,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.75,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "business": {
+      "mean_delta_vs_suffix": -0.0222222222222222,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.25,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "travel": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.0,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "media": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.0,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "books": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.4,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "education": {
+      "mean_delta_vs_suffix": 0.375,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.3333333333333333,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "events": {
+      "mean_delta_vs_suffix": -0.6666666666666666,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.0,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "jobs": {
+      "mean_delta_vs_suffix": -0.175,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.5,
+      "n_usable": 1,
+      "excluded": 0
+    },
+    "statistics": {
+      "mean_delta_vs_suffix": 0.0,
+      "fallback_rate": 0.0,
+      "on_list_share": 0.6666666666666666,
+      "n_usable": 0,
+      "excluded": 1
+    }
+  },
+  "decision": "null",
+  "sample": {
+    "per_category": 1,
+    "plain_arm": false,
+    "n_labels": 16,
+    "provider": "serpapi"
+  }
+}

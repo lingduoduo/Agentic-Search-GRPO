@@ -42,6 +42,7 @@ def test_invalid_domain_never_dispatches(queries):
 
 
 def test_domain_queries_use_existing_cache(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "1")
     from src.internal.cache import serving
     from src.internal.tools.search import SearchPage, restricted_query
 
