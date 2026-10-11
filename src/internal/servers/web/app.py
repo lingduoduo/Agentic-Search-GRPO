@@ -3107,6 +3107,8 @@ async def _run_hybrid_search(
                         page_size=top_k,
                         search_fn=search_fn,
                         restricted_fn=restricted_fn,
+                        # Leaves a quarter of the leg budget for SerpAPI page fetch.
+                        time_budget=0.75 * hybrid.provider_wait_seconds,
                     )
                     for eq in executed_queries
                 ]

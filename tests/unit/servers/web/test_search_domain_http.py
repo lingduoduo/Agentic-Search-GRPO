@@ -8,10 +8,14 @@ upweights documents containing that word rather than focusing the search.
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from src.internal.configs.timeouts import WebHybridPolicy
 from src.internal.servers.web.app import (
     AgentExperienceRequest,
     _reject_domain_for_mode,
@@ -374,6 +378,89 @@ async def test_hybrid_scopes_each_expanded_query_once(monkeypatch):
         "etf fees",
         "etf fees alt",
     ]
+
+
+def _small_hybrid_wait(monkeypatch, wait_seconds: float) -> None:
+    policies = SimpleNamespace(
+        retrieval=SimpleNamespace(
+            web_hybrid=WebHybridPolicy(
+                provider_timeout_seconds=1.0,
+                provider_max_retries=1,
+                provider_wait_seconds=wait_seconds,
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.get_timeout_policies", lambda: policies
+    )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_slow_fallback_keeps_restricted_results(monkeypatch):
+    scoped = restricted_query("etf fees", "financial")
+
+    async def fake(query, *, provider, **_kwargs):
+        if query == scoped:
+            return [SearchPage(title="t", url="https://sec.gov/a", summary="c")]
+        await asyncio.sleep(5)  # the suffix fallback outlives the leg budget
+        return []
+
+    monkeypatch.setattr("src.internal.servers.web.app.search_tool", fake)
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries", lambda query, llm: [query]
+    )
+    _small_hybrid_wait(monkeypatch, 0.2)
+    result = await asyncio.wait_for(
+        _run_hybrid_search(
+            "etf fees",
+            llm=None,
+            search_url="http://x/retrieve",
+            top_k=2,
+            filters=None,
+            source_provider="serpapi",
+            domain="financial",
+        ),
+        timeout=2.0,
+    )
+    assert result.status != "unreachable"
+    assert [d.url for d in result.documents] == ["https://sec.gov/a"]
+    assert result.documents[0].metadata["category_leg"] == "restricted"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auto_browser_fallback_gets_the_suffix_query(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries", lambda query, llm: [query]
+    )
+    browser_queries: list[str] = []
+
+    async def fake_browser(query, **_kwargs):
+        browser_queries.append(query)
+        return []
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._run_browser_search", fake_browser
+    )
+    await _run_hybrid_search(
+        "etf fees",
+        llm=None,
+        search_url="http://x/retrieve",
+        browser_search_url="http://browser/retrieve",
+        top_k=2,
+        filters=None,
+        source_provider="auto",
+        domain="financial",
+    )
+    # SerpAPI was scoped first and came back empty; the browser never is.
+    assert ("serpapi", restricted_query("etf fees", "financial")) in calls
+    assert browser_queries == ["etf fees financial market data filings"]
 
 
 # --- mode guard -------------------------------------------------------------

@@ -73,9 +73,11 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
         "max_abs_delta": max((abs(o.delta_vs_suffix) for o in control), default=0.0),
         "min_jaccard": min((o.jaccard_vs_suffix for o in control), default=1.0),
     }
-    # An absent or disagreeing control withholds the decision.
+    # An absent, failed or disagreeing control withholds the decision; a
+    # failed control scores delta 0 and Jaccard 1, so it must be ruled out.
     control_ok = (
         control_stats["n"] >= 1
+        and all(not o.excluded for o in control)
         and control_stats["max_abs_delta"] == 0
         and control_stats["min_jaccard"] == 1.0
     )

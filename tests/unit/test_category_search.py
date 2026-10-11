@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from src.internal.tools.search import (
@@ -198,3 +200,52 @@ async def test_empty_query_is_never_scoped():
         "  ", domain="financial", page_size=5, search_fn=p, restricted_fn=p
     )
     assert p.calls == [("  ", 5)]
+
+
+class _SlowFallback(_Provider):
+    """Restricted answers at once; the suffix query sleeps past any budget."""
+
+    async def __call__(self, query, page_size):
+        if query == SUFFIX:
+            self.calls.append((query, page_size))
+            await asyncio.sleep(5)
+        return await super().__call__(query, page_size)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_fallback_keeps_restricted_results_within_the_budget():
+    p = _SlowFallback({SCOPED: _pages("https://sec.gov/a")})
+    out = await asyncio.wait_for(
+        search_category(
+            "etf fees",
+            domain="financial",
+            page_size=5,
+            search_fn=p,
+            restricted_fn=p,
+            time_budget=0.05,
+        ),
+        timeout=1.0,
+    )
+    assert [pg.url for pg in out.pages] == ["https://sec.gov/a"]
+    assert out.executed_queries == [SCOPED, SUFFIX]
+
+
+@pytest.mark.asyncio
+async def test_a_slow_fallback_with_nothing_restricted_times_out():
+    p = _SlowFallback({})
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            search_category(
+                "etf fees",
+                domain="financial",
+                page_size=5,
+                search_fn=p,
+                restricted_fn=p,
+                time_budget=0.05,
+            ),
+            timeout=1.0,
+        )
+    # The budget raised it, not the outer one-second guard.
+    assert loop.time() - start < 0.5

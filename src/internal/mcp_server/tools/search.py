@@ -137,9 +137,11 @@ async def search_web(
 
     logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
     suffix = prepare_domain_query(query, domain)
-    scoped = restricted_query(query, domain) if category_sites_enabled() else None
-    executed_queries = [scoped, suffix] if scoped else [suffix]
+    executed_queries = [suffix]
     try:
+        # Inside the try: a malformed setting returns the error payload.
+        scoped = restricted_query(query, domain) if category_sites_enabled() else None
+        executed_queries = [scoped, suffix] if scoped else [suffix]
         category = await search_category(
             query,
             domain=domain,

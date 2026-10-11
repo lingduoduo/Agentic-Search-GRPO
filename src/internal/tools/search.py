@@ -385,12 +385,17 @@ async def search_category(
     page_size: int,
     search_fn: PageSearch,
     restricted_fn: PageSearch | None = None,
+    time_budget: float | None = None,
 ) -> CategorySearch:
     """Search one category: its source sites first, the suffix query if thin.
 
     ``restricted_fn`` must not fall back to the browser; pass None (the
     setting is off, or the provider cannot take ``site:``) for one hint call.
+    ``time_budget`` (seconds, from the call's start) bounds the fallback only,
+    so a slow fallback cannot cost restricted pages already in hand.
     """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     canonical = normalize_search_domain(domain)
     suffix = prepare_domain_query(query, canonical)
     scoped = restricted_query(query, canonical) if restricted_fn is not None else None
@@ -411,8 +416,14 @@ async def search_category(
 
     executed = [scoped, suffix]
     try:
-        fallback = await search_fn(suffix, page_size)
-    except Exception:
+        if time_budget is None:
+            fallback = await search_fn(suffix, page_size)
+        else:
+            remaining = max(0.0, time_budget - (loop.time() - started))
+            fallback = await asyncio.wait_for(
+                search_fn(suffix, page_size), timeout=remaining
+            )
+    except Exception:  # asyncio.TimeoutError included, on 3.10 as well
         if restricted:
             return CategorySearch(restricted, executed)
         raise

@@ -250,6 +250,17 @@ def test_decision_is_withheld_without_a_passing_control():
     assert bad["decision"] is None and bad["control_ok"] is False
 
 
+def test_failed_controls_do_not_pass_the_gate():
+    # A failed control arm scores delta 0 and Jaccard 1 by construction.
+    cli = _cli()
+    rows = [_outcome("financial", 0.5) for _ in range(12)]
+    failed = [_outcome("web", 0.0, excluded=True) for _ in range(2)]
+    out = cli.summarise_source(failed + rows)
+    assert out["control_ok"] is False and out["decision"] is None
+    mixed = cli.summarise_source([_outcome("web", 0.0)] + failed[:1] + rows)
+    assert mixed["control_ok"] is False and mixed["decision"] is None
+
+
 def test_summary_excludes_controls_and_excluded_queries():
     cli = _cli()
     summary = cli.summarise_source(
