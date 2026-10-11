@@ -137,8 +137,11 @@ from src.internal.tools import fetch_pages_concurrently
 from src.internal.tools import search_tool
 from src.internal.tools.search import (
     DOMAIN_REGISTRY,
+    RESTRICTABLE_PROVIDERS,
+    category_sites_enabled,
     normalize_search_domain,
     prepare_domain_query,
+    search_category,
 )
 
 from .static import APP_CSS
@@ -1739,6 +1742,7 @@ def create_web_app(
                     "name": name,
                     "description": entry.description,
                     "typical_sources": list(entry.typical_sources),
+                    "source_sites": list(entry.source_sites),
                 }
                 for name, entry in DOMAIN_REGISTRY.items()
             ]
@@ -2772,6 +2776,19 @@ def _is_web_provider(source_provider: str) -> bool:
     return source_provider in _WEB_PROVIDERS
 
 
+def _category_search_fns(provider: str, **search_kwargs):
+    """(search_fn, restricted_fn) for one web provider; restricted is None
+    when the setting is off or the provider cannot take site: operators."""
+
+    async def provider_search(query: str, page_size: int) -> list[SearchPage]:
+        return await search_tool(
+            query, provider=provider, page_size=page_size, **search_kwargs
+        )
+
+    restrictable = provider in RESTRICTABLE_PROVIDERS and category_sites_enabled()
+    return provider_search, (provider_search if restrictable else None)
+
+
 def _tool_provider_for(source_provider: str):
     return "retrieval" if source_provider == "browser" else source_provider
 
@@ -2809,19 +2826,29 @@ async def _run_direct_search(
         # upweights documents containing that word rather than focusing the
         # search. Not _is_web_provider — that set is {"serpapi"} and means
         # "needs full-page fetch", so it excludes google and serper.
-        provider_query = (
-            query if provider == "retrieval" else prepare_domain_query(query, domain)
-        )
-        pages = await search_tool(
-            provider_query,
-            provider=provider,
-            search_url=search_url,
-            page_size=fetch_k,
-            # Access filters apply to the internal corpus only (search_tool
-            # forwards them for the 'retrieval' provider and ignores them for
-            # web providers).
-            filters=filters,
-        )
+        if provider == "retrieval":
+            provider_query = query
+            pages = await search_tool(
+                query,
+                provider=provider,
+                search_url=search_url,
+                page_size=fetch_k,
+                # Access filters apply to the internal corpus only.
+                filters=filters,
+            )
+        else:
+            search_fn, restricted_fn = _category_search_fns(
+                provider, search_url=search_url
+            )
+            category = await search_category(
+                query,
+                domain=domain,
+                page_size=fetch_k,
+                search_fn=search_fn,
+                restricted_fn=restricted_fn,
+            )
+            pages = category.pages
+            provider_query = category.executed_queries[0]
         if _is_web_provider(provider):
             pages = await fetch_pages_concurrently(pages, max_chars=2000)
         documents.extend(
@@ -3045,30 +3072,49 @@ async def _run_hybrid_search(
         # _expanded_queries: hinting the base query would feed the topic word
         # to the LLM expander and duplicate it into every variant. The corpus
         # is never hinted — a topic word there is just another scored term.
-        dispatched = [
-            eq if provider == "retrieval" else prepare_domain_query(eq, domain)
-            for eq in executed_queries
-        ]
-        page_lists: list[list[SearchPage]] = list(
-            await asyncio.gather(
+        if provider == "retrieval":
+            dispatched = list(executed_queries)
+            page_lists: list[list[SearchPage]] = list(
+                await asyncio.gather(
+                    *[
+                        search_tool(
+                            eq,
+                            provider=provider,
+                            search_url=search_url,
+                            page_size=top_k,
+                            timeout_seconds=hybrid.provider_timeout_seconds,
+                            max_retries=hybrid.provider_max_retries,
+                            filters=_filters_payload(filters),
+                        )
+                        for eq in executed_queries
+                    ]
+                )
+            )
+        else:
+            # One category search per expanded query, applied after expansion:
+            # hinting the base query would feed the hint to the LLM expander.
+            search_fn, restricted_fn = _category_search_fns(
+                provider,
+                search_url=search_url,
+                timeout_seconds=hybrid.provider_timeout_seconds,
+                max_retries=hybrid.provider_max_retries,
+            )
+            results = await asyncio.gather(
                 *[
-                    search_tool(
-                        dispatched_query,
-                        provider=provider,
-                        search_url=search_url,
+                    search_category(
+                        eq,
+                        domain=domain,
                         page_size=top_k,
-                        timeout_seconds=hybrid.provider_timeout_seconds,
-                        max_retries=hybrid.provider_max_retries,
-                        **(
-                            {"filters": _filters_payload(filters)}
-                            if provider == "retrieval"
-                            else {}
-                        ),
+                        search_fn=search_fn,
+                        restricted_fn=restricted_fn,
+                        # Leaves a quarter of the leg budget for SerpAPI page fetch.
+                        time_budget=0.75 * hybrid.provider_wait_seconds,
                     )
-                    for dispatched_query in dispatched
+                    for eq in executed_queries
                 ]
             )
-        )
+            dispatched = [r.executed_queries[0] for r in results]
+            page_lists = [r.pages for r in results]
         if _is_web_provider(provider):
             all_pages = [p for pages in page_lists for p in pages]
             enriched = await fetch_pages_concurrently(all_pages, max_chars=2000)

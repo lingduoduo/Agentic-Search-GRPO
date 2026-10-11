@@ -1,0 +1,603 @@
+{
+  "taxonomy": "source_categories",
+  "k": 10,
+  "domains": {
+    "academic": [
+      {
+        "query": "attention is all you need transformer paper",
+        "authority_hosts": [
+          "arxiv.org",
+          "proceedings.neurips.cc",
+          "papers.nips.cc",
+          "semanticscholar.org"
+        ]
+      },
+      {
+        "query": "jinek 2012 programmable dual-rna-guided dna endonuclease crispr cas9",
+        "authority_hosts": [
+          "science.org",
+          "pubmed.ncbi.nlm.nih.gov",
+          "ncbi.nlm.nih.gov",
+          "semanticscholar.org"
+        ]
+      },
+      {
+        "query": "bert pre-training of deep bidirectional transformers how many citations",
+        "authority_hosts": [
+          "arxiv.org",
+          "aclanthology.org",
+          "semanticscholar.org",
+          "scholar.google.com"
+        ]
+      },
+      {
+        "query": "intermittent fasting weight loss randomized controlled trial results",
+        "authority_hosts": [
+          "pubmed.ncbi.nlm.nih.gov",
+          "ncbi.nlm.nih.gov",
+          "nejm.org",
+          "jamanetwork.com",
+          "cochranelibrary.com"
+        ]
+      }
+    ],
+    "code": [
+      {
+        "query": "python requests session retry with backoff example",
+        "authority_hosts": [
+          "requests.readthedocs.io",
+          "urllib3.readthedocs.io",
+          "github.com",
+          "stackoverflow.com"
+        ]
+      },
+      {
+        "query": "react useEffect cleanup function example",
+        "authority_hosts": [
+          "react.dev",
+          "legacy.reactjs.org",
+          "stackoverflow.com",
+          "github.com"
+        ]
+      },
+      {
+        "query": "tokio spawn_blocking vs spawn rust",
+        "authority_hosts": [
+          "docs.rs",
+          "tokio.rs",
+          "github.com",
+          "stackoverflow.com"
+        ]
+      },
+      {
+        "query": "numpy operands could not be broadcast together with shapes error",
+        "authority_hosts": [
+          "numpy.org",
+          "stackoverflow.com",
+          "github.com"
+        ]
+      }
+    ],
+    "social_media": [
+      {
+        "query": "is the steam deck worth buying for emulation experiences",
+        "authority_hosts": [
+          "reddit.com",
+          "youtube.com",
+          "steamcommunity.com"
+        ]
+      },
+      {
+        "query": "what do people think about switching from vscode to neovim",
+        "authority_hosts": [
+          "reddit.com",
+          "news.ycombinator.com",
+          "lobste.rs"
+        ]
+      },
+      {
+        "query": "anyone regret installing a heat pump in a cold climate",
+        "authority_hosts": [
+          "reddit.com",
+          "greenbuildingadvisor.com",
+          "quora.com"
+        ]
+      },
+      {
+        "query": "honest opinions on moving to austin texas",
+        "authority_hosts": [
+          "reddit.com",
+          "quora.com",
+          "city-data.com"
+        ]
+      }
+    ],
+    "resource": [
+      {
+        "query": "imagenet dataset download",
+        "authority_hosts": [
+          "image-net.org",
+          "kaggle.com",
+          "huggingface.co",
+          "paperswithcode.com"
+        ]
+      },
+      {
+        "query": "free resume templates for google docs",
+        "authority_hosts": [
+          "docs.google.com",
+          "canva.com",
+          "overleaf.com"
+        ]
+      },
+      {
+        "query": "squad question answering leaderboard",
+        "authority_hosts": [
+          "rajpurkar.github.io",
+          "paperswithcode.com",
+          "huggingface.co"
+        ]
+      },
+      {
+        "query": "mmlu benchmark scores for open source llms",
+        "authority_hosts": [
+          "huggingface.co",
+          "paperswithcode.com",
+          "github.com",
+          "arxiv.org"
+        ]
+      }
+    ],
+    "news": [
+      {
+        "query": "what caused the 2021 suez canal blockage by the ever given",
+        "authority_hosts": [
+          "reuters.com",
+          "apnews.com",
+          "bbc.com",
+          "nytimes.com",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "silicon valley bank collapse march 2023 what happened",
+        "authority_hosts": [
+          "reuters.com",
+          "apnews.com",
+          "ft.com",
+          "wsj.com",
+          "federalreserve.gov"
+        ]
+      },
+      {
+        "query": "titan submersible implosion investigation findings",
+        "authority_hosts": [
+          "apnews.com",
+          "bbc.com",
+          "reuters.com",
+          "news.uscg.mil"
+        ]
+      },
+      {
+        "query": "baltimore key bridge collapse cause dali ship",
+        "authority_hosts": [
+          "ntsb.gov",
+          "apnews.com",
+          "reuters.com",
+          "baltimoresun.com",
+          "bbc.com"
+        ]
+      }
+    ],
+    "legal": [
+      {
+        "query": "gdpr article 17 right to erasure full text",
+        "authority_hosts": [
+          "eur-lex.europa.eu",
+          "gdpr-info.eu",
+          "edpb.europa.eu",
+          "ico.org.uk"
+        ]
+      },
+      {
+        "query": "miranda v arizona supreme court ruling",
+        "authority_hosts": [
+          "supreme.justia.com",
+          "law.cornell.edu",
+          "oyez.org",
+          "loc.gov"
+        ]
+      },
+      {
+        "query": "california at-will employment labor code 2922",
+        "authority_hosts": [
+          "leginfo.legislature.ca.gov",
+          "law.justia.com",
+          "dir.ca.gov"
+        ]
+      },
+      {
+        "query": "fair use four factors 17 usc 107",
+        "authority_hosts": [
+          "copyright.gov",
+          "law.cornell.edu",
+          "uscode.house.gov",
+          "govinfo.gov"
+        ]
+      }
+    ],
+    "financial": [
+      {
+        "query": "apple 10-k fiscal 2023 total net sales",
+        "authority_hosts": [
+          "sec.gov",
+          "investor.apple.com",
+          "finance.yahoo.com"
+        ]
+      },
+      {
+        "query": "nvidia q4 fiscal 2024 earnings data center revenue",
+        "authority_hosts": [
+          "nvidianews.nvidia.com",
+          "investor.nvidia.com",
+          "sec.gov",
+          "reuters.com",
+          "cnbc.com"
+        ]
+      },
+      {
+        "query": "tesla annual free cash flow history",
+        "authority_hosts": [
+          "sec.gov",
+          "ir.tesla.com",
+          "macrotrends.net",
+          "stockanalysis.com",
+          "finance.yahoo.com"
+        ]
+      },
+      {
+        "query": "berkshire hathaway 13f holdings",
+        "authority_hosts": [
+          "sec.gov",
+          "berkshirehathaway.com",
+          "13f.info",
+          "whalewisdom.com",
+          "dataroma.com"
+        ]
+      }
+    ],
+    "patent": [
+      {
+        "query": "us 6285999 pagerank method for node ranking",
+        "authority_hosts": [
+          "patents.google.com",
+          "ppubs.uspto.gov",
+          "uspto.gov",
+          "freepatentsonline.com"
+        ]
+      },
+      {
+        "query": "how to check if a brand name is already registered",
+        "authority_hosts": [
+          "uspto.gov",
+          "tmsearch.uspto.gov",
+          "wipo.int",
+          "euipo.europa.eu"
+        ]
+      },
+      {
+        "query": "apple slide to unlock patent number",
+        "authority_hosts": [
+          "patents.google.com",
+          "uspto.gov",
+          "freepatentsonline.com",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "moderna mrna lipid nanoparticle delivery patents",
+        "authority_hosts": [
+          "patents.google.com",
+          "patentscope.wipo.int",
+          "uspto.gov",
+          "lens.org"
+        ]
+      }
+    ],
+    "business": [
+      {
+        "query": "stripe headquarters founders and number of employees",
+        "authority_hosts": [
+          "stripe.com",
+          "en.wikipedia.org",
+          "crunchbase.com",
+          "linkedin.com"
+        ]
+      },
+      {
+        "query": "largest semiconductor foundries by market share",
+        "authority_hosts": [
+          "trendforce.com",
+          "counterpointresearch.com",
+          "statista.com",
+          "semiconductors.org"
+        ]
+      },
+      {
+        "query": "who owns patagonia clothing",
+        "authority_hosts": [
+          "patagonia.com",
+          "en.wikipedia.org",
+          "nytimes.com",
+          "forbes.com"
+        ]
+      },
+      {
+        "query": "global coffee market size and top producing countries",
+        "authority_hosts": [
+          "ico.org",
+          "fao.org",
+          "fas.usda.gov",
+          "statista.com"
+        ]
+      }
+    ],
+    "travel": [
+      {
+        "query": "cheapest month to fly from new york to tokyo",
+        "authority_hosts": [
+          "kayak.com",
+          "skyscanner.com",
+          "hopper.com",
+          "expedia.com"
+        ]
+      },
+      {
+        "query": "do us citizens need a visa to visit japan",
+        "authority_hosts": [
+          "travel.state.gov",
+          "mofa.go.jp",
+          "us.emb-japan.go.jp",
+          "japan.travel"
+        ]
+      },
+      {
+        "query": "how to get from heathrow to central london",
+        "authority_hosts": [
+          "heathrow.com",
+          "tfl.gov.uk",
+          "heathrowexpress.com",
+          "nationalrail.co.uk"
+        ]
+      },
+      {
+        "query": "best time to visit iceland to see the northern lights",
+        "authority_hosts": [
+          "visiticeland.com",
+          "vedur.is",
+          "guidetoiceland.is",
+          "lonelyplanet.com"
+        ]
+      }
+    ],
+    "media": [
+      {
+        "query": "voyager pale blue dot original image high resolution",
+        "authority_hosts": [
+          "science.nasa.gov",
+          "photojournal.jpl.nasa.gov",
+          "jpl.nasa.gov",
+          "nasa.gov"
+        ]
+      },
+      {
+        "query": "apollo 11 moon landing original footage",
+        "authority_hosts": [
+          "nasa.gov",
+          "images.nasa.gov",
+          "archive.org",
+          "youtube.com"
+        ]
+      },
+      {
+        "query": "serial podcast season one episodes",
+        "authority_hosts": [
+          "serialpodcast.org",
+          "podcasts.apple.com",
+          "open.spotify.com",
+          "nytimes.com"
+        ]
+      },
+      {
+        "query": "free to use mountain landscape photos",
+        "authority_hosts": [
+          "unsplash.com",
+          "pexels.com",
+          "pixabay.com",
+          "commons.wikimedia.org"
+        ]
+      }
+    ],
+    "books": [
+      {
+        "query": "who wrote the left hand of darkness and when was it published",
+        "authority_hosts": [
+          "ursulakleguin.com",
+          "en.wikipedia.org",
+          "britannica.com",
+          "goodreads.com",
+          "openlibrary.org"
+        ]
+      },
+      {
+        "query": "best english translation of the brothers karamazov",
+        "authority_hosts": [
+          "goodreads.com",
+          "newyorker.com",
+          "penguinrandomhouse.com"
+        ]
+      },
+      {
+        "query": "dune 1965 chilton first edition value",
+        "authority_hosts": [
+          "abebooks.com",
+          "biblio.com",
+          "worldcat.org",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "thinking fast and slow hardcover isbn",
+        "authority_hosts": [
+          "isbndb.com",
+          "openlibrary.org",
+          "worldcat.org",
+          "us.macmillan.com",
+          "goodreads.com"
+        ]
+      }
+    ],
+    "education": [
+      {
+        "query": "gilbert strang linear algebra lectures",
+        "authority_hosts": [
+          "ocw.mit.edu",
+          "math.mit.edu",
+          "youtube.com"
+        ]
+      },
+      {
+        "query": "learn calculus online for free",
+        "authority_hosts": [
+          "khanacademy.org",
+          "ocw.mit.edu",
+          "openstax.org",
+          "coursera.org"
+        ]
+      },
+      {
+        "query": "andrew ng machine learning specialization",
+        "authority_hosts": [
+          "coursera.org",
+          "deeplearning.ai",
+          "andrewng.org"
+        ]
+      },
+      {
+        "query": "free introductory biology textbook pdf",
+        "authority_hosts": [
+          "openstax.org",
+          "bio.libretexts.org",
+          "oercommons.org"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "query": "neurips 2025 dates and location",
+        "authority_hosts": [
+          "neurips.cc",
+          "nips.cc",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "eras tour setlist and tour dates",
+        "authority_hosts": [
+          "taylorswift.com",
+          "setlist.fm",
+          "ticketmaster.com",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "python meetups in san francisco",
+        "authority_hosts": [
+          "meetup.com",
+          "python.org",
+          "eventbrite.com"
+        ]
+      },
+      {
+        "query": "ces las vegas show schedule and hours",
+        "authority_hosts": [
+          "ces.tech",
+          "lvcva.com",
+          "lvcc.com"
+        ]
+      }
+    ],
+    "jobs": [
+      {
+        "query": "software engineer salary in seattle",
+        "authority_hosts": [
+          "levels.fyi",
+          "glassdoor.com",
+          "bls.gov",
+          "indeed.com"
+        ]
+      },
+      {
+        "query": "registered nurse job outlook and median pay",
+        "authority_hosts": [
+          "bls.gov",
+          "onetonline.org",
+          "nursingworld.org",
+          "indeed.com"
+        ]
+      },
+      {
+        "query": "remote entry level data analyst openings",
+        "authority_hosts": [
+          "linkedin.com",
+          "indeed.com",
+          "glassdoor.com",
+          "weworkremotely.com"
+        ]
+      },
+      {
+        "query": "how to apply for federal government positions",
+        "authority_hosts": [
+          "usajobs.gov",
+          "help.usajobs.gov",
+          "opm.gov"
+        ]
+      }
+    ],
+    "statistics": [
+      {
+        "query": "us population by state 2020 census",
+        "authority_hosts": [
+          "census.gov",
+          "data.census.gov",
+          "en.wikipedia.org"
+        ]
+      },
+      {
+        "query": "us unemployment rate historical monthly",
+        "authority_hosts": [
+          "bls.gov",
+          "data.bls.gov",
+          "fred.stlouisfed.org"
+        ]
+      },
+      {
+        "query": "life expectancy by country",
+        "authority_hosts": [
+          "who.int",
+          "data.worldbank.org",
+          "ourworldindata.org",
+          "population.un.org"
+        ]
+      },
+      {
+        "query": "percentage of adults with a bachelor's degree by state",
+        "authority_hosts": [
+          "census.gov",
+          "data.census.gov",
+          "nces.ed.gov"
+        ]
+      }
+    ]
+  }
+}

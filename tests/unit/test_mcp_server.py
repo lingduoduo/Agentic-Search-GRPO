@@ -865,6 +865,7 @@ async def test_document_sets_returns_empty():
 @pytest.mark.parametrize("broken", [False, True])
 async def test_search_web_domain(monkeypatch, provider, helper, broken):
     from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.search import restricted_query
 
     seen = []
 
@@ -877,10 +878,12 @@ async def test_search_web_domain(monkeypatch, provider, helper, broken):
     monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", provider)
     monkeypatch.setattr(module, helper, fake)
     result = await module.search_web("battery", domain="Academic")
-    assert seen == ["battery academic research"]
+    scoped = restricted_query("battery", "academic")
+    assert seen == [scoped, "battery academic research"]
     assert result["query"] == "battery"
     assert result["domain"] == "academic"
-    assert result["executed_query"] == seen[0]
+    assert result["executed_query"] == scoped
+    assert result["executed_queries"] == seen
     assert ("error" in result) == broken
 
 

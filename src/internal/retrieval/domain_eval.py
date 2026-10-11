@@ -13,9 +13,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from urllib.parse import urlparse
+
+from src.internal.tools.search import (
+    DOMAIN_REGISTRY,
+    SearchPage,
+    prepare_domain_query,
+    search_category,
+)
 
 TOP_K = 10
 
@@ -119,6 +128,11 @@ def load_labels(path: str | Path = DEFAULT_LABELS_PATH) -> list[LabelledQuery]:
         raw = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise ValueError(f"label file is not valid JSON: {path}") from exc
+    if raw.get("taxonomy") is not None:
+        raise ValueError(
+            f"label file {path} is a {raw['taxonomy']!r} file; "
+            "load it with load_source_labels"
+        )
     out: list[LabelledQuery] = []
     for domain, entries in raw.get("domains", {}).items():
         if domain not in HISTORICAL_TOPIC_HINTS:
@@ -166,6 +180,7 @@ class ArmResult:
     urls: list[str]
     empty: bool
     error: str | None = None
+    seconds: float | None = None  # live call time; None when served from cache
 
 
 @dataclass(frozen=True)
@@ -184,23 +199,48 @@ def cache_key(query: str, *, provider: str) -> str:
     return f"{provider}|{TOP_K}|{query}"
 
 
+def _usable_urls(pages) -> list[str]:
+    return [
+        p.url
+        for p in pages
+        if getattr(p, "url", None) and not getattr(p, "error", None)
+    ]
+
+
+def _failure_of(pages) -> str | None:
+    """The error text when *pages* is a failed response, else None.
+
+    Providers such as SerpAPI return error pages rather than raising; a
+    response with no usable page and at least one error is a failure, not
+    an empty result.
+    """
+    if _usable_urls(pages):
+        return None
+    for p in pages:
+        if getattr(p, "error", None):
+            return str(p.error)
+        if getattr(p, "timed_out", False):
+            return "timed out"
+    return None
+
+
 async def _run_arm(
     query: str, *, search_fn, cache: DiskCache, provider: str
 ) -> ArmResult:
     cached = cache.get(cache_key(query, provider=provider))
     if cached is not None:
         return ArmResult(urls=cached, empty=not cached)
+    started = time.perf_counter()
     try:
         pages = await search_fn(query, provider=provider, page_size=TOP_K)
     except Exception as exc:  # provider error -> this arm is unusable
         return ArmResult(urls=[], empty=True, error=str(exc))
-    urls = [
-        p.url
-        for p in pages
-        if getattr(p, "url", None) and not getattr(p, "error", None)
-    ]
+    failure = _failure_of(pages)
+    if failure is not None:
+        return ArmResult(urls=[], empty=True, error=failure)
+    urls = _usable_urls(pages)
     cache.set(cache_key(query, provider=provider), urls)
-    return ArmResult(urls=urls, empty=not urls)
+    return ArmResult(urls=urls, empty=not urls, seconds=time.perf_counter() - started)
 
 
 async def run_query(
@@ -230,4 +270,157 @@ async def run_query(
         delta=delta,
         jaccard=jaccard(general.urls, domain_arm.urls),
         excluded=excluded,
+    )
+
+
+SOURCE_TAXONOMY_MARKER = "source_categories"
+DEFAULT_SOURCE_LABELS_PATH = DEFAULT_LABELS_PATH.with_name(
+    "source_category_queries.json"
+)
+
+
+@dataclass(frozen=True)
+class SourceLabelledQuery:
+    domain: str
+    query: str
+    authority_hosts: set[str] = field(default_factory=set)
+
+
+def load_source_labels(
+    path: str | Path = DEFAULT_SOURCE_LABELS_PATH,
+) -> list[SourceLabelledQuery]:
+    """Read source-category labels; only categories with source_sites."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"label file not found: {path}")
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"label file is not valid JSON: {path}") from exc
+    if raw.get("taxonomy") != SOURCE_TAXONOMY_MARKER:
+        raise ValueError(f"label file {path} lacks taxonomy={SOURCE_TAXONOMY_MARKER!r}")
+    out: list[SourceLabelledQuery] = []
+    seen: set[tuple[str, str]] = set()
+    for domain, entries in raw.get("domains", {}).items():
+        if domain not in DOMAIN_REGISTRY or not DOMAIN_REGISTRY[domain].source_sites:
+            raise ValueError(f"{domain!r} has no source_sites; it cannot be labelled")
+        for entry in entries:
+            if (domain, entry["query"]) in seen:
+                raise ValueError(
+                    f"duplicate label ({domain!r}, {entry['query']!r}) in {path}"
+                )
+            seen.add((domain, entry["query"]))
+            out.append(
+                SourceLabelledQuery(
+                    domain, entry["query"], set(entry["authority_hosts"])
+                )
+            )
+    return out
+
+
+def on_list_share(domain: str, hosts: set[str]) -> float:
+    """Share of authority hosts inside the category's own site list.
+
+    A high share means the category arm's precision is inflated by
+    construction; the report states it so a reader can discount it.
+    """
+    sites = {site.split("/", 1)[0] for site in DOMAIN_REGISTRY[domain].source_sites}
+    if not hosts:
+        return 0.0
+    return sum(1 for h in hosts if any(host_matches(h, s) for s in sites)) / len(hosts)
+
+
+@dataclass(frozen=True)
+class SourceQueryOutcome:
+    domain: str
+    query: str
+    plain: ArmResult
+    suffix: ArmResult
+    category: ArmResult
+    fallback_fired: bool
+    delta_vs_suffix: float
+    delta_vs_plain: float
+    jaccard_vs_suffix: float
+    excluded: bool
+    on_list_share: float
+
+
+async def _cached_pages(query, page_size, *, search_fn, cache, provider):
+    """search_category's search function: the same cache keys as _run_arm, so
+    the fallback leg reuses the suffix arm's response."""
+    del page_size  # every arm is scored at TOP_K
+    cached = cache.get(cache_key(query, provider=provider))
+    if cached is None:
+        pages = await search_fn(query, provider=provider, page_size=TOP_K)
+        failure = _failure_of(pages)
+        if failure is not None:
+            raise RuntimeError(failure)  # never cache a failed response
+        cached = _usable_urls(pages)
+        cache.set(cache_key(query, provider=provider), cached)
+    return [SearchPage(url=url) for url in cached]
+
+
+async def run_source_query(
+    label: SourceLabelledQuery,
+    *,
+    search_fn,
+    cache: DiskCache,
+    provider: str = "serpapi",
+) -> SourceQueryOutcome:
+    plain = await _run_arm(
+        label.query, search_fn=search_fn, cache=cache, provider=provider
+    )
+    suffix = await _run_arm(
+        prepare_domain_query(label.query, label.domain),
+        search_fn=search_fn,
+        cache=cache,
+        provider=provider,
+    )
+    fetch = partial(_cached_pages, search_fn=search_fn, cache=cache, provider=provider)
+    restricted_failed = False
+
+    async def restricted(query, page_size):
+        nonlocal restricted_failed
+        try:
+            return await fetch(query, page_size)
+        except Exception:
+            restricted_failed = True
+            raise
+
+    try:
+        # restricted_fn is passed unconditionally: the eval measures the
+        # category arm whatever the operator's AGENTIC_SEARCH_CATEGORY_SITES.
+        result = await search_category(
+            label.query,
+            domain=label.domain,
+            page_size=TOP_K,
+            search_fn=fetch,
+            restricted_fn=restricted,
+        )
+        urls = [page.url for page in result.pages]
+        category = ArmResult(urls=urls, empty=not urls)
+        fallback = len(result.executed_queries) > 1
+    except Exception as exc:
+        category = ArmResult(urls=[], empty=True, error=str(exc))
+        fallback = False
+    hosts = label.authority_hosts
+    excluded = restricted_failed or any(
+        arm.error or arm.empty for arm in (plain, suffix, category)
+    )
+    return SourceQueryOutcome(
+        domain=label.domain,
+        query=label.query,
+        plain=plain,
+        suffix=suffix,
+        category=category,
+        fallback_fired=fallback,
+        delta_vs_suffix=authority_precision(category.urls, hosts)
+        - authority_precision(suffix.urls, hosts),
+        delta_vs_plain=authority_precision(category.urls, hosts)
+        - authority_precision(plain.urls, hosts),
+        jaccard_vs_suffix=jaccard(suffix.urls, category.urls),
+        excluded=excluded,
+        on_list_share=on_list_share(label.domain, hosts)
+        if label.domain != "web"
+        else 0.0,
     )

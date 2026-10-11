@@ -9,6 +9,7 @@ from src.internal.tools.base import FunctionTool, ToolEffect
 from src.internal.tools.search import DomainSearch
 from src.internal.tools.search import SearchPage
 from src.internal.tools.search import AVAILABLE_DOMAINS
+from src.internal.tools.search import restricted_query
 
 
 @pytest.fixture
@@ -325,3 +326,85 @@ async def test_legacy_environment_capabilities_migrate_by_tag():
     with pytest.raises(ValueError, match="domain must match"):
         await client.search("Boston", domain="health", tag="environment.weather")
     assert len(calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_web_capability_scopes_with_a_browser_free_function():
+    seen = []
+
+    async def cascade(query, *, page_size):
+        seen.append(("cascade", query))
+        return [SearchPage(title="f", summary="s", url="https://blog.example/1")]
+
+    async def serp_only(query, *, page_size):
+        seen.append(("serp", query))
+        return []
+
+    client = DomainSearch(
+        web_search_fn=cascade, restricted_search_fn=serp_only, tools=[]
+    )
+    result = await client.search("battery", domain="academic")
+    assert seen == [
+        ("serp", restricted_query("battery", "academic")),
+        ("cascade", "battery academic research"),
+    ]
+    assert result["executed_query"] == restricted_query("battery", "academic")
+    assert result["executed_queries"] == [
+        restricted_query("battery", "academic"),
+        "battery academic research",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_web_capability_keeps_restricted_results_when_fallback_errors():
+    async def cascade(query, *, page_size):
+        return [SearchPage(error="quota exhausted")]
+
+    async def serp_only(query, *, page_size):
+        return [SearchPage(title="a", summary="s", url="https://arxiv.org/abs/1")]
+
+    client = DomainSearch(
+        web_search_fn=cascade, restricted_search_fn=serp_only, tools=[]
+    )
+    result = await client.search("battery", domain="academic")
+    assert [r["url"] for r in result["results"]] == ["https://arxiv.org/abs/1"]
+
+
+def test_default_service_never_scopes_through_the_browser(monkeypatch):
+    built = []
+    import src.internal.tools.search as module
+
+    real = module.make_web_cascade_search
+    monkeypatch.setattr(
+        module, "make_web_cascade_search", lambda **kw: built.append(kw) or real(**kw)
+    )
+    monkeypatch.setenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL", "http://browser/retrieve")
+    built_fns = []
+    monkeypatch.setattr(
+        module,
+        "make_web_cascade_search",
+        lambda **kw: built_fns.append((kw, real(**kw))) or built_fns[-1][1],
+    )
+    service = DomainSearch(tools=[])
+    browser_free = [fn for kw, fn in built_fns if kw == {"browser_search_url": None}]
+    assert len(browser_free) == 1
+    assert service.restricted_search_fn is browser_free[0]
+
+
+@pytest.mark.asyncio
+async def test_web_capability_setting_off_issues_one_suffix_call(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    normal, restricted = [], []
+
+    async def web(query, *, page_size):
+        normal.append(query)
+        return []
+
+    async def serp_only(query, *, page_size):
+        restricted.append(query)
+        return []
+
+    client = DomainSearch(web_search_fn=web, restricted_search_fn=serp_only, tools=[])
+    await client.search("battery", domain="academic")
+    assert normal == ["battery academic research"]
+    assert restricted == []

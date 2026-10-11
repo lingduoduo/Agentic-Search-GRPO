@@ -16,7 +16,10 @@ from src.internal.tools.search import google_custom_search
 from src.internal.tools.search import serper_dev_search
 from src.internal.tools.search import serpapi_search
 from src.internal.tools.search import normalize_search_domain
+from src.internal.tools.search import category_sites_enabled
 from src.internal.tools.search import prepare_domain_query
+from src.internal.tools.search import restricted_query
+from src.internal.tools.search import search_category
 from src.internal.tools.search import search_domain_parameter
 
 from ..api import mcp_server
@@ -84,6 +87,16 @@ async def search_indexed_documents(
     return {"results": results}
 
 
+def _domain_metadata(domain: str, executed_queries: list[str]) -> dict[str, Any]:
+    if domain == "web":
+        return {}
+    return {
+        "domain": domain,
+        "executed_query": executed_queries[0],
+        "executed_queries": executed_queries,
+    }
+
+
 @mcp_server.tool()
 @_describe_search_domain
 async def search_web(
@@ -96,8 +109,9 @@ async def search_web(
     Use this tool for publicly available information such as news, documentation,
     or general facts.
 
-    `domain` optionally appends a source-category hint to the query. It does not filter
-    results by category. Omit it or use `web` to preserve the original query.
+    `domain` optionally scopes the search to the category's source sites (falling back
+    to a category hint when that returns few results). It is not a hard filter.
+    Omit it or use `web` to preserve the original query.
 
     Returns ``{"results": [{title, url, snippet}, ...], "query": query}``.
     Non-web calls also return `domain` and `executed_query`, including when
@@ -113,27 +127,37 @@ async def search_web(
     ```
     """
     domain = normalize_search_domain(domain)
-    executed_query = prepare_domain_query(query, domain)
-    domain_metadata = (
-        {"domain": domain, "executed_query": executed_query} if domain != "web" else {}
-    )
-    logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
-
     provider = os.getenv("MCP_WEB_SEARCH_PROVIDER", "google")
+    provider_fn = {"serpapi": serpapi_search, "serper": serper_dev_search}.get(
+        provider, google_custom_search
+    )
+
+    async def run(q: str, page_size: int):
+        return await provider_fn(q, page_size=page_size)
+
+    logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
+    suffix = prepare_domain_query(query, domain)
+    executed_queries = [suffix]
     try:
-        if provider == "serpapi":
-            pages = await serpapi_search(executed_query, page_size=limit)
-        elif provider == "serper":
-            pages = await serper_dev_search(executed_query, page_size=limit)
-        else:
-            pages = await google_custom_search(executed_query, page_size=limit)
+        # Inside the try: a malformed setting returns the error payload.
+        scoped = restricted_query(query, domain) if category_sites_enabled() else None
+        executed_queries = [scoped, suffix] if scoped else [suffix]
+        category = await search_category(
+            query,
+            domain=domain,
+            page_size=limit,
+            search_fn=run,
+            restricted_fn=run if scoped else None,
+        )
+        pages = category.pages
+        executed_queries = category.executed_queries
     except Exception as exc:
         logger.error("MCP Server: Web search error: %s", exc, exc_info=True)
         return {
             "error": f"Web search failed: {str(exc)}",
             "results": [],
             "query": query,
-            **domain_metadata,
+            **_domain_metadata(domain, executed_queries),
         }
 
     results = [
@@ -145,7 +169,11 @@ async def search_web(
     if errors:
         logger.warning("MCP Server: %d web search result(s) had errors", len(errors))
 
-    return {"results": results, "query": query, **domain_metadata}
+    return {
+        "results": results,
+        "query": query,
+        **_domain_metadata(domain, executed_queries),
+    }
 
 
 @mcp_server.tool()
@@ -182,7 +210,7 @@ def _domain_service() -> DomainSearch:
             raise ValueError("MCP web provider must be google, serpapi, or serper")
         return await search_tool(query, provider=provider, page_size=page_size)
 
-    return DomainSearch(web_search_fn=web_search)
+    return DomainSearch(web_search_fn=web_search, restricted_search_fn=web_search)
 
 
 @mcp_server.tool()

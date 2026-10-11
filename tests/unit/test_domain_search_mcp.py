@@ -38,6 +38,7 @@ async def test_mcp_domain_features_share_service(monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_web_capability_uses_existing_provider(monkeypatch):
     from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.search import restricted_query
 
     calls = []
 
@@ -49,5 +50,70 @@ async def test_mcp_web_capability_uses_existing_provider(monkeypatch):
     monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
     await module.search_domain("battery", domain="academic")
     assert calls == [
-        ("battery academic research", {"provider": "serper", "page_size": 5})
+        (
+            restricted_query("battery", "academic"),
+            {"provider": "serper", "page_size": 5},
+        ),
+        ("battery academic research", {"provider": "serper", "page_size": 5}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_scopes_then_falls_back(monkeypatch):
+    from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.search import restricted_query
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    result = await module.search_web("battery", domain="academic")
+    assert calls == [
+        restricted_query("battery", "academic"),
+        "battery academic research",
+    ]
+    assert result["executed_query"] == restricted_query("battery", "academic")
+    assert result["executed_queries"] == calls
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_setting_off_issues_one_suffix_call(monkeypatch):
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    result = await module.search_web("battery", domain="academic")
+    assert calls == ["battery academic research"]
+    assert result["executed_queries"] == calls
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_malformed_setting_returns_the_error_payload(
+    monkeypatch,
+):
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "disabled")
+    result = await module.search_web("battery", domain="academic")
+    assert result["error"].startswith("Web search failed:")
+    assert result["results"] == [] and calls == []
+    assert result["executed_queries"] == ["battery academic research"]

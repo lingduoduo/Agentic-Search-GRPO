@@ -8,10 +8,14 @@ upweights documents containing that word rather than focusing the search.
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from src.internal.configs.timeouts import WebHybridPolicy
 from src.internal.servers.web.app import (
     AgentExperienceRequest,
     _reject_domain_for_mode,
@@ -24,6 +28,7 @@ from src.internal.tools.search import (
     DOMAIN_REGISTRY,
     SearchPage,
     normalize_search_domain,
+    restricted_query,
 )
 
 
@@ -84,6 +89,7 @@ def _patch_providers(monkeypatch, seen: dict[str, str]) -> None:
 
 @pytest.mark.asyncio
 async def test_direct_search_hints_web_providers(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
     seen: dict[str, str] = {}
     _patch_providers(monkeypatch, seen)
     await _run_direct_search(
@@ -101,6 +107,7 @@ async def test_direct_search_hints_web_providers(monkeypatch):
 async def test_direct_search_hints_providers_outside_web_provider_set(
     monkeypatch, provider
 ):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
     # _WEB_PROVIDERS is {"serpapi"} and means "needs full-page fetch".
     # google and serper are absent from it but must still be hinted.
     seen: dict[str, str] = {}
@@ -149,6 +156,7 @@ async def test_direct_search_web_domain_is_a_no_op(monkeypatch, domain):
 
 @pytest.mark.asyncio
 async def test_hybrid_hints_each_expanded_query_exactly_once(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
     seen: list[str] = []
 
     async def fake_search_tool(query, *, provider, **_kwargs):
@@ -205,6 +213,254 @@ async def test_hybrid_corpus_branch_stays_raw(monkeypatch):
         domain="financial",
     )
     assert seen == ["etf fees"]
+
+
+# --- category source sites ---------------------------------------------------
+
+
+def _recording_search_tool(calls, answers=None):
+    async def fake(query, *, provider, **_kwargs):
+        calls.append((provider, query))
+        return list((answers or {}).get(query, []))
+
+    return fake
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["serpapi", "google", "serper"])
+async def test_direct_search_scopes_web_providers_then_falls_back(
+    monkeypatch, provider
+):
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    await _run_direct_search(
+        "etf fees",
+        source_provider=provider,
+        search_url="http://x/retrieve",
+        top_k=2,
+        domain="financial",
+    )
+    assert calls == [
+        (provider, restricted_query("etf fees", "financial")),
+        (provider, "etf fees financial market data filings"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_direct_search_corpus_leg_stays_raw(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    await _run_direct_search(
+        "etf fees",
+        source_provider="retrieval",
+        search_url="http://x/retrieve",
+        top_k=2,
+        domain="financial",
+    )
+    assert calls == [("retrieval", "etf fees")]
+
+
+@pytest.mark.asyncio
+async def test_direct_search_setting_off_issues_todays_query(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    await _run_direct_search(
+        "etf fees",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=2,
+        domain="financial",
+    )
+    assert calls == [("serpapi", "etf fees financial market data filings")]
+
+
+@pytest.mark.asyncio
+async def test_direct_search_tags_documents_with_their_leg(monkeypatch):
+    scoped = restricted_query("etf fees", "financial")
+    answers = {
+        scoped: [
+            SearchPage(title=f"t{i}", url=f"https://sec.gov/{i}", summary="c")
+            for i in range(3)
+        ]
+    }
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool",
+        _recording_search_tool([], answers),
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    docs = await _run_direct_search(
+        "etf fees",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=3,
+        domain="financial",
+    )
+    assert docs and all(d.metadata["category_leg"] == "restricted" for d in docs)
+
+
+@pytest.mark.asyncio
+async def test_direct_search_keeps_leg_tags_through_the_real_page_fetch(monkeypatch):
+    scoped = restricted_query("etf fees", "financial")
+    answers = {
+        scoped: [
+            SearchPage(title=f"t{i}", url=f"https://sec.gov/{i}", summary="snippet")
+            for i in range(3)
+        ]
+    }
+
+    async def fake_fetch_url(url, **_kwargs):
+        return "FETCHED BODY"
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool",
+        _recording_search_tool([], answers),
+    )
+    monkeypatch.setattr("src.internal.tools.search.fetch_url", fake_fetch_url)
+    docs = await _run_direct_search(
+        "etf fees",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=3,
+        domain="financial",
+    )
+    assert docs
+    assert all(d.metadata["category_leg"] == "restricted" for d in docs)
+    assert all("FETCHED BODY" in d.content for d in docs)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_scopes_each_expanded_query_once(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries",
+        lambda query, llm: [query, f"{query} alt"],
+    )
+    await _run_hybrid_search(
+        "etf fees",
+        llm=None,
+        search_url="http://x/retrieve",
+        top_k=2,
+        filters=None,
+        source_provider="all",
+        domain="financial",
+    )
+    web = [q for p, q in calls if p == "serpapi"]
+    assert sorted(web) == sorted(
+        [
+            restricted_query("etf fees", "financial"),
+            "etf fees financial market data filings",
+            restricted_query("etf fees alt", "financial"),
+            "etf fees alt financial market data filings",
+        ]
+    )
+    assert sorted(q for p, q in calls if p == "retrieval") == [
+        "etf fees",
+        "etf fees alt",
+    ]
+
+
+def _small_hybrid_wait(monkeypatch, wait_seconds: float) -> None:
+    policies = SimpleNamespace(
+        retrieval=SimpleNamespace(
+            web_hybrid=WebHybridPolicy(
+                provider_timeout_seconds=1.0,
+                provider_max_retries=1,
+                provider_wait_seconds=wait_seconds,
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.get_timeout_policies", lambda: policies
+    )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_slow_fallback_keeps_restricted_results(monkeypatch):
+    scoped = restricted_query("etf fees", "financial")
+
+    async def fake(query, *, provider, **_kwargs):
+        if query == scoped:
+            return [SearchPage(title="t", url="https://sec.gov/a", summary="c")]
+        await asyncio.sleep(5)  # the suffix fallback outlives the leg budget
+        return []
+
+    monkeypatch.setattr("src.internal.servers.web.app.search_tool", fake)
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries", lambda query, llm: [query]
+    )
+    _small_hybrid_wait(monkeypatch, 0.2)
+    result = await asyncio.wait_for(
+        _run_hybrid_search(
+            "etf fees",
+            llm=None,
+            search_url="http://x/retrieve",
+            top_k=2,
+            filters=None,
+            source_provider="serpapi",
+            domain="financial",
+        ),
+        timeout=2.0,
+    )
+    assert result.status != "unreachable"
+    assert [d.url for d in result.documents] == ["https://sec.gov/a"]
+    assert result.documents[0].metadata["category_leg"] == "restricted"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auto_browser_fallback_gets_the_suffix_query(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries", lambda query, llm: [query]
+    )
+    browser_queries: list[str] = []
+
+    async def fake_browser(query, **_kwargs):
+        browser_queries.append(query)
+        return []
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._run_browser_search", fake_browser
+    )
+    await _run_hybrid_search(
+        "etf fees",
+        llm=None,
+        search_url="http://x/retrieve",
+        browser_search_url="http://browser/retrieve",
+        top_k=2,
+        filters=None,
+        source_provider="auto",
+        domain="financial",
+    )
+    # SerpAPI was scoped first and came back empty; the browser never is.
+    assert ("serpapi", restricted_query("etf fees", "financial")) in calls
+    assert browser_queries == ["etf fees financial market data filings"]
 
 
 # --- mode guard -------------------------------------------------------------
@@ -406,3 +662,16 @@ def test_legacy_topic_alias_reaches_search_mode_as_web(client, monkeypatch):
     )
     assert captured["domain"] == "web"
     assert captured["query"] == "etf fees"
+
+
+def test_registry_endpoint_exposes_source_sites(client):
+    domains = {
+        d["name"]: d for d in client.get("/api/search-domains").json()["domains"]
+    }
+    assert domains["patent"]["source_sites"] == [
+        "patents.google.com",
+        "uspto.gov",
+        "wipo.int",
+        "epo.org",
+    ]
+    assert domains["web"]["source_sites"] == []

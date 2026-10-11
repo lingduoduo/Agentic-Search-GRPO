@@ -7,7 +7,7 @@ import copy
 import json
 import logging
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl
@@ -64,6 +64,9 @@ class SearchDomain:
     query_hint: str
     capabilities: tuple["Capability", ...] = ()
     typical_sources: tuple[str, ...] = ()
+    # Hosts (or host/path) the restricted leg searches. Distinct from the
+    # descriptive typical_sources: these are what a query actually runs against.
+    source_sites: tuple[str, ...] = ()
 
 
 # Every domain can be searched on the public web; the hint is what differs.
@@ -89,18 +92,27 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("arxiv", "query", "documents", "search_arxiv"),
         ),
         ("arXiv", "Semantic Scholar", "OpenAlex"),
+        (
+            "arxiv.org",
+            "semanticscholar.org",
+            "pubmed.ncbi.nlm.nih.gov",
+            "openreview.net",
+            "aclanthology.org",
+        ),
     ),
     "code": SearchDomain(
         "Repositories, APIs, libraries, examples, issues",
         "programming repositories",
         (WEB_CAPABILITY,),
         ("GitHub", "GitLab", "package registries"),
+        ("github.com", "gitlab.com", "stackoverflow.com", "pypi.org", "npmjs.com"),
     ),
     "social_media": SearchDomain(
         "Discussions, opinions, trends, community experiences",
         "social media discussions",
         (WEB_CAPABILITY,),
         ("Reddit", "Hacker News", "public social platforms"),
+        ("reddit.com", "news.ycombinator.com", "x.com"),
     ),
     "resource": SearchDomain(
         "Datasets, directories, tools, templates, benchmarks",
@@ -110,12 +122,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("wayback", "url", "documents", "search_wayback"),
         ),
         ("Hugging Face", "Kaggle", "open-data portals"),
+        ("huggingface.co", "kaggle.com", "data.gov", "zenodo.org"),
     ),
     "news": SearchDomain(
         "Breaking news, reporting, investigations, press releases",
         "news reporting",
         (WEB_CAPABILITY,),
         ("News publishers", "news aggregators"),
+        ("reuters.com", "apnews.com", "bbc.com", "npr.org"),
     ),
     "official": SearchDomain(
         "Official announcements, documentation, authoritative statements",
@@ -128,6 +142,13 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         "law statutes case law",
         (WEB_CAPABILITY,),
         ("Court databases", "legal repositories"),
+        (
+            "law.cornell.edu",
+            "courtlistener.com",
+            "justia.com",
+            "govinfo.gov",
+            "eur-lex.europa.eu",
+        ),
     ),
     "financial": SearchDomain(
         "Market data, filings, earnings, financial statements",
@@ -139,12 +160,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("currency", "from_currency", "records", "convert_currency"),
         ),
         ("SEC EDGAR", "exchange data", "financial providers"),
+        ("sec.gov", "nasdaq.com", "finance.yahoo.com", "marketwatch.com"),
     ),
     "patent": SearchDomain(
         "Patents, trademarks, inventions, intellectual property",
         "patents intellectual property",
         (WEB_CAPABILITY,),
         ("Google Patents", "USPTO", "WIPO"),
+        ("patents.google.com", "uspto.gov", "wipo.int", "epo.org"),
     ),
     "product": SearchDomain(
         "Product catalogs, specifications, prices, reviews",
@@ -157,6 +180,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         "company industry information",
         (WEB_CAPABILITY,),
         ("Company registries", "corporate websites"),
+        ("opencorporates.com", "crunchbase.com"),
     ),
     "local": SearchDomain(
         "Businesses, locations, hours, local services",
@@ -178,42 +202,49 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("nearby", "query", "records", "search_nearby_places"),
         ),
         ("Travel providers", "tourism websites"),
+        ("tripadvisor.com", "booking.com", "lonelyplanet.com"),
     ),
     "media": SearchDomain(
         "Images, videos, audio, podcasts, multimedia",
         "images videos audio",
         (WEB_CAPABILITY,),
         ("YouTube", "Wikimedia Commons", "media platforms"),
+        ("youtube.com", "commons.wikimedia.org", "vimeo.com", "podcasts.apple.com"),
     ),
     "books": SearchDomain(
         "Books, authors, editions, publications, libraries",
         "books authors libraries",
         (WEB_CAPABILITY,),
         ("Open Library", "Google Books", "library catalogs"),
+        ("openlibrary.org", "books.google.com", "goodreads.com", "worldcat.org"),
     ),
     "education": SearchDomain(
         "Courses, tutorials, textbooks, educational programs",
         "courses tutorials education",
         (WEB_CAPABILITY,),
         ("University websites", "course catalogs", "learning platforms"),
+        ("coursera.org", "edx.org", "khanacademy.org", "ocw.mit.edu"),
     ),
     "events": SearchDomain(
         "Conferences, concerts, meetups, schedules",
         "events conferences schedules",
         (WEB_CAPABILITY,),
         ("Event platforms", "official event sites"),
+        ("eventbrite.com", "meetup.com"),
     ),
     "jobs": SearchDomain(
         "Job openings, careers, salaries, employment opportunities",
         "job openings careers",
         (WEB_CAPABILITY,),
         ("Employer career pages", "job boards"),
+        ("indeed.com", "linkedin.com/jobs", "glassdoor.com"),
     ),
     "statistics": SearchDomain(
         "Public statistics, indicators, surveys, census data",
         "public statistics census indicators",
         (WEB_CAPABILITY,),
         ("Census Bureau", "World Bank", "OECD"),
+        ("census.gov", "data.worldbank.org", "data.oecd.org", "ourworldindata.org"),
     ),
 }
 
@@ -305,6 +336,108 @@ def prepare_domain_query(query: str, domain: str = "web") -> str:
     return f"{query} {hint}" if hint and query.strip() else query
 
 
+PageSearch = Callable[[str, int], Awaitable[list["SearchPage"]]]
+
+# Below this many usable restricted pages the suffix query tops the list up.
+RESTRICT_MIN_USABLE = 3
+# Providers whose query string accepts ``site:`` operators and that never fall
+# back to the browser internally.
+RESTRICTABLE_PROVIDERS = frozenset({"google", "serpapi", "serper"})
+
+
+def restricted_query(query: str, domain: str) -> str | None:
+    """The site-scoped query for a category, or None when it has no sites."""
+    sites = DOMAIN_REGISTRY[normalize_search_domain(domain)].source_sites
+    if not sites or not query.strip():
+        return None
+    return f"{query} ({' OR '.join('site:' + site for site in sites)})"
+
+
+@dataclass(frozen=True)
+class CategorySearch:
+    pages: list["SearchPage"]
+    executed_queries: list[str]
+
+
+def _usable_page(page: "SearchPage") -> bool:
+    return bool(page.url) and not page.error and not page.is_blank
+
+
+def _tag_pages(pages, domain: str, leg: str, query: str) -> list["SearchPage"]:
+    return [
+        replace(
+            page,
+            metadata={
+                **(page.metadata or {}),
+                "category": domain,
+                "category_leg": leg,
+                "category_query": query,
+            },
+        )
+        for page in pages
+    ]
+
+
+async def search_category(
+    query: str,
+    *,
+    domain: str,
+    page_size: int,
+    search_fn: PageSearch,
+    restricted_fn: PageSearch | None = None,
+    time_budget: float | None = None,
+) -> CategorySearch:
+    """Search one category: its source sites first, the suffix query if thin.
+
+    ``restricted_fn`` must not fall back to the browser; pass None (the
+    setting is off, or the provider cannot take ``site:``) for one hint call.
+    ``time_budget`` (seconds, from the call's start) bounds the fallback only,
+    so a slow fallback cannot cost restricted pages already in hand.
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    canonical = normalize_search_domain(domain)
+    suffix = prepare_domain_query(query, canonical)
+    scoped = restricted_query(query, canonical) if restricted_fn is not None else None
+    if scoped is None:
+        pages = await search_fn(suffix, page_size)
+        return CategorySearch(_tag_pages(pages, canonical, "hint", suffix), [suffix])
+
+    try:
+        restricted = [
+            p for p in await restricted_fn(scoped, page_size) if _usable_page(p)
+        ]
+    except Exception as exc:  # timeout or provider error: the fallback decides
+        logger.info("restricted %s search failed: %s", canonical, exc)
+        restricted = []
+    restricted = _tag_pages(restricted[:page_size], canonical, "restricted", scoped)
+    if len(restricted) >= min(RESTRICT_MIN_USABLE, page_size):
+        return CategorySearch(restricted, [scoped])
+
+    executed = [scoped, suffix]
+    try:
+        if time_budget is None:
+            fallback = await search_fn(suffix, page_size)
+        else:
+            remaining = max(0.0, time_budget - (loop.time() - started))
+            fallback = await asyncio.wait_for(
+                search_fn(suffix, page_size), timeout=remaining
+            )
+    except Exception:  # asyncio.TimeoutError included, on 3.10 as well
+        if restricted:
+            return CategorySearch(restricted, executed)
+        raise
+    if not restricted:
+        # Exactly what a single suffix call returns today, error pages included.
+        return CategorySearch(
+            _tag_pages(fallback, canonical, "fallback", suffix), executed
+        )
+    seen = {page.url for page in restricted}
+    extra = [p for p in fallback if _usable_page(p) and p.url not in seen]
+    merged = restricted + _tag_pages(extra, canonical, "fallback", suffix)
+    return CategorySearch(merged[:page_size], executed)
+
+
 def search_domain_parameter() -> dict[str, object]:
     """Build fresh schema data so callers cannot mutate the registry."""
     descriptions = "; ".join(
@@ -319,6 +452,13 @@ def search_domain_parameter() -> dict[str, object]:
             "Use web for broad or mixed topics. " + descriptions
         ),
     }
+
+
+def category_sites_enabled() -> bool:
+    """Whether category searches may restrict to their source sites."""
+    from ..configs.app_configs import load_app_settings
+
+    return load_app_settings().services.category_sites
 
 
 logger = logging.getLogger(__name__)
@@ -936,13 +1076,11 @@ async def fetch_pages_concurrently(
             url_to_content[page.url] = content
 
     return [
-        SearchPage(
-            title=p.title,
+        replace(
+            p,
             summary=url_to_content.get(p.url, p.summary)
             if (p.url and not p.error)
             else p.summary,
-            url=p.url,
-            error=p.error,
         )
         for p in pages
     ]
@@ -996,7 +1134,14 @@ class MultiQueryWebSearchTool(Tool):
         search_url: str = DEFAULT_RETRIEVAL_URL,
         page_size: int = 5,
         timeout_seconds: float | None = None,
+        restricted_search_fn: Any = None,
     ) -> None:
+        if restricted_search_fn is not None:
+            self._restricted_search_fn = restricted_search_fn
+        elif search_fn is None and provider in RESTRICTABLE_PROVIDERS:
+            self._restricted_search_fn = search_tool
+        else:
+            self._restricted_search_fn = None
         self._search_fn = search_fn or search_tool
         self._provider = provider
         self._search_url = search_url
@@ -1063,19 +1208,37 @@ class MultiQueryWebSearchTool(Tool):
         if not queries:
             return json.dumps([]), [], {}
 
-        executed_queries = [prepare_domain_query(q, domain) for q in queries]
-        results_per_query: list[list[SearchPage]] = await asyncio.gather(
-            *[
-                self._search_fn(
-                    q,
+        def _bind(fn: Any) -> PageSearch:
+            async def run(query: str, page_size: int) -> list[SearchPage]:
+                return await fn(
+                    query,
                     provider=self._provider,
                     search_url=self._search_url,
-                    page_size=self._page_size,
+                    page_size=page_size,
                     timeout_seconds=self._timeout_seconds,
                 )
-                for q in executed_queries
+
+            return run
+
+        restricted = (
+            _bind(self._restricted_search_fn)
+            if self._restricted_search_fn is not None and category_sites_enabled()
+            else None
+        )
+        searches = await asyncio.gather(
+            *[
+                search_category(
+                    q,
+                    domain=domain,
+                    page_size=self._page_size,
+                    search_fn=_bind(self._search_fn),
+                    restricted_fn=restricted,
+                )
+                for q in queries
             ]
         )
+        results_per_query = [s.pages for s in searches]
+        executed_queries = [q for s in searches for q in s.executed_queries]
 
         seen_urls: set[str] = set()
         merged: list[SearchPage] = []
@@ -1218,7 +1381,12 @@ class DomainSearch:
     """Shared operations for FunctionTools and Python callers; no new backend."""
 
     def __init__(
-        self, *, web_search_fn=None, tools: Iterable[Tool] | None = None, fetch_fn=None
+        self,
+        *,
+        web_search_fn=None,
+        tools: Iterable[Tool] | None = None,
+        fetch_fn=None,
+        restricted_search_fn=None,
     ):
         if tools is None:
             from .public_data import public_data_tools
@@ -1240,6 +1408,13 @@ class DomainSearch:
                 browser_search_url=os.getenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL")
             )
         )
+        if restricted_search_fn is not None:
+            self.restricted_search_fn = restricted_search_fn
+        elif web_search_fn is None:
+            # SerpAPI only: a restricted query must never reach the browser.
+            self.restricted_search_fn = make_web_cascade_search(browser_search_url=None)
+        else:
+            self.restricted_search_fn = None
         self.fetch_fn = fetch_fn if fetch_fn is not None else fetch_url
 
     def get_sub_domains(self, domains: list[str]) -> dict[str, Any]:
@@ -1315,6 +1490,7 @@ class DomainSearch:
                     "domain": domain,
                     "description": DOMAIN_REGISTRY[domain].description,
                     "typical_sources": list(DOMAIN_REGISTRY[domain].typical_sources),
+                    "source_sites": list(DOMAIN_REGISTRY[domain].source_sites),
                     "sub_domains": entries,
                 }
             )
@@ -1361,13 +1537,25 @@ class DomainSearch:
                 raise InvalidToolInput(
                     "web capabilities accept max_results, not capability params"
                 )
-            executed_query = prepare_domain_query(query, canonical)
-            pages = await self.web_search_fn(executed_query, page_size=max_results)
+            restricted = (
+                (lambda q, n: self.restricted_search_fn(q, page_size=n))
+                if self.restricted_search_fn is not None and category_sites_enabled()
+                else None
+            )
+            category = await search_category(
+                query,
+                domain=canonical,
+                page_size=max_results,
+                search_fn=lambda q, n: self.web_search_fn(q, page_size=n),
+                restricted_fn=restricted,
+            )
+            pages = category.pages
             errors = [page.error for page in pages if page.error]
             if errors:
                 raise ValueError("; ".join(errors))
             result.update(
-                executed_query=executed_query,
+                executed_query=category.executed_queries[0],
+                executed_queries=category.executed_queries,
                 results=[
                     {"title": page.title, "content": page.summary, "url": page.url}
                     for page in pages[:max_results]

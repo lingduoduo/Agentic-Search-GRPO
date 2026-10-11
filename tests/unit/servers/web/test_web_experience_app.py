@@ -403,6 +403,7 @@ def test_agent_endpoint_runs_query_processing_hook(monkeypatch, tmp_path):
 
 def test_direct_search_enriches_web_provider_content(monkeypatch):
     """Content fetching is called for serpapi/google providers, not for retrieval."""
+    from dataclasses import replace
     from src.internal.tools.search import SearchPage
     from src.internal.servers.web.app import _run_direct_search
     import asyncio
@@ -420,7 +421,10 @@ def test_direct_search_enriches_web_provider_content(monkeypatch):
         return serpapi_pages
 
     async def _fake_fetch_pages(pages, *, max_chars, timeout_seconds=10):
-        assert pages == serpapi_pages
+        # search_category tags pages with metadata; every other field is
+        # compared in full.
+        assert [replace(p, metadata={}) for p in pages] == serpapi_pages
+        assert all(p.metadata["category_leg"] == "hint" for p in pages)
         return fetched_pages
 
     monkeypatch.setattr("src.internal.servers.web.app.search_tool", _fake_search_tool)

@@ -104,15 +104,30 @@ Dynamic tools registered via `FunctionTool` / `ApiToolRegistry` can be mirrored 
 {"query": "battery recycling", "limit": 5, "domain": "academic"}
 ```
 
-The provider receives `battery recycling academic research`. A non-general
-response includes the original and executed queries; an empty result looks like:
+For a domain with source sites, the provider first receives the scoped query
+
+```text
+battery recycling (site:arxiv.org OR site:semanticscholar.org OR site:pubmed.ncbi.nlm.nih.gov OR site:openreview.net OR site:aclanthology.org)
+```
+
+and then the suffix query `battery recycling academic research` only if the
+scoped query returned fewer than three usable results (fewer than `limit` when
+`limit` is below three). With `AGENTIC_SEARCH_CATEGORY_SITES=0`, or for a
+domain without source sites, the provider receives the single suffix query, as
+before. A non-general response includes the original query, `executed_query`
+(the first query sent) and `executed_queries` (every query sent, in order); an
+empty result looks like:
 
 ```json
 {
   "results": [],
   "query": "battery recycling",
   "domain": "academic",
-  "executed_query": "battery recycling academic research"
+  "executed_query": "battery recycling (site:arxiv.org OR site:semanticscholar.org OR site:pubmed.ncbi.nlm.nih.gov OR site:openreview.net OR site:aclanthology.org)",
+  "executed_queries": [
+    "battery recycling (site:arxiv.org OR site:semanticscholar.org OR site:pubmed.ncbi.nlm.nih.gov OR site:openreview.net OR site:aclanthology.org)",
+    "battery recycling academic research"
+  ]
 }
 ```
 

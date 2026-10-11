@@ -534,4 +534,6 @@ export interface SearchDomainOption {
   description: string;
   // Descriptive source families, not a list of integrated providers.
   typical_sources?: string[];
+  // Hosts a category's restricted web search runs against; empty for suffix-only categories.
+  source_sites?: string[];
 }

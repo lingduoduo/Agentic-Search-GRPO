@@ -45,10 +45,14 @@ def tool_knowledge_base(
     web_search_fn = make_web_cascade_search(
         browser_search_url=os.getenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL")
     )
+    # Category searches restrict to source sites through SerpAPI only: a
+    # restricted query that fell back to the browser could double a 30-50 s call.
+    restricted_search_fn = make_web_cascade_search(browser_search_url=None)
     public_tools = public_data_tools()
     tools: list[Tool] = [
         MultiQueryWebSearchTool(
             search_fn=web_search_fn,
+            restricted_search_fn=restricted_search_fn,
             page_size=top_k,
         ),
         build_search_routing_tool(search_url=search_url, top_k=top_k),
@@ -57,7 +61,11 @@ def tool_knowledge_base(
         # nothing to choose between.
         *public_tools,
         *build_domain_search_tools(
-            service=DomainSearch(web_search_fn=web_search_fn, tools=public_tools)
+            service=DomainSearch(
+                web_search_fn=web_search_fn,
+                restricted_search_fn=restricted_search_fn,
+                tools=public_tools,
+            )
         ),
     ]
     if llm is not None:

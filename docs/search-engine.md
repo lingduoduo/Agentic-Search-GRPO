@@ -117,6 +117,10 @@ source family a category is meant to reach, and they shape the query hint, but
 no dedicated connector exists for most of them: every category searches through
 the configured web providers, and only the public-data routes listed under
 [native domain search](#native-domain-search-features) call a specific service.
+Sixteen categories also carry `source_sites`, a separate list of hosts that
+their web search is scoped to first; see
+[category source sites](#category-source-sites). The rest (`web`, `official`,
+`product`, `local`) only append the query hint.
 Twenty categories do not mean twenty running agents.
 
 Categories are query hints, not guaranteed category filters. They do not promise
@@ -148,6 +152,73 @@ For non-`web` multi-query calls, tool metadata includes the original sanitized
 `queries`, canonical `domain`, and `executed_queries`. Single-query tool output
 keeps its existing formatted response. See [MCP](mcp.md#web-search-domain-hints)
 for MCP response metadata.
+
+### Category source sites
+
+Sixteen categories carry `source_sites`: the hosts (or host/path prefixes) a web
+search for that category is scoped to first. It is distinct from the descriptive
+`typical_sources` column. Each list has at most five entries, is fixed in code
+like the rest of the registry, and is not operator-configurable. `web`,
+`official`, `product`, and `local` have no list and keep the suffix-only
+behavior; `official` has none because `site:gov` would be US-only.
+
+| Category | `source_sites` |
+| --- | --- |
+| academic | arxiv.org, semanticscholar.org, pubmed.ncbi.nlm.nih.gov, openreview.net, aclanthology.org |
+| code | github.com, gitlab.com, stackoverflow.com, pypi.org, npmjs.com |
+| social_media | reddit.com, news.ycombinator.com, x.com |
+| resource | huggingface.co, kaggle.com, data.gov, zenodo.org |
+| news | reuters.com, apnews.com, bbc.com, npr.org |
+| legal | law.cornell.edu, courtlistener.com, justia.com, govinfo.gov, eur-lex.europa.eu |
+| financial | sec.gov, nasdaq.com, finance.yahoo.com, marketwatch.com |
+| patent | patents.google.com, uspto.gov, wipo.int, epo.org |
+| business | opencorporates.com, crunchbase.com |
+| travel | tripadvisor.com, booking.com, lonelyplanet.com |
+| media | youtube.com, commons.wikimedia.org, vimeo.com, podcasts.apple.com |
+| books | openlibrary.org, books.google.com, goodreads.com, worldcat.org |
+| education | coursera.org, edx.org, khanacademy.org, ocw.mit.edu |
+| events | eventbrite.com, meetup.com |
+| jobs | indeed.com, linkedin.com/jobs, glassdoor.com |
+| statistics | census.gov, data.worldbank.org, data.oecd.org, ourworldindata.org |
+
+`GET /api/search-domains` and the `get_sub_domains` directories expose
+`source_sites` as an additive list next to `typical_sources`.
+
+**Restricted first, then fallback.** For a site-listed category, `search_category`
+first sends the query with a `site:` clause (`query (site:a OR site:b ...)`, no
+suffix words). If that yields at least `min(3, page_size)` usable results (a URL,
+no error, not blank), it stops. Otherwise it also runs the suffix query and
+merges: restricted results first, then fallback results not already present,
+truncated to `page_size`. A restricted leg that raises or times out counts as
+zero results, so the fallback runs; a fallback that fails never hides restricted
+results. On the hybrid path each web leg runs under a per-provider wait, so the
+fallback gets only what remains of 75% of that wait (the rest is left for
+SerpAPI's page fetch); a fallback that overruns it is abandoned and the
+restricted results are returned, or the leg fails if there were none. Each page's metadata carries `category`, `category_leg`
+(`restricted`, `fallback`, or `hint` for a single suffix call), and
+`category_query`; these reach document metadata, including SerpAPI's page-fetch
+step, and `executed_queries` lists every query actually sent.
+
+Two paths never restrict. The browser sidecar always gets the suffix query,
+because a restricted attempt plus a fallback could double a 30-50 s call, so
+restricted queries never reach the browser: the seeded `web_search` tool and the
+default `DomainSearch` restrict through SerpAPI; MCP `search_web` restricts
+through `MCP_WEB_SEARCH_PROVIDER`; and a `web_search` tool built for google or
+serper restricts through that provider. Corpus
+(`retrieval`) legs get the raw query. Categories without a list, and every
+category when the setting is off, make the single suffix call they made before.
+The same behavior applies on the HTTP direct and hybrid paths
+(`_category_search_fns` in `src/internal/servers/web/app.py`), the multi-query
+`web_search` tool, `DomainSearch`, and the MCP `search_web` tool.
+
+`AGENTIC_SEARCH_CATEGORY_SITES` controls it. It defaults to on; `0` or `false`
+makes every path hint-only, with exactly today's queries.
+
+Known cost: when SerpAPI is down, a site-listed category query spends two
+SerpAPI attempts (restricted, then the fallback cascade) before it reaches the
+browser.
+
+Whether this improves relevance is measured below.
 
 ### Does selecting a domain help? Measured, and the answer is: not detectably
 
@@ -216,6 +287,56 @@ to improve source alignment, and nothing in this repository should claim they
 do. A `general` negative control runs alongside the real queries and must show a
 zero delta and an overlap of 1.0; if it does not, the harness is mispairing arms
 and the run is rejected rather than reported.
+
+### Does restricting to source sites help?
+
+This repeats the measurement above for the source categories, with a third arm.
+Each query runs three ways against SerpAPI: **plain** (raw query), **suffix**
+(the old hint-only query), and **category** (`search_category`). Each arm is
+scored by authority precision over its returned results (at most 10): hits ÷
+returned URLs, so a short restricted list has a smaller denominator. Scores are
+paired category-minus-suffix and category-minus-plain, one query per unit, with
+a paired permutation p-value and Cliff's delta pooled across categories;
+per-category figures are descriptive only.
+
+The labels are `data/eval/source_category_queries.json`: 64 queries, four for
+each of the sixteen site-listed categories, each with the `authority_hosts` an
+on-topic result should come from. They were drafted by a subagent that was not
+shown the site lists, spot-checked by the user, and frozen; none were added or
+edited after the run.
+
+**Circularity.** A restricted arm scores well by construction if the authority
+hosts copy the site lists. 90 of the 245 authority hosts (36.7%) are on their
+category's own site list. The report's `on_list_share` field is the per-query
+mean, 36.4%, which includes excluded rows; it ranges from 6% (business, travel)
+to 69% (patent).
+
+A failed arm is excluded and never cached, and a query whose arm errored or came
+back empty is dropped from the paired comparison. `web` control queries must
+show a zero delta and an overlap of 1.0, and every `web` control must pass (no
+excluded control rows); otherwise the run is rejected and yields no decision.
+For `web` controls all three arms share one cache key, so the control catches
+scoring or pairing asymmetry in the code, not provider nondeterminism.
+
+**Decision rule, fixed before the run.**
+
+- Category significantly worse than suffix (p < 0.05, negative delta): the same
+  change flips `AGENTIC_SEARCH_CATEGORY_SITES` to default off and documents why.
+- Significantly better: documented as a measured gain.
+- Neither: documented as not detectably better; the setting stays on, since the
+  fallback keeps results from coming back empty.
+
+Run it yourself (194 live SerpAPI calls; responses are cached under
+`data/eval/source_cache/`, and failed arms are not):
+
+```bash
+python -m examples.run_source_category_eval --dry-run   # cost, no calls
+python -m examples.run_source_category_eval --control "what is a bond" --control "how do vaccines work"
+```
+
+The report is written to `data/eval/source_category_relevance.json`.
+
+The measured result is pending; this section will report it, whichever way it falls.
 
 ### Domains over HTTP and in the web UI
 
