@@ -18,6 +18,7 @@ from src.internal.tools.search import serpapi_search
 from src.internal.tools.search import normalize_search_domain
 from src.internal.tools.search import category_sites_enabled
 from src.internal.tools.search import prepare_domain_query
+from src.internal.tools.search import restricted_query
 from src.internal.tools.search import search_category
 from src.internal.tools.search import search_domain_parameter
 
@@ -135,14 +136,16 @@ async def search_web(
         return await provider_fn(q, page_size=page_size)
 
     logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
-    executed_queries = [prepare_domain_query(query, domain)]
+    suffix = prepare_domain_query(query, domain)
+    scoped = restricted_query(query, domain) if category_sites_enabled() else None
+    executed_queries = [scoped, suffix] if scoped else [suffix]
     try:
         category = await search_category(
             query,
             domain=domain,
             page_size=limit,
             search_fn=run,
-            restricted_fn=run if category_sites_enabled() else None,
+            restricted_fn=run if scoped else None,
         )
         pages = category.pages
         executed_queries = category.executed_queries

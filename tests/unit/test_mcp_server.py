@@ -882,10 +882,8 @@ async def test_search_web_domain(monkeypatch, provider, helper, broken):
     assert seen == [scoped, "battery academic research"]
     assert result["query"] == "battery"
     assert result["domain"] == "academic"
-    # A raising provider loses the executed list; the error payload names the hint.
-    expected = ["battery academic research"] if broken else seen
-    assert result["executed_query"] == expected[0]
-    assert result["executed_queries"] == expected
+    assert result["executed_query"] == scoped
+    assert result["executed_queries"] == seen
     assert ("error" in result) == broken
 
 

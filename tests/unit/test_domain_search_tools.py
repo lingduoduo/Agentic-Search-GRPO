@@ -232,10 +232,47 @@ def test_seeded_tools_share_one_browser_free_restricted_function(monkeypatch):
 
     built = []
     real = module.make_web_cascade_search
+
+    def build(**kw):
+        fn = real(**kw)
+        built.append((kw, fn))
+        return fn
+
     monkeypatch.setattr(
-        "src.internal.tools.knowledge_base.make_web_cascade_search",
-        lambda **kw: built.append(kw) or real(**kw),
+        "src.internal.tools.knowledge_base.make_web_cascade_search", build
     )
     monkeypatch.setenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL", "http://browser/retrieve")
-    tool_knowledge_base()
-    assert {"browser_search_url": None} in built
+    tools = tool_knowledge_base()
+    browser_free = [fn for kw, fn in built if kw == {"browser_search_url": None}]
+    assert len(browser_free) == 1
+    captured = browser_free[0]
+    web_tool = next(t for t in tools if t.name == "web_search")
+    # extract_page is bound to the DomainSearch the domain tools were built over.
+    service = next(
+        t for t in tools if t.name == "extract_page"
+    )._fn.__wrapped__.__self__
+    assert web_tool._restricted_search_fn is captured
+    assert service.restricted_search_fn is captured
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_setting_off_issues_one_suffix_call(monkeypatch):
+    from src.internal.tools.search import MultiQueryWebSearchTool
+
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    normal, restricted = [], []
+
+    async def fn(query, **kwargs):
+        normal.append(query)
+        return []
+
+    async def serp_only(query, **kwargs):
+        restricted.append(query)
+        return []
+
+    tool = MultiQueryWebSearchTool(
+        search_fn=fn, restricted_search_fn=serp_only, page_size=3
+    )
+    await tool.execute("i", {"queries": ["battery"], "domain": "academic"})
+    assert normal == ["battery academic research"]
+    assert restricted == []

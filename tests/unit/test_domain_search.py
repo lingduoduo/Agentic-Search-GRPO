@@ -379,5 +379,32 @@ def test_default_service_never_scopes_through_the_browser(monkeypatch):
         module, "make_web_cascade_search", lambda **kw: built.append(kw) or real(**kw)
     )
     monkeypatch.setenv("AGENTIC_SEARCH_BROWSER_SEARCH_URL", "http://browser/retrieve")
-    DomainSearch(tools=[])
-    assert {"browser_search_url": None} in built
+    built_fns = []
+    monkeypatch.setattr(
+        module,
+        "make_web_cascade_search",
+        lambda **kw: built_fns.append((kw, real(**kw))) or built_fns[-1][1],
+    )
+    service = DomainSearch(tools=[])
+    browser_free = [fn for kw, fn in built_fns if kw == {"browser_search_url": None}]
+    assert len(browser_free) == 1
+    assert service.restricted_search_fn is browser_free[0]
+
+
+@pytest.mark.asyncio
+async def test_web_capability_setting_off_issues_one_suffix_call(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    normal, restricted = [], []
+
+    async def web(query, *, page_size):
+        normal.append(query)
+        return []
+
+    async def serp_only(query, *, page_size):
+        restricted.append(query)
+        return []
+
+    client = DomainSearch(web_search_fn=web, restricted_search_fn=serp_only, tools=[])
+    await client.search("battery", domain="academic")
+    assert normal == ["battery academic research"]
+    assert restricted == []

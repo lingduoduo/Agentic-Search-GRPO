@@ -78,3 +78,21 @@ async def test_mcp_search_web_scopes_then_falls_back(monkeypatch):
     ]
     assert result["executed_query"] == restricted_query("battery", "academic")
     assert result["executed_queries"] == calls
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_setting_off_issues_one_suffix_call(monkeypatch):
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    result = await module.search_web("battery", domain="academic")
+    assert calls == ["battery academic research"]
+    assert result["executed_queries"] == calls
