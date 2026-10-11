@@ -9,13 +9,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from src.internal.retrieval.bm25_tuner import BM25Tuner
 from src.internal.retrieval.fusion_learner import FusionLearner
+from src.internal.retrieval.fusion import FusionWeights
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,20 @@ class FusionWeightsRequest(BaseModel):
     w_sparse_range: list[float] | None = None
 
 
-def _make_service(*_args: Any) -> object:
+def _make_service(
+    *,
+    bm25_k1: float | None = None,
+    bm25_b: float | None = None,
+    fusion_weights: FusionWeights | None = None,
+) -> object:
     from src.internal.retrieval.service import RetrievalService
 
-    return RetrievalService.from_env()
+    return RetrievalService.from_env(
+        bm25_k1=bm25_k1,
+        bm25_b=bm25_b,
+        fusion_weights=fusion_weights,
+        use_result_cache=False,
+    )
 
 
 def create_optimize_router(require_admin: Callable | None = None) -> APIRouter:
@@ -44,7 +54,7 @@ def create_optimize_router(require_admin: Callable | None = None) -> APIRouter:
     @router.post("/bm25-tune")
     def bm25_tune(req: BM25TuneRequest) -> dict:
         def factory(k1, b):
-            return _make_service(k1, b)
+            return _make_service(bm25_k1=k1, bm25_b=b)
 
         tuner = BM25Tuner(factory)
         params = tuner.grid_search(
@@ -57,7 +67,7 @@ def create_optimize_router(require_admin: Callable | None = None) -> APIRouter:
     @router.post("/fusion-weights")
     def fusion_weights(req: FusionWeightsRequest) -> dict:
         def factory(w_s, w_d):
-            return _make_service(w_s, w_d)
+            return _make_service(fusion_weights=FusionWeights(w_s, w_d))
 
         learner = FusionLearner(factory)
         weights = learner.fit(req.qa_pairs_path, w_sparse_range=req.w_sparse_range)

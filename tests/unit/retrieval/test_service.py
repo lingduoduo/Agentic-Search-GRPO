@@ -12,6 +12,49 @@ from src.internal.retrieval.backends.base import RetrievalResult
 from src.internal.retrieval.service import RetrievalService
 
 
+def test_explicit_fusion_weights_change_hybrid_ranking():
+    from src.internal.retrieval.fusion import FusionWeights
+
+    backend = MagicMock()
+    backend.search_sparse.return_value = [_make_result("sparse")]
+    backend.search_dense.return_value = [_make_result("dense")]
+    service = RetrievalService(backend, fusion_weights=FusionWeights(0.1, 0.9))
+    results, mode = service.search("q", top_k=2, filters={"tenant": "t"})
+    assert [result.doc_id for result in results] == ["dense", "sparse"]
+    assert mode == "hybrid"
+    assert backend.search_sparse.call_args.kwargs["filters"] == {"tenant": "t"}
+    assert backend.search_dense.call_args.kwargs["filters"] == {"tenant": "t"}
+
+
+def test_explicit_bm25_overrides_reach_local_config_without_env_mutation(monkeypatch):
+    import os
+
+    monkeypatch.setenv("BM25_INDEX_PATH", "/fake/index")
+    monkeypatch.setenv("BM25_K1", "0.9")
+    monkeypatch.setenv("BM25_B", "0.5")
+    monkeypatch.setenv("RETRIEVAL_BACKEND", "local")
+    monkeypatch.delenv("DENSE_MODEL_PATH", raising=False)
+    with patch("src.internal.retrieval.backends.local.LocalBackend") as backend:
+        RetrievalService.from_env(bm25_k1=2.0, bm25_b=0.8)
+    config = backend.call_args.args[0]
+    assert config.k1 == 2.0 and config.b == 0.8
+    assert os.environ["BM25_K1"] == "0.9"
+    assert os.environ["BM25_B"] == "0.5"
+
+
+def test_disabled_result_cache_skips_redis_construction(monkeypatch):
+    monkeypatch.setenv("RESULT_CACHE_REDIS_URL", "redis://example.invalid")
+    with (
+        patch(
+            "src.internal.retrieval.service._build_backend", return_value=MagicMock()
+        ),
+        patch("redis.from_url") as redis,
+    ):
+        service = RetrievalService.from_env(use_result_cache=False)
+    redis.assert_not_called()
+    assert service._result_cache is None
+
+
 def _make_result(doc_id: str, score: float = 0.9) -> RetrievalResult:
     return RetrievalResult(doc_id=doc_id, title="T", text="body", url=None, score=score)
 

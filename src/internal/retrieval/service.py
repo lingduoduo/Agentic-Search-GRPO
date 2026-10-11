@@ -9,7 +9,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from .backends.base import RetrievalBackend, RetrievalResult
-from .fusion import mmr_rerank, rrf_fuse, variant_weighted_rrf_fuse
+from .fusion import (
+    FusionWeights,
+    mmr_rerank,
+    rrf_fuse,
+    variant_weighted_rrf_fuse,
+    weighted_rrf_fuse,
+)
 from .query_optimizer import QueryOptimizer
 from .result_cache import ResultCache
 
@@ -20,7 +26,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _build_local_backend() -> RetrievalBackend:
+def _build_local_backend(
+    *, bm25_k1: float | None = None, bm25_b: float | None = None
+) -> RetrievalBackend:
     from src.internal.document_index.retrieval import (
         DenseRetrieverConfig,
         SparseRetrieverConfig,
@@ -32,8 +40,8 @@ def _build_local_backend() -> RetrievalBackend:
         index_path=os.environ["BM25_INDEX_PATH"],
         corpus_path=os.environ.get("BM25_CORPUS_PATH", "data/corpus.jsonl"),
         topk=int(os.environ.get("BM25_TOP_K", "20")),
-        k1=float(os.environ.get("BM25_K1", "1.2")),
-        b=float(os.environ.get("BM25_B", "0.75")),
+        k1=bm25_k1 if bm25_k1 is not None else float(os.environ.get("BM25_K1", "1.2")),
+        b=bm25_b if bm25_b is not None else float(os.environ.get("BM25_B", "0.75")),
     )
     dense_config: DenseRetrieverConfig | None = None
     if os.environ.get("DENSE_MODEL_PATH"):
@@ -65,9 +73,13 @@ def _build_llm() -> object:
     )
 
 
-def _build_backend() -> RetrievalBackend:
+def _build_backend(
+    *, bm25_k1: float | None = None, bm25_b: float | None = None
+) -> RetrievalBackend:
     name = os.environ.get("RETRIEVAL_BACKEND", "local").lower()
     if name == "local":
+        if bm25_k1 is not None or bm25_b is not None:
+            return _build_local_backend(bm25_k1=bm25_k1, bm25_b=bm25_b)
         return _build_local_backend()
     raise ValueError(f"Unknown RETRIEVAL_BACKEND: {name!r}. Supported values: local")
 
@@ -81,6 +93,7 @@ class RetrievalService:
         optimizer: "QueryOptimizer | None" = None,
         result_cache: "ResultCache | None" = None,
         router: object | None = None,
+        fusion_weights: FusionWeights | None = None,
     ) -> None:
         self._backend = backend
         self._reranker = reranker
@@ -88,10 +101,18 @@ class RetrievalService:
         self._optimizer = optimizer
         self._result_cache = result_cache
         self._router = router
+        self._fusion_weights = fusion_weights
 
     @classmethod
-    def from_env(cls) -> "RetrievalService":
-        """Construct service from environment variables."""
+    def from_env(
+        cls,
+        *,
+        bm25_k1: float | None = None,
+        bm25_b: float | None = None,
+        fusion_weights: FusionWeights | None = None,
+        use_result_cache: bool = True,
+    ) -> "RetrievalService":
+        """Construct from environment with isolated overrides for candidate evaluation."""
         pipeline = None
         _qt_flags = (
             "QT_DECOMPOSE",
@@ -115,7 +136,7 @@ class RetrievalService:
         optimizer = QueryOptimizer.from_env()
         result_cache = None
         redis_url = os.environ.get("RESULT_CACHE_REDIS_URL")
-        if redis_url:
+        if redis_url and use_result_cache:
             try:
                 import redis as _redis
 
@@ -129,13 +150,19 @@ class RetrievalService:
         from src.internal.routing.routing_factory import build_router_from_env
 
         router = build_router_from_env()
+        backend = (
+            _build_backend(bm25_k1=bm25_k1, bm25_b=bm25_b)
+            if bm25_k1 is not None or bm25_b is not None
+            else _build_backend()
+        )
         return cls(
-            _build_backend(),
+            backend,
             reranker=build_reranker_from_env(),
             pipeline=pipeline,
             optimizer=optimizer,
             result_cache=result_cache,
             router=router,
+            fusion_weights=fusion_weights,
         )
 
     def _search_one(
@@ -183,6 +210,10 @@ class RetrievalService:
         elif not sparse_ok:
             return dense_results, "dense_only"
         else:
+            if self._fusion_weights is not None:
+                return weighted_rrf_fuse(
+                    [sparse_results, dense_results], self._fusion_weights
+                ), "hybrid"
             return rrf_fuse([sparse_results, dense_results]), "hybrid"
 
     def search(
