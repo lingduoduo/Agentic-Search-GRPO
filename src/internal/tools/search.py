@@ -661,11 +661,12 @@ def search_domains_parameter() -> dict[str, object]:
     """
     return {
         "type": "array",
-        "items": {"type": "string", "enum": list(DOMAIN_REGISTRY)},
+        "items": {"type": "string", "enum": list(DOMAIN_REGISTRY) + [AUTO_DOMAIN]},
         "minItems": 1,
         "maxItems": MAX_SEARCH_DOMAINS,
         "description": (
-            "Up to three categories searched in parallel and fused; instead of domain."
+            "Up to three categories searched in parallel and fused; instead of "
+            'domain. ["auto"] picks the categories from the query.'
         ),
     }
 
@@ -1424,12 +1425,17 @@ class MultiQueryWebSearchTool(Tool):
             and normalize_search_domain(arguments["domain"]) != "web"
         ):
             raise InvalidToolInput("pass domain or domains, not both")
-        if "domains" in arguments:
-            domains = normalize_search_domains(arguments["domains"])
-        else:
-            domains = [normalize_search_domain(arguments.get("domain", "web"))]
         raw_queries = arguments.get("queries", [])
         queries = _normalize_queries_input(raw_queries)
+        auto_info = None
+        if "domains" in arguments:
+            # One selection for the whole call, from all of its queries.
+            requested, auto_info = await resolve_auto_domains(
+                " ".join(queries), arguments["domains"]
+            )
+            domains = normalize_search_domains(requested)
+        else:
+            domains = [normalize_search_domain(arguments.get("domain", "web"))]
 
         if not queries:
             return json.dumps([]), [], {}
@@ -1485,6 +1491,8 @@ class MultiQueryWebSearchTool(Tool):
             metadata.update(domains=domains, executed_queries=executed_queries)
         elif domains[0] != "web":
             metadata.update(domain=domains[0], executed_queries=executed_queries)
+        if auto_info is not None:
+            metadata.update(domains=domains, auto_domains=auto_info)
         if not merged and errors:
             # A Tool subclass (unlike FunctionTool) must put the failure into
             # its own metadata: that is how invoke_detailed learns about it.
@@ -1736,11 +1744,13 @@ class DomainSearch:
     ) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise InvalidToolInput("query is required")
+        auto_info = None
         if domains is not None:
             if tag is not None:
                 raise InvalidToolInput("domains cannot be combined with a tag")
             if domain is not None and normalize_search_domain(domain) != "web":
                 raise InvalidToolInput("pass domain or domains, not both")
+            domains, auto_info = await resolve_auto_domains(query, domains)
             domains = normalize_search_domains(domains)
             if len(domains) == 1:
                 domain = domains[0]
@@ -1768,13 +1778,16 @@ class DomainSearch:
             executed, rows = await self._search_web_categories(
                 query, domains, parse_search_params(params), max_results
             )
-            return {
+            result = {
                 "query": query,
                 "domains": domains,
                 "executed_query": executed[0],
                 "executed_queries": executed,
                 "results": rows,
             }
+            if auto_info is not None:
+                result["auto_domains"] = auto_info
+            return result
         canonical = normalize_search_domain(
             domain if domain is not None else (tag.split(".", 1)[0] if tag else "web")
         )
@@ -1783,6 +1796,8 @@ class DomainSearch:
             raise InvalidToolInput("domain must match the tag prefix")
         options = parse_search_params(params)
         result = {"query": query, "domain": canonical, "tag": tag}
+        if auto_info is not None:
+            result.update(domains=[canonical], auto_domains=auto_info)
         if tag == f"{canonical}.web":
             executed, rows = await self._search_web_categories(
                 query, [canonical], options, max_results

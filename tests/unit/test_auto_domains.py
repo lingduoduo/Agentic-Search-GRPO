@@ -20,12 +20,12 @@ def _clear_cache():
     category_selection._INDEXES.clear()
 
 
-def _saved_index(tmp_path):
+def _saved_index(tmp_path, encoder="intfloat/e5-small-v2"):
     ex = [CategoryExample("n", "news", "n"), CategoryExample("c", "code", "c")]
     idx = CategoryIndex(
         examples=ex,
         vectors=np.eye(2, dtype=np.float32),
-        encoder="intfloat/e5-small-v2",
+        encoder=encoder,
         fingerprint="f",
     )
     idx.save(tmp_path / "index.npz")
@@ -124,4 +124,23 @@ async def test_encoding_runs_off_the_event_loop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(asyncio, "to_thread", spy)
     await resolve_auto_domains("q", ["auto"])
-    assert used
+    assert used == [category_selection.select_for_query]
+
+
+@pytest.mark.asyncio
+async def test_an_index_from_another_encoder_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "AGENTIC_SEARCH_CATEGORY_INDEX_PATH",
+        str(_saved_index(tmp_path, encoder="other")),
+    )
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_TOP_K", "1")
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN", "0")
+    monkeypatch.setattr(
+        category_selection,
+        "encode_texts",
+        lambda texts: np.array([[0, 1]], dtype=np.float32),
+    )
+    assert await resolve_auto_domains("q", ["auto"]) == (
+        ["web"],
+        {"selected": ["web"], "status": "unavailable"},
+    )

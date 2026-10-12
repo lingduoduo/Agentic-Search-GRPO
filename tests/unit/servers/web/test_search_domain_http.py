@@ -899,3 +899,104 @@ def test_auto_mode_forwards_several_domains_to_the_search_leaf(client, monkeypat
     )
     client.post("/api/agent", json={"query": "q", "domains": ["news", "code"]})
     assert captured["domain"] == ("news", "code")
+
+
+# --- domains=["auto"] -------------------------------------------------------
+
+
+def _patch_resolver(monkeypatch, selected, status="ok"):
+    seen: list = []
+
+    async def fake_resolve(query, domains):
+        seen.append((query, domains))
+        if domains == ["auto"]:
+            return list(selected), {"selected": list(selected), "status": status}
+        return domains, None
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.resolve_auto_domains", fake_resolve
+    )
+    return seen
+
+
+def test_auto_domains_resolve_before_the_search(client, monkeypatch):
+    seen = _patch_resolver(monkeypatch, ["news", "code"])
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    r = client.post(
+        "/api/agent",
+        json={"query": "acme", "mode": "search_tool", "domains": ["auto"]},
+    )
+    assert r.status_code == 200
+    assert seen == [("acme", ["auto"])]
+    assert captured["domain"] == ("news", "code")
+    assert r.json()["domains"] == ["news", "code"]
+    assert r.json()["auto_domains"] == {"selected": ["news", "code"], "status": "ok"}
+
+
+def test_single_category_auto_travels_as_a_str_and_is_echoed(client, monkeypatch):
+    _patch_resolver(monkeypatch, ["news"])
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    r = client.post(
+        "/api/agent", json={"query": "q", "mode": "search_tool", "domains": ["auto"]}
+    )
+    assert captured["domain"] == "news"
+    assert isinstance(captured["domain"], str)
+    assert r.json()["domains"] == ["news"]
+
+
+def test_request_without_auto_reports_no_auto_domains(client, monkeypatch):
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    r = client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "search_tool", "domains": ["news", "code"]},
+    )
+    assert r.json()["auto_domains"] is None
+
+
+def test_stream_done_event_carries_auto_domains(client, monkeypatch):
+    _patch_resolver(monkeypatch, ["news", "code"])
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    r = client.post(
+        "/api/agent/stream",
+        json={"query": "q", "mode": "search_tool", "domains": ["auto"]},
+    )
+    done = next(e for e in _sse_events(r.text) if e["type"] == "done")
+    assert done["auto_domains"] == {"selected": ["news", "code"], "status": "ok"}
+    assert done["domains"] == ["news", "code"]
+    r = client.post(
+        "/api/agent/stream",
+        json={"query": "q", "mode": "search_tool", "domains": ["news", "code"]},
+    )
+    done = next(e for e in _sse_events(r.text) if e["type"] == "done")
+    assert "auto_domains" in done and done["auto_domains"] is None
+
+
+def test_unavailable_auto_still_searches_web(client, monkeypatch):
+    _patch_resolver(monkeypatch, ["web"], status="unavailable")
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    r = client.post(
+        "/api/agent", json={"query": "q", "mode": "search_tool", "domains": ["auto"]}
+    )
+    assert r.status_code == 200
+    assert captured["domain"] == "web"
+    assert r.json()["auto_domains"]["status"] == "unavailable"
+
+
+def test_auto_mixed_with_names_is_rejected_before_any_search(client, monkeypatch):
+    called = []
+
+    async def boom(*a, **k):
+        called.append(1)
+        return []
+
+    monkeypatch.setattr("src.internal.servers.web.app.search_tool", boom)
+    r = client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "search_tool", "domains": ["auto", "news"]},
+    )
+    assert r.status_code == 400
+    assert "auto" in r.json()["detail"]
+    assert called == []

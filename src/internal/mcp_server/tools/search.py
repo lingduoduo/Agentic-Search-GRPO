@@ -19,6 +19,7 @@ from src.internal.tools.search import normalize_search_domain
 from src.internal.tools.search import normalize_search_domains
 from src.internal.tools.search import category_sites_enabled
 from src.internal.tools.search import prepare_domain_query
+from src.internal.tools.search import resolve_auto_domains
 from src.internal.tools.search import restricted_query
 from src.internal.tools.search import search_categories
 from src.internal.tools.search import search_domain_parameter
@@ -88,7 +89,16 @@ async def search_indexed_documents(
     return {"results": results}
 
 
-def _domain_metadata(domains: list[str], executed_queries: list[str]) -> dict[str, Any]:
+def _domain_metadata(
+    domains: list[str], executed_queries: list[str], auto_info: dict | None = None
+) -> dict[str, Any]:
+    if auto_info is not None:
+        # An auto pick is always echoed, even a single category or web.
+        return {
+            **_domain_metadata(domains, executed_queries),
+            "domains": domains,
+            "auto_domains": auto_info,
+        }
     if len(domains) > 1:
         return {
             "domains": domains,
@@ -121,7 +131,8 @@ async def search_web(
     to a category hint when that returns few results). It is not a hard filter.
     Omit it or use `web` to preserve the original query. `domains` instead takes
     up to three categories, searched in parallel and fused; do not combine it
-    with `domain`.
+    with `domain`. `domains=["auto"]` picks the categories from the query and
+    reports them in `domains` and `auto_domains`.
 
     Returns ``{"results": [{title, url, snippet}, ...], "query": query}``.
     Non-web calls also return `domain` (or `domains`) and `executed_query`, including when
@@ -150,13 +161,15 @@ async def search_web(
     domain = normalize_search_domain(domain)
     categories = [domain]
     executed_queries = [query]
+    auto_info = None
     try:
         # Inside the try: a bad selector or malformed setting returns the
         # error payload, before any provider call.
         if domains is not None:
             if domain != "web":
                 raise ValueError("pass domain or domains, not both")
-            categories = normalize_search_domains(domains)
+            requested, auto_info = await resolve_auto_domains(query, domains)
+            categories = normalize_search_domains(requested)
         executed_queries = [prepare_domain_query(query, c) for c in categories]
         scoped = (
             restricted_query(query, categories[0])
@@ -180,7 +193,7 @@ async def search_web(
             "error": f"Web search failed: {str(exc)}",
             "results": [],
             "query": query,
-            **_domain_metadata(categories, executed_queries),
+            **_domain_metadata(categories, executed_queries, auto_info),
         }
 
     results = [
@@ -195,7 +208,7 @@ async def search_web(
     return {
         "results": results,
         "query": query,
-        **_domain_metadata(categories, executed_queries),
+        **_domain_metadata(categories, executed_queries, auto_info),
     }
 
 

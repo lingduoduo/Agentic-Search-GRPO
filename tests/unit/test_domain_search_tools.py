@@ -332,7 +332,7 @@ def test_web_search_domains_items_carry_no_category_descriptions():
     properties = _web_search_tool([]).schema.parameters["properties"]
     assert properties["domains"]["items"] == {
         "type": "string",
-        "enum": list(DOMAIN_REGISTRY),
+        "enum": list(DOMAIN_REGISTRY) + ["auto"],
     }
     assert "financial:" in properties["domain"]["description"]
 
@@ -405,3 +405,108 @@ async def test_web_search_one_domains_entry_equals_domain(monkeypatch):
     listed = await tool.execute("i", {"queries": ["q"], "domains": ["news"]})
     assert calls == single_calls
     assert listed[2] == single[2] and listed[0] == single[0]
+
+
+def _patch_search_resolver(monkeypatch, selected, status="ok"):
+    seen = []
+
+    async def fake_resolve(query, domains):
+        seen.append((query, domains))
+        if domains == ["auto"]:
+            return list(selected), {"selected": list(selected), "status": status}
+        return domains, None
+
+    monkeypatch.setattr("src.internal.tools.search.resolve_auto_domains", fake_resolve)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_web_search_auto_passes_validation_and_searches_the_picks(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    seen = _patch_search_resolver(monkeypatch, ["news", "code"])
+    calls = []
+    tool = _web_search_tool(calls)
+    registry = ToolRegistry()
+    registry.register(tool)
+    _, _, errors = await registry.invoke(
+        "web_search", {"queries": ["rates"], "domains": ["auto"]}
+    )
+    assert not errors
+    assert len(calls) == 2
+    assert seen[0] == ("rates", ["auto"])
+    calls.clear()
+    _, _, meta = await tool.execute("i", {"queries": ["rates"], "domains": ["auto"]})
+    assert meta["domains"] == ["news", "code"]
+    assert meta["auto_domains"] == {"selected": ["news", "code"], "status": "ok"}
+    assert meta["executed_queries"] == calls
+
+
+@pytest.mark.asyncio
+async def test_web_search_single_category_auto_reports_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    _patch_search_resolver(monkeypatch, ["news"])
+    tool = _web_search_tool([])
+    _, _, meta = await tool.execute("i", {"queries": ["q"], "domains": ["auto"]})
+    assert meta["domains"] == ["news"]
+    assert meta["auto_domains"]["selected"] == ["news"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_without_auto_has_no_auto_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    tool = _web_search_tool([])
+    _, _, meta = await tool.execute(
+        "i", {"queries": ["q"], "domains": ["news", "code"]}
+    )
+    assert "auto_domains" not in meta
+
+
+@pytest.mark.asyncio
+async def test_auto_mixed_with_names_makes_no_provider_call():
+    from src.internal.tools.base import InvalidToolInput
+
+    calls = []
+    with pytest.raises(InvalidToolInput):
+        await _web_search_tool(calls).execute(
+            "i", {"queries": ["q"], "domains": ["auto", "news"]}
+        )
+
+    async def web(query, **kwargs):
+        calls.append(query)
+        return []
+
+    registry = ToolRegistry()
+    for tool in build_domain_search_tools(
+        service=DomainSearch(web_search_fn=web, tools=[])
+    ):
+        registry.register(tool)
+    result, _, errors = await registry.invoke(
+        "search_domain", {"query": "q", "domains": ["auto", "news"]}
+    )
+    assert errors or "auto" in str(result)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_domain_tool_schema_accepts_auto(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    _patch_search_resolver(monkeypatch, ["news", "code"])
+    calls = []
+
+    async def web(query, **kwargs):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    registry = ToolRegistry()
+    for tool in build_domain_search_tools(
+        service=DomainSearch(web_search_fn=web, tools=[])
+    ):
+        registry.register(tool)
+    _, _, errors = await registry.invoke(
+        "search_domain", {"query": "q", "domains": ["auto"]}
+    )
+    assert not errors and len(calls) == 2
+    _, _, errors = await registry.invoke(
+        "batch_search", {"queries": [{"query": "q", "domains": ["auto"]}]}
+    )
+    assert not errors and len(calls) == 4

@@ -142,6 +142,7 @@ from src.internal.tools.search import (
     normalize_search_domain,
     normalize_search_domains,
     prepare_domain_query,
+    resolve_auto_domains,
     search_categories,
     search_category,
 )
@@ -388,6 +389,8 @@ class AgentExperienceResponse(BaseModel):
     tool_calls: list[ToolCallView] = Field(default_factory=list)
     control_flow_trace: list[ControlFlowEventView] = Field(default_factory=list)
     domains: list[str] | None = None
+    # Set only when the request asked for domains=["auto"].
+    auto_domains: dict | None = None
 
 
 class QueryProcessingHookResponse(BaseModel):
@@ -923,6 +926,7 @@ def _finalize_response(
     extra: dict,
     mode: str,
     domains: list[str] | None = None,
+    auto_domains: dict | None = None,
 ) -> "AgentExperienceResponse":
     """Persist the assistant turn and build the response. Single response tail.
 
@@ -991,6 +995,7 @@ def _finalize_response(
         tool_calls=tool_calls,
         control_flow_trace=trace_views,
         domains=domains,
+        auto_domains=auto_domains,
     )
 
 
@@ -1801,19 +1806,27 @@ def create_web_app(
         query = request.query.strip()
         if not query:
             raise HTTPException(status_code=422, detail="query is required")
+        auto_info = None
         try:
             # Before any provider call, per the taxonomy and multi-category specs.
             if request.domains is not None:
                 if normalize_search_domain(request.domain) != "web":
                     raise ValueError("send either domain or domains, not both")
-                selected = normalize_search_domains(request.domains)
+                requested, auto_info = await resolve_auto_domains(
+                    query, request.domains
+                )
+                selected = normalize_search_domains(requested)
                 domain = selected[0] if len(selected) == 1 else tuple(selected)
             else:
                 domain = normalize_search_domain(request.domain)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         _reject_domain_for_mode(domain, request.mode)
-        echoed_domains = list(domain) if isinstance(domain, tuple) else None
+        if auto_info is not None:
+            # An auto pick is echoed even when it is a single category.
+            echoed_domains = list(selected)
+        else:
+            echoed_domains = list(domain) if isinstance(domain, tuple) else None
         hook_metadata: dict[str, object] = {}
 
         # `caller` is supplied by transports that do not authenticate from
@@ -1967,6 +1980,7 @@ def create_web_app(
                         extra=extra,
                         mode="auto",
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 # Explicit mode — pin the dispatch, then share the runners + tail.
@@ -2015,6 +2029,7 @@ def create_web_app(
                         },
                         mode=mode,
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 if mode == "hybrid_search":
@@ -2060,6 +2075,7 @@ def create_web_app(
                         },
                         mode=mode,
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 if mode == "chat_loop":
@@ -2093,6 +2109,7 @@ def create_web_app(
                         extra=extra,
                         mode=mode,
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 if mode == "search_agent":
@@ -2141,6 +2158,7 @@ def create_web_app(
                         extra=extra,
                         mode=mode,
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 if mode == "tool_agent":
@@ -2178,6 +2196,7 @@ def create_web_app(
                         extra=extra,
                         mode=mode,
                         domains=echoed_domains,
+                        auto_domains=auto_info,
                     )
 
                 result = await answer_with_retrieval(
@@ -2243,6 +2262,7 @@ def create_web_app(
                     extra=extra,
                     mode=normalized_mode or "auto",
                     domains=echoed_domains,
+                    auto_domains=auto_info,
                 )
             except Exception as exc:
                 raise _dispatch_failure(exc) from exc
@@ -2268,6 +2288,7 @@ def create_web_app(
                 extra=dict(follow_up_meta),
                 mode=mode,
                 domains=echoed_domains,
+                auto_domains=auto_info,
             )
         finally:
             finished_stages = _stage_metrics.finish_request(stage_token)
@@ -2619,6 +2640,7 @@ def _terminal_events(run_id: str, result: "AgentExperienceResponse") -> list[dic
                 event.model_dump() for event in result.control_flow_trace
             ],
             "domains": result.domains,
+            "auto_domains": result.auto_domains,
         },
     ]
 

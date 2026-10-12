@@ -217,3 +217,89 @@ async def test_mcp_search_web_one_domains_entry_equals_domain(monkeypatch):
     single_calls, calls[:] = list(calls), []
     listed = await module.search_web("rust", domains=["news"])
     assert listed == single and calls == single_calls
+
+
+def _fake_resolver(selected, status="ok"):
+    async def fake_resolve(query, domains):
+        if domains == ["auto"]:
+            return list(selected), {"selected": list(selected), "status": status}
+        return domains, None
+
+    return fake_resolve
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_auto_reports_domains_and_auto_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setattr(
+        module, "resolve_auto_domains", _fake_resolver(["news", "code"])
+    )
+    result = await module.search_web("rust", domains=["auto"])
+    assert len(calls) == 2
+    assert result["domains"] == ["news", "code"]
+    assert result["auto_domains"] == {"selected": ["news", "code"], "status": "ok"}
+    monkeypatch.setattr(module, "resolve_auto_domains", _fake_resolver(["news"]))
+    result = await module.search_web("rust", domains=["auto"])
+    assert result["domains"] == ["news"]
+    assert result["auto_domains"]["selected"] == ["news"]
+    plain = await module.search_web("rust", domains=["news", "code"])
+    assert "auto_domains" not in plain
+
+
+@pytest.mark.asyncio
+async def test_mcp_auto_mixed_with_names_makes_no_provider_call(monkeypatch):
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.base import InvalidToolInput
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    async def web(query, **kwargs):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    monkeypatch.setattr(
+        module, "_domain_service", lambda: DomainSearch(web_search_fn=web, tools=[])
+    )
+    payload = await module.search_web("rust", domains=["auto", "news"])
+    assert payload["error"] and payload["results"] == []
+    with pytest.raises(InvalidToolInput):
+        await module.search_domain("rust", domains=["auto", "news"])
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_domain_auto_reports_auto_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    from src.internal.mcp_server.tools import search as module
+
+    async def web(query, **kwargs):
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    monkeypatch.setattr(
+        "src.internal.tools.search.resolve_auto_domains",
+        _fake_resolver(["news", "code"]),
+    )
+    monkeypatch.setattr(
+        module, "_domain_service", lambda: DomainSearch(web_search_fn=web, tools=[])
+    )
+    result = await module.search_domain("rust", domains=["auto"])
+    assert result["domains"] == ["news", "code"]
+    assert result["auto_domains"]["status"] == "ok"
+    batch = await module.batch_search([{"query": "rust"}], domains=["auto"])
+    assert batch["queries"][0]["auto_domains"]["selected"] == ["news", "code"]
