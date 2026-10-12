@@ -166,15 +166,40 @@ describe("SearchComposer domain selector", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables unselected options at the limit", () => {
+  it("keeps selected options enabled and shows the limit hint", () => {
     render(
       <SearchComposer
         {...domainProps}
         domains={["financial", "news", "social_media"]}
       />,
     );
-    expect(screen.getByRole("checkbox", { name: "web" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "news" })).toBeEnabled();
     expect(screen.getByText("Up to 3 search sources")).toBeInTheDocument();
+  });
+
+  it("disables unselected real categories at the limit, with a description", () => {
+    render(
+      <SearchComposer
+        {...domainProps}
+        domains={["financial", "news", "social_media"]}
+        domainOptions={[...domainProps.domainOptions, { name: "code", description: "Code" }]}
+      />,
+    );
+    const code = screen.getByRole("checkbox", { name: "code" });
+    expect(code).toBeDisabled();
+    expect(code).toHaveAccessibleDescription(/Up to 3 search sources/);
+  });
+
+  it("lets web reset the selection at the limit", async () => {
+    const onDomainsChange = vi.fn();
+    render(
+      <SearchComposer
+        {...domainProps}
+        domains={["financial", "news", "social_media"]}
+        onDomainsChange={onDomainsChange}
+      />,
+    );
+    await userEvent.click(screen.getByRole("checkbox", { name: "web" }));
+    expect(onDomainsChange).toHaveBeenCalledWith(["web"]);
   });
 });

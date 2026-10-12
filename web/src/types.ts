@@ -293,6 +293,8 @@ export interface SSEDoneEvent {
   control_flow_trace?: ControlFlowEventView[];
   request_id?: string;
   clarification?: ClarificationView | null;
+  // Categories searched, echoed on multi-category requests.
+  domains?: string[];
 }
 
 export interface SSEErrorEvent {

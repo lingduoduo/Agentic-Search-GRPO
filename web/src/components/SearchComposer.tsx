@@ -3,7 +3,7 @@ import { memo } from "react";
 import type { FormEvent } from "react";
 import { Loader2, Search } from "lucide-react";
 import type { SearchDomainOption, SearchSourceProvider } from "../types";
-import { MAX_SEARCH_DOMAINS, toggleDomain } from "../lib/domains";
+import { MAX_SEARCH_DOMAINS, toggleDomain } from "../domains";
 
 const SOURCE_OPTIONS: Array<{
   value: SearchSourceProvider;
@@ -52,6 +52,8 @@ interface SearchComposerProps {
   onSubmit: (event?: FormEvent) => void;
   onExampleSelect?: (value: string) => void;
 }
+
+const LIMIT_HINT_ID = "search-sources-limit";
 
 const DEFAULT_DOMAIN_OPTIONS: SearchDomainOption[] = [
   { name: "web", description: "General information, websites, explanations, references" },
@@ -136,6 +138,8 @@ export const SearchComposer = memo(function SearchComposer({
           <legend>Search source</legend>
           {domainOptions.map((opt) => {
             const checked = domains.includes(opt.name);
+            // "web" stays clickable at the limit: it is how the user resets.
+            const blocked = !checked && atLimit && opt.name !== "web";
             return (
               <label
                 key={opt.name}
@@ -146,14 +150,17 @@ export const SearchComposer = memo(function SearchComposer({
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={!checked && atLimit}
+                  disabled={blocked}
+                  aria-describedby={blocked ? LIMIT_HINT_ID : undefined}
                   onChange={() => onDomainsChange(toggleDomain(domains, opt.name))}
                 />
                 {opt.name.replace(/_/g, " ")}
               </label>
             );
           })}
-          {atLimit && <small>Up to {MAX_SEARCH_DOMAINS} search sources</small>}
+          <small id={LIMIT_HINT_ID} aria-live="polite">
+            {atLimit ? `Up to ${MAX_SEARCH_DOMAINS} search sources` : ""}
+          </small>
         </fieldset>
 
         <label>
