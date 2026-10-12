@@ -684,9 +684,9 @@ def test_registry_endpoint_exposes_source_sites(client):
 
 
 @pytest.mark.asyncio
-async def test_direct_search_default_issues_only_the_hint_query(monkeypatch):
-    # Off by default since the 2026-10-11 pilot: providers mostly ignored the
-    # site: clause, so restriction is opt-in via AGENTIC_SEARCH_CATEGORY_SITES.
+async def test_direct_search_default_sends_both_legs(monkeypatch):
+    # On by default: with no setting, a site-listed category sends the
+    # restricted and suffix legs; AGENTIC_SEARCH_CATEGORY_SITES=0 opts out.
     monkeypatch.delenv("AGENTIC_SEARCH_CATEGORY_SITES", raising=False)
     calls: list = []
     monkeypatch.setattr(
@@ -702,4 +702,9 @@ async def test_direct_search_default_issues_only_the_hint_query(monkeypatch):
         top_k=2,
         domain="financial",
     )
-    assert calls == [("serpapi", "etf fees financial market data filings")]
+    assert sorted(calls) == sorted(
+        [
+            ("serpapi", restricted_query("etf fees", "financial")),
+            ("serpapi", "etf fees financial market data filings"),
+        ]
+    )
