@@ -1000,3 +1000,27 @@ def test_auto_mixed_with_names_is_rejected_before_any_search(client, monkeypatch
     assert r.status_code == 400
     assert "auto" in r.json()["detail"]
     assert called == []
+
+
+@pytest.mark.parametrize("mode", ["chat_once", "standard", "tool_agent"])
+@pytest.mark.parametrize("domains", [["auto"], [" AUTO "]])
+def test_auto_on_a_non_search_mode_is_rejected_before_resolving(
+    client, monkeypatch, mode, domains
+):
+    seen = _patch_resolver(monkeypatch, ["web"])
+    r = client.post("/api/agent", json={"query": "q", "mode": mode, "domains": domains})
+    assert r.status_code == 400
+    assert "automatic search sources" in r.json()["detail"]
+    assert seen == []
+
+
+@pytest.mark.parametrize("mode", [None, "search_tool"])
+def test_auto_on_omitted_or_search_mode_still_resolves(client, monkeypatch, mode):
+    seen = _patch_resolver(monkeypatch, ["web"])
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    body = {"query": "q", "domains": ["auto"]}
+    if mode:
+        body["mode"] = mode
+    r = client.post("/api/agent", json=body)
+    assert r.status_code == 200
+    assert seen == [("q", ["auto"])]

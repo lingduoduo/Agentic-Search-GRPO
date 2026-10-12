@@ -211,6 +211,15 @@ jobs:
           )
           print(line)
           open(os.environ["GITHUB_STEP_SUMMARY"], "a").write(line + "\n")
+          # Drift against the committed one-time result is a warning, not a
+          # failure: the bar stays unenforced, the number should not move silently.
+          c = json.load(open("data/eval/category_selection.json"))
+          for key, tol in (("coverage", 0.005), ("mean_picks", 0.005), ("top1", 0.005)):
+              if abs(r[key] - c[key]) > tol:
+                  print(
+                      f"::warning::category selection {key} drifted: "
+                      f"{r[key]:.3f} now vs {c[key]:.3f} committed"
+                  )
           EOF
 
       - name: Category example leakage check

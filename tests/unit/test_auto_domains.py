@@ -144,3 +144,13 @@ async def test_an_index_from_another_encoder_falls_back(tmp_path, monkeypatch):
         ["web"],
         {"selected": ["web"], "status": "unavailable"},
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domains", [5, {"auto": 1}])
+async def test_non_list_input_is_returned_unchanged(domains, monkeypatch):
+    def boom(q):
+        raise AssertionError("selection must not run")
+
+    monkeypatch.setattr(category_selection, "select_for_query", boom)
+    assert await resolve_auto_domains("q", domains) == (domains, None)

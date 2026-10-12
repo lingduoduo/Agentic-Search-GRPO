@@ -306,7 +306,12 @@ accuracy bar** (see below), so treat its picks as a suggestion, not a verdict.
   `auto_domains` is `{"selected": [...], "status": "ok"}` (null when `auto` was
   not requested). The streaming `done` event carries both, and the agent and MCP
   tools add both to their metadata. A non-`web` pick still follows the mode
-  rule: a mode that rejects categories returns 400.
+  rule: a mode that rejects categories returns 400. For `auto` that check
+  runs up front: `domains: ["auto"]` with an explicit mode other than
+  `search_tool` or `hybrid_search` is rejected (400) before any selection,
+  whatever `auto` would have picked or whether the index is loaded. The
+  agent-facing `search_domain` tool returns only results; the picks are visible
+  through `batch_search`, the MCP `search_domain` tool and HTTP.
 - **Fallback.** With `AGENTIC_SEARCH_CATEGORY_INDEX_PATH` unset (the default), an
   index that fails to load, an index built with another encoder, or an encoder
   that raises, `auto` searches `web` and reports `{"selected": ["web"],

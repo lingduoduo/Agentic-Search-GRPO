@@ -292,7 +292,9 @@ in parallel and fused (RRF); the response and the streaming `done` event echo
 server pick the categories; then `domains` echoes the picks, even a single one,
 and `auto_domains` reports `{"selected": [...], "status": "ok" | "unavailable"}`
 (null otherwise) on the response and the `done` event. Mixing `auto` with named
-categories, or `domain: "auto"`, returns 400. See
+categories, or `domain: "auto"`, returns 400, as does `auto` with an explicit
+mode other than `search_tool` or `hybrid_search` (rejected up front, whatever it
+would have picked). See
 [Automatic category selection](search-engine.md#automatic-category-selection),
 [Multi-category search](search-engine.md#multi-category-search) and
 [Domains over HTTP](search-engine.md#domains-over-http-and-in-the-web-ui).

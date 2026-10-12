@@ -1812,6 +1812,7 @@ def create_web_app(
             if request.domains is not None:
                 if normalize_search_domain(request.domain) != "web":
                     raise ValueError("send either domain or domains, not both")
+                _reject_auto_for_mode(request.domains, request.mode)
                 requested, auto_info = await resolve_auto_domains(
                     query, request.domains
                 )
@@ -2703,6 +2704,25 @@ _VALID_AGENT_MODES = {
 # their own per-round queries inside src/agents, so a single entry-point hint
 # cannot apply exactly once across rounds; chat_once does no retrieval.
 _DOMAIN_HONORING_MODES = {"search_tool", "hybrid_search"}
+
+
+def _reject_auto_for_mode(domains: list[str], mode: str | None) -> None:
+    """Refuse ``["auto"]`` on a mode that ignores domains, before resolving.
+
+    Resolving first would encode the query, then 400 or not depending on what
+    was picked; the outcome must not depend on the pick or on index state.
+    """
+    if mode is None or [str(d).strip().lower() for d in domains] != ["auto"]:
+        return
+    resolved = _MODE_ALIASES.get(mode, mode)
+    if resolved not in _DOMAIN_HONORING_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"mode {resolved!r} does not support automatic search sources; "
+                "use 'search_tool', 'hybrid_search', or omit mode"
+            ),
+        )
 
 
 def _reject_domain_for_mode(domain: "str | tuple[str, ...]", mode: str | None) -> None:
