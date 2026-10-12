@@ -65,7 +65,7 @@ describe("AssistPage search-source taxonomy", () => {
     expect(screen.getByRole("checkbox", { name: "web" })).toBeChecked();
   });
 
-  async function submitWith(selected: string[]) {
+  async function submitWith(selected: string[], options: {typeFirst?: boolean} = {}) {
     vi.spyOn(api, "fetchSearchDomains").mockResolvedValue({domains: [
       {name: "web", description: "General information", typical_sources: ["Web search engines"]},
       {name: "financial", description: "Market data", typical_sources: ["SEC EDGAR"]},
@@ -76,8 +76,11 @@ describe("AssistPage search-source taxonomy", () => {
     const stream = vi.spyOn(api, "streamAgent").mockImplementation(fake as never);
     render(<AssistPage />);
     await screen.findByRole("checkbox", {name: "financial"});
+    const typeQuestion = () =>
+      fireEvent.change(screen.getByLabelText("Question"), {target: {value: "earnings"}});
+    if (options.typeFirst) typeQuestion();
     for (const name of selected) fireEvent.click(screen.getByRole("checkbox", {name}));
-    fireEvent.change(screen.getByLabelText("Question"), {target: {value: "earnings"}});
+    if (!options.typeFirst) typeQuestion();
     fireEvent.click(screen.getByText("Search"));
     await waitFor(() => expect(stream).toHaveBeenCalled());
     return stream.mock.calls[0][0];
@@ -91,6 +94,12 @@ describe("AssistPage search-source taxonomy", () => {
 
   it("submits several selected sources as domains", async () => {
     const req = await submitWith(["financial", "news"]);
+    expect(req.domains).toEqual(["financial", "news"]);
+    expect(req.domain).toBeUndefined();
+  });
+
+  it("submits the sources selected after the question was typed", async () => {
+    const req = await submitWith(["financial", "news"], {typeFirst: true});
     expect(req.domains).toEqual(["financial", "news"]);
     expect(req.domain).toBeUndefined();
   });

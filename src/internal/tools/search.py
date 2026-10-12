@@ -637,15 +637,14 @@ def search_domain_parameter() -> dict[str, object]:
     }
 
 
-def search_domains_parameter(*, enum: bool = False) -> dict[str, object]:
-    """Schema for ``domains``: up to three categories fused into one search."""
-    item = search_domain_parameter()
-    item.pop("default")
-    if enum:
-        item = {"type": "string", "enum": list(AVAILABLE_DOMAINS)}
+def search_domains_parameter() -> dict[str, object]:
+    """Schema for ``domains``: up to three categories fused into one search.
+
+    Items are enum-only; the category descriptions live on ``domain``.
+    """
     return {
         "type": "array",
-        "items": item,
+        "items": {"type": "string", "enum": list(DOMAIN_REGISTRY)},
         "minItems": 1,
         "maxItems": MAX_SEARCH_DOMAINS,
         "description": (
@@ -1723,9 +1722,7 @@ class DomainSearch:
         if domains is not None:
             if tag is not None:
                 raise InvalidToolInput("domains cannot be combined with a tag")
-            if domain is not None and (
-                not isinstance(domain, str) or _selector_key(domain) != "web"
-            ):
+            if domain is not None and normalize_search_domain(domain) != "web":
                 raise InvalidToolInput("pass domain or domains, not both")
             domains = normalize_search_domains(domains)
             if len(domains) == 1:
@@ -1910,7 +1907,7 @@ def _search_properties() -> dict:
             "enum": list(AVAILABLE_DOMAINS),
             "description": "Search-source category. With no tag, selects its web-search route.",
         },
-        "domains": search_domains_parameter(enum=True),
+        "domains": search_domains_parameter(),
         "tag": {
             "type": "string",
             "description": "An implemented capability returned by get_sub_domains, e.g. financial.quote or academic.arxiv.",

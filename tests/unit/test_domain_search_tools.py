@@ -326,6 +326,17 @@ async def test_web_search_rejects_four_domains_and_mixed_selectors():
     assert calls == []
 
 
+def test_web_search_domains_items_carry_no_category_descriptions():
+    from src.internal.tools.search import DOMAIN_REGISTRY
+
+    properties = _web_search_tool([]).schema.parameters["properties"]
+    assert properties["domains"]["items"] == {
+        "type": "string",
+        "enum": list(DOMAIN_REGISTRY),
+    }
+    assert "financial:" in properties["domain"]["description"]
+
+
 @pytest.mark.asyncio
 async def test_web_search_domain_aliases_pass_schema_validation(monkeypatch):
     monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")

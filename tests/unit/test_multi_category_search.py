@@ -97,10 +97,25 @@ async def test_one_category_is_exactly_search_category():
 
 @pytest.mark.asyncio
 async def test_categories_run_in_parallel():
-    p = _Provider({}, delays={_suffix("q", "news"): 0.2, _suffix("q", "code"): 0.2})
-    t0 = time.perf_counter()
-    await search_categories("q", domains=["news", "code"], page_size=5, search_fn=p)
-    assert time.perf_counter() - t0 < 0.35
+    # Barrier: each call waits until both categories have started, so a serial
+    # implementation deadlocks into a TimeoutError instead of a timing flake.
+    started: list[str] = []
+    both_started = asyncio.Event()
+
+    async def provider(query, page_size):
+        started.append(query)
+        if len(started) == 2:
+            both_started.set()
+        await both_started.wait()
+        return []
+
+    await asyncio.wait_for(
+        search_categories(
+            "q", domains=["news", "code"], page_size=5, search_fn=provider
+        ),
+        timeout=2.0,
+    )
+    assert started == [_suffix("q", "news"), _suffix("q", "code")]
 
 
 @pytest.mark.asyncio
@@ -197,11 +212,29 @@ async def test_fallback_used_is_any():
 
 @pytest.mark.asyncio
 async def test_outer_cancellation_cancels_every_category():
-    p = _Provider({}, delays={_suffix("q", "news"): 5.0, _suffix("q", "code"): 5.0})
+    started: list[str] = []
+    cancelled: list[str] = []
+    both_started = asyncio.Event()
+
+    async def provider(query, page_size):
+        started.append(query)
+        if len(started) == 2:
+            both_started.set()
+        try:
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            cancelled.append(query)
+            raise
+        return []
+
     task = asyncio.create_task(
-        search_categories("q", domains=["news", "code"], page_size=5, search_fn=p)
+        search_categories(
+            "q", domains=["news", "code"], page_size=5, search_fn=provider
+        )
     )
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(both_started.wait(), timeout=2.0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    await asyncio.sleep(0)
+    assert sorted(cancelled) == sorted([_suffix("q", "news"), _suffix("q", "code")])

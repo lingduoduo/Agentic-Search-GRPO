@@ -452,6 +452,15 @@ async def test_search_domains_rejects_tag_and_other_selectors_before_dispatch():
 
 
 @pytest.mark.asyncio
+async def test_search_domains_accepts_a_web_alias_domain(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    client, calls = _recording_web()
+    result = await client.search("rust", domain="general", domains=["news", "code"])
+    assert result["domains"] == ["news", "code"]
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_search_one_domains_entry_equals_domain(monkeypatch):
     monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
     client, _ = _recording_web()

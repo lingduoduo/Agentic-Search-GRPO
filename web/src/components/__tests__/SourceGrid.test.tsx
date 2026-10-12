@@ -51,9 +51,15 @@ describe("SourceGrid", () => {
     expect(screen.getByText("financial · news")).toBeInTheDocument();
   });
 
-  it("shows nothing extra for a single or missing categories", () => {
-    const one = { ...doc, metadata: { categories: ["financial"] } };
-    const { container } = render(<SourceGrid documents={[one, doc]} />);
+  it("shows a single category", () => {
+    const one = { ...doc, metadata: { categories: ["news"] } };
+    render(<SourceGrid documents={[one]} />);
+    expect(screen.getByText("news")).toBeInTheDocument();
+  });
+
+  it("shows nothing extra for missing or empty categories", () => {
+    const empty = { ...doc, metadata: { categories: [] } };
+    const { container } = render(<SourceGrid documents={[empty, doc]} />);
     expect(container.querySelector(".category-chips")).toBeNull();
   });
 

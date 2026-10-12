@@ -247,7 +247,7 @@ export function AssistPage() {
         setIsLoading(false);
       }
     }
-  }, [ensureSession, query, searchUrl, sourceProvider, topK]);
+  }, [domains, ensureSession, query, searchUrl, sourceProvider, topK]);
 
   const handleApprovalDecision = useCallback(async (
     approvalId: string,

@@ -69,7 +69,7 @@ const SourceCard = memo(function SourceCard({ document, index }: SourceCardProps
           #{mmrRank}
         </span>
         {Array.isArray(document.metadata.categories) &&
-          document.metadata.categories.length > 1 && (
+          document.metadata.categories.length > 0 && (
             <span className="category-chips" title="Found by these search sources">
               {(document.metadata.categories as string[]).join(" · ")}
             </span>
