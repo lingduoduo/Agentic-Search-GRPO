@@ -273,6 +273,91 @@ on `POST /api/agent` instead of `domain`; the agent tools `web_search`,
 
 Multi-category relevance is not measured; a labelled evaluation is a follow-up.
 
+### Automatic category selection
+
+A caller can send `domains: ["auto"]` instead of naming categories, and the
+system picks them from the query. It is **opt-in**: a request that does not ask
+for `auto` behaves exactly as before. **It also missed its pre-registered
+accuracy bar** (see below), so treat its picks as a suggestion, not a verdict.
+
+- **Where.** `POST /api/agent` (JSON, SSE and WebSocket), the agent tools
+  `web_search`, `search_domain` and `batch_search`, the MCP tools `search_web`,
+  `search_domain` and `batch_search`, and the Assist page's **Auto** checkbox.
+  `auto` must be the only entry: mixing it with named categories, or sending
+  `domain: "auto"`, is rejected (HTTP 400 or a tool error) before any provider
+  call (`batch_search` reports it as that query's `error` entry). The match is
+  case-insensitive. The agent `web_search` tool makes one selection for the
+  whole call, from all of its queries joined; `batch_search` selects for each
+  query separately.
+- **Method.** The query is embedded with the intent router's encoder
+  (`intfloat/e5-small-v2`, `query:` prefix), off the event loop. Each of the 20
+  categories scores the mean of its `top_k` highest cosines among its own
+  examples. The best category is selected, plus every other category scoring at
+  least `best − select_margin`, ordered by score and capped at 3; ties go to
+  registry order. The picks then run exactly as if the caller had named them
+  ([Multi-category search](#multi-category-search)), so selection makes no
+  provider calls and adds no search cost.
+- **Examples.** `data/category_examples.json` holds 8 short example queries per
+  category (160 in all). They were written by a subagent that never saw the
+  evaluation labels. `python -m src.model.pre_training.categories.cli build
+  --examples data/category_examples.json --output data/category_index` encodes
+  them into `data/category_index/index.npz`, which is not tracked in git.
+- **Response.** `domains` echoes the searched categories, even a single one, and
+  `auto_domains` is `{"selected": [...], "status": "ok"}` (null when `auto` was
+  not requested). The streaming `done` event carries both, and the agent and MCP
+  tools add both to their metadata. A non-`web` pick still follows the mode
+  rule: a mode that rejects categories returns 400.
+- **Fallback.** With `AGENTIC_SEARCH_CATEGORY_INDEX_PATH` unset (the default), an
+  index that fails to load, an index built with another encoder, or an encoder
+  that raises, `auto` searches `web` and reports `{"selected": ["web"],
+  "status": "unavailable"}`; the search still runs. A failed load is cached per
+  process and not retried.
+- **Settings.** `AGENTIC_SEARCH_CATEGORY_INDEX_PATH` (the index directory),
+  `AGENTIC_SEARCH_CATEGORY_TOP_K` (default 3) and
+  `AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN` (default 0.0); see
+  [Configuration](configuration.md).
+
+**Measured result: below the bar.** The labels are
+`data/eval/source_category_queries.json` (16 of the 20 categories; `web`,
+`official`, `product` and `local` have none). The first label of each category
+is the dev split (16 queries), used only to tune `top_k ∈ {1, 2, 3, 5}` and
+`select_margin ∈ {0.00, …, 0.05}`: it chose `top_k=3`, `select_margin=0.0`
+(dev coverage 0.938, 15/16, mean picks 1.0;
+`data/eval/category_selection_tuning.json`). Those became the defaults, and the
+other 48 queries were scored once with them
+(`data/eval/category_selection.json`):
+
+| Metric | Test (n=48) | Pre-registered bar |
+| --- | --- | --- |
+| Coverage (labelled category among the picks) | 0.729 (35/48) | ≥ 0.80 — **missed** |
+| Mean picks | 1.00 | ≤ 2.0 — met |
+| Top-1 accuracy | 0.729 | — |
+
+- **Per category** (3 test queries each, descriptive only): books, jobs, news
+  and resource 0.33; business, events, media, patent and social_media 0.67;
+  academic, code, education, financial, legal, statistics and travel 1.0.
+- **Most frequent confusions:** `academic` picked for books, news, patent and
+  resource queries; `statistics` for business and jobs; `education` for events
+  and resource.
+- **Effectively one category.** With a margin of 0.0 the selector picks exactly
+  one category except on an exact score tie, so `auto` amounts to choosing a
+  single category, and multi-category fusion rarely fires.
+- **Caveats.** The labels were written to fit their category, so these numbers
+  are likely optimistic. The examples and the labels were both drafted by LLM
+  subagents. Each label carries one category, so a correct extra pick does not
+  count.
+- **Leakage.** A unit test rejects any example whose normalized text equals an
+  evaluation query. In CI, the eval-gate workflow rebuilds the index, prints
+  the evaluation (the bar is reported, not enforced), and runs `cli leakage`,
+  which fails on any example within e5 cosine 0.95 of an evaluation query. Two
+  pairs exceed it, both in the test split and both independent paraphrases:
+  "best time to visit iceland" / "best time to visit iceland to see the
+  northern lights" (0.956, travel) and "US unemployment rate by month" / "us
+  unemployment rate historical monthly" (0.973, statistics). They are
+  allowlisted by name, so any new pair fails. Without those two queries test
+  coverage is 0.717 (n=46), so the conclusion does not change. The examples
+  were not edited after the run.
+
 ### Does selecting a domain help? Measured, and the answer is: not detectably
 
 The taxonomy shipped with a standing condition — no quality claim without
