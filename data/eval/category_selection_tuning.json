@@ -1,0 +1,147 @@
+{
+  "top_k": 3,
+  "select_margin": 0.0,
+  "grid": [
+    {
+      "top_k": 1,
+      "select_margin": 0.0,
+      "coverage": 0.875,
+      "mean_picks": 1.0,
+      "top1": 0.875
+    },
+    {
+      "top_k": 1,
+      "select_margin": 0.01,
+      "coverage": 0.875,
+      "mean_picks": 1.1875,
+      "top1": 0.875
+    },
+    {
+      "top_k": 1,
+      "select_margin": 0.02,
+      "coverage": 0.875,
+      "mean_picks": 1.375,
+      "top1": 0.875
+    },
+    {
+      "top_k": 1,
+      "select_margin": 0.03,
+      "coverage": 0.875,
+      "mean_picks": 1.5625,
+      "top1": 0.875
+    },
+    {
+      "top_k": 1,
+      "select_margin": 0.05,
+      "coverage": 0.875,
+      "mean_picks": 1.5625,
+      "top1": 0.875
+    },
+    {
+      "top_k": 2,
+      "select_margin": 0.0,
+      "coverage": 0.875,
+      "mean_picks": 1.0,
+      "top1": 0.875
+    },
+    {
+      "top_k": 2,
+      "select_margin": 0.01,
+      "coverage": 0.9375,
+      "mean_picks": 1.25,
+      "top1": 0.875
+    },
+    {
+      "top_k": 2,
+      "select_margin": 0.02,
+      "coverage": 0.9375,
+      "mean_picks": 1.4375,
+      "top1": 0.875
+    },
+    {
+      "top_k": 2,
+      "select_margin": 0.03,
+      "coverage": 0.9375,
+      "mean_picks": 1.5,
+      "top1": 0.875
+    },
+    {
+      "top_k": 2,
+      "select_margin": 0.05,
+      "coverage": 0.9375,
+      "mean_picks": 1.625,
+      "top1": 0.875
+    },
+    {
+      "top_k": 3,
+      "select_margin": 0.0,
+      "coverage": 0.9375,
+      "mean_picks": 1.0,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 3,
+      "select_margin": 0.01,
+      "coverage": 0.9375,
+      "mean_picks": 1.125,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 3,
+      "select_margin": 0.02,
+      "coverage": 0.9375,
+      "mean_picks": 1.4375,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 3,
+      "select_margin": 0.03,
+      "coverage": 0.9375,
+      "mean_picks": 1.5,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 3,
+      "select_margin": 0.05,
+      "coverage": 0.9375,
+      "mean_picks": 2.3125,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 5,
+      "select_margin": 0.0,
+      "coverage": 0.9375,
+      "mean_picks": 1.0,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 5,
+      "select_margin": 0.01,
+      "coverage": 0.9375,
+      "mean_picks": 1.1875,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 5,
+      "select_margin": 0.02,
+      "coverage": 0.9375,
+      "mean_picks": 1.5,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 5,
+      "select_margin": 0.03,
+      "coverage": 0.9375,
+      "mean_picks": 1.625,
+      "top1": 0.9375
+    },
+    {
+      "top_k": 5,
+      "select_margin": 0.05,
+      "coverage": 0.9375,
+      "mean_picks": 2.6875,
+      "top1": 0.9375
+    }
+  ],
+  "split": "dev"
+}
