@@ -119,3 +119,65 @@ async def test_mcp_search_web_malformed_setting_returns_the_error_payload(
     assert result["error"].startswith("Web search failed:")
     assert result["results"] == [] and calls == []
     assert result["executed_queries"] == ["battery academic research"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_domains_fans_out(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    result = await module.search_web("rust", domains=["news", "code"])
+    assert len(calls) == 2
+    assert result["domains"] == ["news", "code"]
+    assert result["executed_queries"] == calls or sorted(
+        result["executed_queries"]
+    ) == sorted(calls)
+    assert len(result["results"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_rejects_bad_domains_without_dispatch(monkeypatch):
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    too_many = await module.search_web(
+        "rust", domains=["news", "code", "film", "academic"]
+    )
+    mixed = await module.search_web("rust", domain="news", domains=["code"])
+    for payload in (too_many, mixed):
+        assert payload["error"] and payload["results"] == []
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_domain_passes_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def web(query, **kwargs):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    service = DomainSearch(web_search_fn=web, tools=[])
+    monkeypatch.setattr(module, "_domain_service", lambda: service)
+    result = await module.search_domain("rust", domains=["news", "code"])
+    assert result["domains"] == ["news", "code"] and len(calls) == 2
+    batch = await module.batch_search([{"query": "rust"}], domains=["news", "code"])
+    assert batch["queries"][0]["domains"] == ["news", "code"]

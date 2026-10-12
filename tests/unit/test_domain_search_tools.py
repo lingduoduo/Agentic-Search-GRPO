@@ -277,3 +277,88 @@ async def test_web_search_tool_setting_off_issues_one_suffix_call(monkeypatch):
     await tool.execute("i", {"queries": ["battery"], "domain": "academic"})
     assert normal == ["battery academic research"]
     assert restricted == []
+
+
+def _web_search_tool(calls):
+    from src.internal.tools.search import MultiQueryWebSearchTool
+
+    async def fake(query, **kwargs):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    return MultiQueryWebSearchTool(search_fn=fake)
+
+
+@pytest.mark.asyncio
+async def test_web_search_domains_issues_each_suffix_query(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls = []
+    tool = _web_search_tool(calls)
+    registry = ToolRegistry()
+    registry.register(tool)
+    arguments = {"queries": ["rates"], "domains": ["finance", "news"]}
+    _, _, errors = await registry.invoke("web_search", arguments)
+    assert not errors
+    assert len(calls) == 2
+    calls.clear()
+    _, _, meta = await tool.execute("i", arguments)
+    assert meta["domains"] == ["financial", "news"]
+    assert meta["executed_queries"] == calls and len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_rejects_four_domains_and_mixed_selectors():
+    from src.internal.tools.base import InvalidToolInput
+
+    calls = []
+    tool = _web_search_tool(calls)
+    registry = ToolRegistry()
+    registry.register(tool)
+    _, _, errors = await registry.invoke(
+        "web_search",
+        {"queries": ["q"], "domains": ["finance", "news", "code", "film"]},
+    )
+    assert errors
+    with pytest.raises(InvalidToolInput):
+        await tool.execute(
+            "i", {"queries": ["q"], "domain": "news", "domains": ["finance"]}
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_web_search_domain_aliases_pass_schema_validation(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls = []
+    registry = ToolRegistry()
+    registry.register(_web_search_tool(calls))
+    _, _, errors = await registry.invoke(
+        "web_search", {"queries": ["q"], "domains": ["Finance", "financial", "news"]}
+    )
+    assert not errors
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_domain_tool_accepts_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls = []
+
+    async def web(query, **kwargs):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    registry = ToolRegistry()
+    for tool in build_domain_search_tools(
+        service=DomainSearch(web_search_fn=web, tools=[])
+    ):
+        registry.register(tool)
+    _, _, errors = await registry.invoke(
+        "search_domain", {"query": "q", "domains": ["news", "code"]}
+    )
+    assert not errors and len(calls) == 2
+    _, _, errors = await registry.invoke(
+        "search_domain", {"query": "q", "domains": ["news", "code", "film", "academic"]}
+    )
+    assert errors
+    assert len(calls) == 2

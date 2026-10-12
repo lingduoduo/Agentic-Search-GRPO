@@ -315,7 +315,9 @@ def _source_validation_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
                 value = normalize_search_domain(value)
             except InvalidToolInput:
                 pass
-            values.append(value)
+            # Aliases collapse before the cap, as normalize_search_domains does.
+            if value not in values:
+                values.append(value)
         result["domains"] = values
     if isinstance(result.get("queries"), list):
         result["queries"] = [
@@ -631,6 +633,23 @@ def search_domain_parameter() -> dict[str, object]:
         "description": (
             "Optional search-source category hint, not a guaranteed result filter. "
             "Use web for broad or mixed topics. " + descriptions
+        ),
+    }
+
+
+def search_domains_parameter(*, enum: bool = False) -> dict[str, object]:
+    """Schema for ``domains``: up to three categories fused into one search."""
+    item = search_domain_parameter()
+    item.pop("default")
+    if enum:
+        item = {"type": "string", "enum": list(AVAILABLE_DOMAINS)}
+    return {
+        "type": "array",
+        "items": item,
+        "minItems": 1,
+        "maxItems": MAX_SEARCH_DOMAINS,
+        "description": (
+            "Up to three categories searched in parallel and fused; instead of domain."
         ),
     }
 
@@ -1349,6 +1368,7 @@ class MultiQueryWebSearchTool(Tool):
                         "description": "One to five search queries to run in parallel.",
                     },
                     "domain": search_domain_parameter(),
+                    "domains": search_domains_parameter(),
                 },
                 "required": ["queries"],
                 "additionalProperties": False,
@@ -1382,7 +1402,12 @@ class MultiQueryWebSearchTool(Tool):
         self, instance_id: str, arguments: dict[str, Any]
     ) -> tuple[str, Any, Any]:
         del instance_id
-        domain = normalize_search_domain(arguments.get("domain", "web"))
+        if "domains" in arguments and "domain" in arguments:
+            raise InvalidToolInput("pass domain or domains, not both")
+        if "domains" in arguments:
+            domains = normalize_search_domains(arguments["domains"])
+        else:
+            domains = [normalize_search_domain(arguments.get("domain", "web"))]
         raw_queries = arguments.get("queries", [])
         queries = _normalize_queries_input(raw_queries)
 
@@ -1408,9 +1433,9 @@ class MultiQueryWebSearchTool(Tool):
         )
         searches = await asyncio.gather(
             *[
-                search_category(
+                search_categories(
                     q,
-                    domain=domain,
+                    domains=domains,
                     page_size=self._page_size,
                     search_fn=_bind(self._search_fn),
                     restricted_fn=restricted,
@@ -1436,8 +1461,10 @@ class MultiQueryWebSearchTool(Tool):
                 merged.append(page)
 
         metadata: dict[str, Any] = {"queries": queries}
-        if domain != "web":
-            metadata.update(domain=domain, executed_queries=executed_queries)
+        if len(domains) > 1:
+            metadata.update(domains=domains, executed_queries=executed_queries)
+        elif domains[0] != "web":
+            metadata.update(domain=domains[0], executed_queries=executed_queries)
         if not merged and errors:
             # A Tool subclass (unlike FunctionTool) must put the failure into
             # its own metadata: that is how invoke_detailed learns about it.
@@ -1682,12 +1709,26 @@ class DomainSearch:
         query: str,
         *,
         domain: str | None = None,
+        domains: list[str] | None = None,
         tag: str | None = None,
         params: dict | str | None = None,
         max_results: int = 5,
     ) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise InvalidToolInput("query is required")
+        if domains is not None:
+            if tag is not None:
+                raise InvalidToolInput("domains cannot be combined with a tag")
+            if domain is not None and (
+                not isinstance(domain, str) or _selector_key(domain) != "web"
+            ):
+                raise InvalidToolInput("pass domain or domains, not both")
+            domains = normalize_search_domains(domains)
+            if len(domains) == 1:
+                domain = domains[0]
+                domains = None
+            else:
+                domain = None
         if isinstance(max_results, bool) or not isinstance(max_results, int):
             raise InvalidToolInput("max_results must be an integer")
         max_results = max(1, min(max_results, 10))
@@ -1705,6 +1746,10 @@ class DomainSearch:
                 raw_prefix
             ):
                 domain = None
+        if domains is not None:
+            return await self._search_domains(
+                query, domains, params=params, max_results=max_results
+            )
         canonical = normalize_search_domain(
             domain if domain is not None else (tag.split(".", 1)[0] if tag else "web")
         )
@@ -1785,6 +1830,39 @@ class DomainSearch:
         )
         return result
 
+    async def _search_domains(
+        self, query: str, domains: list[str], *, params, max_results: int
+    ) -> dict[str, Any]:
+        if parse_search_params(params):
+            raise InvalidToolInput(
+                "web capabilities accept max_results, not capability params"
+            )
+        restricted = (
+            (lambda q, n: self.restricted_search_fn(q, page_size=n))
+            if self.restricted_search_fn is not None and category_sites_enabled()
+            else None
+        )
+        category = await search_categories(
+            query,
+            domains=domains,
+            page_size=max_results,
+            search_fn=lambda q, n: self.web_search_fn(q, page_size=n),
+            restricted_fn=restricted,
+        )
+        errors = [page.error for page in category.pages if page.error]
+        if errors:
+            raise ValueError("; ".join(errors))
+        return {
+            "query": query,
+            "domains": domains,
+            "executed_query": category.executed_queries[0],
+            "executed_queries": category.executed_queries,
+            "results": [
+                {"title": page.title, "content": page.summary, "url": page.url}
+                for page in category.pages[:max_results]
+            ],
+        }
+
     async def extract(
         self, url: str, *, max_length: int = 5000
     ) -> list[dict[str, str]]:
@@ -1816,11 +1894,12 @@ class DomainSearch:
                     raise ValueError("each query must be an object")
                 defaults = dict(shared_options)
                 if item.get("tag"):
-                    # An explicit tag overrides both shared selectors.
-                    defaults.pop("tag", None)
-                    defaults.pop("domain", None)
-                elif "domain" in item:
-                    defaults.pop("tag", None)
+                    # An explicit tag overrides every shared selector.
+                    for key in ("tag", "domain", "domains"):
+                        defaults.pop(key, None)
+                elif "domain" in item or "domains" in item:
+                    for key in ("tag", "domain", "domains"):
+                        defaults.pop(key, None)
                 if "params" in item:
                     defaults.pop("params", None)
                 return await self.search(**{**defaults, **item})
@@ -1846,6 +1925,7 @@ def _search_properties() -> dict:
             "enum": list(AVAILABLE_DOMAINS),
             "description": "Search-source category. With no tag, selects its web-search route.",
         },
+        "domains": search_domains_parameter(enum=True),
         "tag": {
             "type": "string",
             "description": "An implemented capability returned by get_sub_domains, e.g. financial.quote or academic.arxiv.",
