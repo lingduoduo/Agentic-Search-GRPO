@@ -43,7 +43,7 @@ def test_restricted_query_shape():
 
 
 @pytest.mark.asyncio
-async def test_enough_restricted_results_skip_the_fallback():
+async def test_enough_restricted_results_use_no_fallback_pages():
     p = _Provider(
         {
             SCOPED: _pages(
@@ -54,8 +54,10 @@ async def test_enough_restricted_results_skip_the_fallback():
     out = await search_category(
         "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
     )
-    assert p.calls == [(SCOPED, 5)]
-    assert out.executed_queries == [SCOPED]
+    # Both legs are sent in parallel; only restricted pages are used.
+    assert sorted(p.calls) == sorted([(SCOPED, 5), (SUFFIX, 5)])
+    assert out.executed_queries == [SCOPED, SUFFIX]
+    assert out.fallback_used is False
     assert [pg.metadata["category_leg"] for pg in out.pages] == ["restricted"] * 3
     assert out.pages[0].metadata["category"] == "financial"
     assert out.pages[0].metadata["category_query"] == SCOPED
@@ -96,8 +98,9 @@ async def test_threshold_is_capped_by_page_size():
     out = await search_category(
         "etf fees", domain="financial", page_size=2, search_fn=p, restricted_fn=p
     )
-    assert p.calls == [(SCOPED, 2)]
+    assert (SCOPED, 2) in p.calls
     assert len(out.pages) == 2
+    assert out.fallback_used is False
 
 
 @pytest.mark.asyncio
@@ -320,3 +323,153 @@ async def test_no_on_list_results_returns_the_fallback_as_today():
     )
     assert [pg.url for pg in out.pages] == ["https://blog.example/x"]
     assert out.pages[0].metadata["category_leg"] == "fallback"
+
+
+# --- parallel legs with a grace window -----------------------------------------
+
+import time  # noqa: E402
+
+from src.internal.tools import search as search_module  # noqa: E402
+
+
+class _TimedProvider:
+    """Answers per query after a per-query delay; records start times."""
+
+    def __init__(self, answers, delays):
+        self.answers, self.delays = answers, delays
+        self.started: dict[str, float] = {}
+        self.cancelled: list[str] = []
+
+    async def __call__(self, query, page_size):
+        self.started[query] = time.perf_counter()
+        try:
+            await asyncio.sleep(self.delays.get(query, 0.0))
+        except asyncio.CancelledError:
+            self.cancelled.append(query)
+            raise
+        answer = self.answers.get(query, [])
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+ON_LIST = _pages("https://sec.gov/a", "https://nasdaq.com/b", "https://sec.gov/c")
+
+
+@pytest.mark.asyncio
+async def test_both_legs_start_together():
+    p = _TimedProvider(
+        {SCOPED: ON_LIST, SUFFIX: _pages("https://x.example/1")},
+        {SCOPED: 0.2, SUFFIX: 0.2},
+    )
+    t0 = time.perf_counter()
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert time.perf_counter() - t0 < 0.35  # parallel, not 0.4 sequential
+    assert abs(p.started[SCOPED] - p.started[SUFFIX]) < 0.05
+    assert [pg.metadata["category_leg"] for pg in out.pages] == ["restricted"] * 3
+    assert out.fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_enough_restricted_results_cancel_a_slow_suffix_leg():
+    p = _TimedProvider(
+        {SCOPED: ON_LIST, SUFFIX: _pages("https://x.example/1")},
+        {SCOPED: 0.0, SUFFIX: 5.0},
+    )
+    t0 = time.perf_counter()
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert time.perf_counter() - t0 < 0.5
+    await asyncio.sleep(0)  # a cancelled leg sees CancelledError on its next turn
+    assert SUFFIX in p.cancelled
+    assert out.fallback_used is False and len(out.pages) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_slow_restricted_leg_is_cut_off_after_the_grace(monkeypatch):
+    monkeypatch.setattr(search_module, "RESTRICT_GRACE_SECONDS", 0.2)
+    p = _TimedProvider(
+        {SCOPED: ON_LIST, SUFFIX: _pages("https://x.example/1")},
+        {SCOPED: 5.0, SUFFIX: 0.0},
+    )
+    t0 = time.perf_counter()
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert time.perf_counter() - t0 < 0.6  # suffix + grace, not 5 s
+    await asyncio.sleep(0)
+    assert SCOPED in p.cancelled
+    assert [pg.url for pg in out.pages] == ["https://x.example/1"]
+    assert out.fallback_used is True
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_leg_inside_the_grace_still_counts(monkeypatch):
+    monkeypatch.setattr(search_module, "RESTRICT_GRACE_SECONDS", 1.0)
+    p = _TimedProvider(
+        {SCOPED: ON_LIST, SUFFIX: _pages("https://x.example/1")},
+        {SCOPED: 0.2, SUFFIX: 0.0},
+    )
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert [pg.metadata["category_leg"] for pg in out.pages] == ["restricted"] * 3
+    assert out.fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_parallel_failure_rules_match_the_sequential_ones():
+    # Suffix fails, restricted thin but present: restricted pages are kept.
+    p = _TimedProvider(
+        {SCOPED: _pages("https://sec.gov/a"), SUFFIX: RuntimeError("down")}, {}
+    )
+    out = await search_category(
+        "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+    )
+    assert [pg.url for pg in out.pages] == ["https://sec.gov/a"]
+    # Suffix fails and restricted is empty: the suffix error propagates.
+    p = _TimedProvider({SCOPED: [], SUFFIX: RuntimeError("provider down")}, {})
+    with pytest.raises(RuntimeError, match="provider down"):
+        await search_category(
+            "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+        )
+
+
+@pytest.mark.asyncio
+async def test_time_budget_bounds_both_legs():
+    p = _TimedProvider(
+        {SCOPED: ON_LIST, SUFFIX: _pages("https://x.example/1")},
+        {SCOPED: 5.0, SUFFIX: 5.0},
+    )
+    t0 = time.perf_counter()
+    with pytest.raises(asyncio.TimeoutError):
+        await search_category(
+            "etf fees",
+            domain="financial",
+            page_size=5,
+            search_fn=p,
+            restricted_fn=p,
+            time_budget=0.2,
+        )
+    assert time.perf_counter() - t0 < 0.5
+    await asyncio.sleep(0)
+    assert set(p.cancelled) == {SCOPED, SUFFIX}
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_cancels_both_legs():
+    p = _TimedProvider({}, {SCOPED: 5.0, SUFFIX: 5.0})
+    task = asyncio.create_task(
+        search_category(
+            "etf fees", domain="financial", page_size=5, search_fn=p, restricted_fn=p
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0)
+    assert set(p.cancelled) == {SCOPED, SUFFIX}

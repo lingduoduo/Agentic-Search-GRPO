@@ -340,6 +340,9 @@ PageSearch = Callable[[str, int], Awaitable[list["SearchPage"]]]
 
 # Below this many usable restricted pages the suffix query tops the list up.
 RESTRICT_MIN_USABLE = 3
+# After the suffix leg returns, how long a still-running restricted leg may
+# take. Bounds the latency a slow site: query adds to about this much.
+RESTRICT_GRACE_SECONDS = 2.0
 # Providers whose query string accepts ``site:`` operators and that never fall
 # back to the browser internally.
 RESTRICTABLE_PROVIDERS = frozenset({"google", "serpapi", "serper"})
@@ -383,7 +386,11 @@ def site_matches(url: str, sites: Iterable[str]) -> bool:
 @dataclass(frozen=True)
 class CategorySearch:
     pages: list["SearchPage"]
+    # Every query sent; with both legs in flight that is both, even when the
+    # restricted leg alone supplied the pages.
     executed_queries: list[str]
+    # Whether suffix-leg pages were used (merged in, or returned alone).
+    fallback_used: bool = False
 
 
 def _usable_page(page: "SearchPage") -> bool:
@@ -414,12 +421,15 @@ async def search_category(
     restricted_fn: PageSearch | None = None,
     time_budget: float | None = None,
 ) -> CategorySearch:
-    """Search one category: its source sites first, the suffix query if thin.
+    """Search one category: its source sites, topped up by the suffix query.
 
-    ``restricted_fn`` must not fall back to the browser; pass None (the
-    setting is off, or the provider cannot take ``site:``) for one hint call.
-    ``time_budget`` (seconds, from the call's start) bounds the fallback only,
-    so a slow fallback cannot cost restricted pages already in hand.
+    Both legs start together. Enough on-list restricted results win outright
+    (the suffix leg is cancelled); otherwise the restricted leg gets at most
+    ``RESTRICT_GRACE_SECONDS`` after the suffix leg returns, so a slow
+    ``site:`` query costs seconds, not the provider timeout. ``restricted_fn``
+    must not fall back to the browser; pass None (the setting is off, or the
+    provider cannot take ``site:``) for one hint call. ``time_budget``
+    (seconds, from the call's start) bounds both legs.
     """
     loop = asyncio.get_running_loop()
     started = loop.time()
@@ -431,43 +441,76 @@ async def search_category(
         return CategorySearch(_tag_pages(pages, canonical, "hint", suffix), [suffix])
 
     sites = DOMAIN_REGISTRY[canonical].source_sites
-    try:
+    need = min(RESTRICT_MIN_USABLE, page_size)
+    executed = [scoped, suffix]
+
+    def remaining(cap: float | None = None) -> float | None:
+        if time_budget is None:
+            return cap
+        left = max(0.0, time_budget - (loop.time() - started))
+        return left if cap is None else min(cap, left)
+
+    def restricted_pages(task: asyncio.Task) -> list[SearchPage]:
+        if not task.done() or task.cancelled():
+            return []
+        exc = task.exception()
+        if exc is not None:  # timeout or provider error: the fallback decides
+            logger.info("restricted %s search failed: %s", canonical, exc)
+            return []
         # Enforced here, not only requested: providers relax the site: clause
         # (24% of restricted results were on-list in the 2026-10-11 pilot).
-        restricted = [
-            p
-            for p in await restricted_fn(scoped, page_size)
-            if _usable_page(p) and site_matches(p.url, sites)
+        kept = [
+            p for p in task.result() if _usable_page(p) and site_matches(p.url, sites)
         ]
-    except Exception as exc:  # timeout or provider error: the fallback decides
-        logger.info("restricted %s search failed: %s", canonical, exc)
-        restricted = []
-    restricted = _tag_pages(restricted[:page_size], canonical, "restricted", scoped)
-    if len(restricted) >= min(RESTRICT_MIN_USABLE, page_size):
-        return CategorySearch(restricted, [scoped])
+        return _tag_pages(kept[:page_size], canonical, "restricted", scoped)
 
-    executed = [scoped, suffix]
+    restricted_task = asyncio.ensure_future(restricted_fn(scoped, page_size))
+    suffix_task = asyncio.ensure_future(search_fn(suffix, page_size))
     try:
-        if time_budget is None:
-            fallback = await search_fn(suffix, page_size)
-        else:
-            remaining = max(0.0, time_budget - (loop.time() - started))
-            fallback = await asyncio.wait_for(
-                search_fn(suffix, page_size), timeout=remaining
-            )
-    except Exception:  # asyncio.TimeoutError included, on 3.10 as well
-        if restricted:
-            return CategorySearch(restricted, executed)
-        raise
-    if not restricted:
-        # Exactly what a single suffix call returns today, error pages included.
-        return CategorySearch(
-            _tag_pages(fallback, canonical, "fallback", suffix), executed
+        await asyncio.wait(
+            {restricted_task, suffix_task},
+            timeout=remaining(),
+            return_when=asyncio.FIRST_COMPLETED,
         )
-    seen = {page.url for page in restricted}
-    extra = [p for p in fallback if _usable_page(p) and p.url not in seen]
-    merged = restricted + _tag_pages(extra, canonical, "fallback", suffix)
-    return CategorySearch(merged[:page_size], executed)
+        if restricted_task.done() and not suffix_task.done():
+            if len(restricted_pages(restricted_task)) >= need:
+                return CategorySearch(restricted_pages(restricted_task), executed)
+            await asyncio.wait({suffix_task}, timeout=remaining())
+        elif suffix_task.done() and not restricted_task.done():
+            await asyncio.wait(
+                {restricted_task}, timeout=remaining(RESTRICT_GRACE_SECONDS)
+            )
+
+        restricted = restricted_pages(restricted_task)
+        if len(restricted) >= need:
+            return CategorySearch(restricted, executed)
+        if not suffix_task.done():  # the time budget ran out
+            if restricted:
+                return CategorySearch(restricted, executed)
+            raise asyncio.TimeoutError()
+        try:
+            fallback = suffix_task.result()
+        except Exception:
+            if restricted:
+                return CategorySearch(restricted, executed)
+            raise
+        if not restricted:
+            # Exactly what a single suffix call returns today, errors included.
+            return CategorySearch(
+                _tag_pages(fallback, canonical, "fallback", suffix),
+                executed,
+                fallback_used=True,
+            )
+        seen = {page.url for page in restricted}
+        extra = [p for p in fallback if _usable_page(p) and p.url not in seen]
+        merged = restricted + _tag_pages(extra, canonical, "fallback", suffix)
+        return CategorySearch(merged[:page_size], executed, fallback_used=bool(extra))
+    finally:
+        for task in (restricted_task, suffix_task):
+            if not task.done():
+                task.cancel()
+            elif not task.cancelled():
+                task.exception()  # retrieved, so a dropped leg logs no warning
 
 
 def search_domain_parameter() -> dict[str, object]:

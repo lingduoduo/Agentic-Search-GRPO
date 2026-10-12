@@ -403,7 +403,7 @@ async def run_source_query(
         )
         urls = [page.url for page in result.pages]
         category = ArmResult(urls=urls, empty=not urls)
-        fallback = len(result.executed_queries) > 1
+        fallback = result.fallback_used
     except Exception as exc:
         category = ArmResult(urls=[], empty=True, error=str(exc))
         fallback = False

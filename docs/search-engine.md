@@ -184,20 +184,27 @@ behavior; `official` has none because `site:gov` would be US-only.
 `GET /api/search-domains` and the `get_sub_domains` directories expose
 `source_sites` as an additive list next to `typical_sources`.
 
-**Restricted first, then fallback.** For a site-listed category, `search_category`
-first sends the query with a `site:` clause (`query (site:a OR site:b ...)`, no
-suffix words). A restricted result counts only if its host is on the list
+**Restricted and suffix legs in parallel.** For a site-listed category,
+`search_category` sends two queries at once: the restricted leg, with a `site:`
+clause (`query (site:a OR site:b ...)`, no suffix words), and the suffix leg. A restricted result counts only if its host is on the list
 (`site_matches`: the host or a subdomain at a dot boundary, plus the path prefix
 for entries such as `linkedin.com/jobs`). Providers relax the `site:` clause, so
 off-list results are dropped rather than trusted. If at least `min(3, page_size)`
-usable on-list results (a URL, no error, not blank) remain, it stops. Otherwise it also runs the suffix query and
-merges: restricted results first, then fallback results not already present,
-truncated to `page_size`. A restricted leg that raises or times out counts as
-zero results, so the fallback runs; a fallback that fails never hides restricted
-results. On the hybrid path each web leg runs under a per-provider wait, so the
-fallback gets only what remains of 75% of that wait (the rest is left for
-SerpAPI's page fetch); a fallback that overruns it is abandoned and the
-restricted results are returned, or the leg fails if there were none. Each page's metadata carries `category`, `category_leg`
+usable on-list results (a URL, no error, not blank) come back, those are the
+result, and a suffix leg still in flight is cancelled. Otherwise it merges:
+restricted results first, then suffix (fallback) results not already present,
+truncated to `page_size`.
+
+Once the suffix leg returns, a restricted leg still running gets at most
+`RESTRICT_GRACE_SECONDS` (2 s) more, and is then cancelled. A slow `site:` query
+therefore adds at most about two seconds to a category search; before the legs
+ran in parallel it could add the whole provider timeout. A restricted leg that
+raises, times out or is cut off counts as zero results. A suffix leg that fails
+never hides restricted results. On the hybrid path each web leg runs under a
+per-provider wait, and both legs get 75% of that wait (the rest is left for
+SerpAPI's page fetch). When the budget runs out, any on-list restricted results
+are returned; otherwise the leg fails. Both legs are always sent, so a
+site-listed category costs two provider calls per query. Each page's metadata carries `category`, `category_leg`
 (`restricted`, `fallback`, or `hint` for a single suffix call), and
 `category_query`; these reach document metadata, including SerpAPI's page-fetch
 step, and `executed_queries` lists every query actually sent.
@@ -436,16 +443,19 @@ Under the pre-registered rule this is **better**. Read it with three caveats:
 - **Part of it is constructed.** 35% of the authority hosts are on their own
   category's site list, so restricting to those sites raises the score partly
   by construction. The true gain is likely smaller than +0.094.
-- **It costs latency.** The fallback fires for 83% of queries and adds about
-  8.6 s each time. The `site:` OR query itself can also be slow: up to 90 s in
-  probes, capped by the 15 s client timeout in production.
+- **It cost latency as measured.** The run used sequential legs: the fallback
+  fired for 83% of queries and added about 8.6 s each time, and the `site:` OR
+  query itself can take up to 90 s in probes, capped by the 15 s client timeout
+  in production. The legs now run in parallel with a 2 s grace for the
+  restricted leg. A category search then takes about as long as the suffix
+  query plus at most 2 s, at the cost of always sending both queries. That is
+  about 9% more provider calls than the measured 1.83 per query. Re-scoring
+  this run from cache with parallel legs reproduces it exactly: +0.094,
+  p = 0.005, and the same fallback rate.
 
-The setting stays **off by default** for that latency, and setting it to `true`
-gets the measured gain today. Two directions would cut the cost before
-defaulting it on:
-
-- Restrict only the categories that benefit.
-- Run the restricted and suffix queries in parallel rather than in sequence.
+The setting stays **off by default**; `true` gets the measured gain. Restricting
+only the categories that gained was not done: it would pick categories on the
+same data that measured them.
 
 The report is `data/eval/source_category_relevance_confirmatory.json`. The run
 used 102 SerpAPI searches.
