@@ -53,7 +53,7 @@ export function AssistPage() {
   const [query, setQuery] = useState("");
   const [searchUrl, setSearchUrl] = useState(DEFAULT_SEARCH_URL);
   const [topK, setTopK] = useState(5);
-  const [domain, setDomain] = useState("web");
+  const [domains, setDomains] = useState<string[]>(["web"]);
   const [domainOptions, setDomainOptions] = useState<SearchDomainOption[]>([
     { name: "web", description: "General information, websites, explanations, references" },
   ]);
@@ -165,7 +165,7 @@ export function AssistPage() {
         // Only forwarded in dev mode; otherwise the backend resolves the URL.
         search_url: DEV_MODE ? searchUrl : undefined,
         top_k: topK,
-        domain,
+        ...(domains.length === 1 ? { domain: domains[0] } : { domains }),
         source_provider: DEV_MODE ? sourceProvider : undefined,
         route: options?.route,
       };
@@ -355,9 +355,9 @@ export function AssistPage() {
         onSearchUrlChange={setSearchUrl}
         onTopKChange={handleTopKChange}
         onSourceProviderChange={handleSourceProviderChange}
-        domain={domain}
+        domains={domains}
         domainOptions={domainOptions}
-        onDomainChange={setDomain}
+        onDomainsChange={setDomains}
         onSubmit={handleSubmit}
         onExampleSelect={(q) => {
           setQuery(q);

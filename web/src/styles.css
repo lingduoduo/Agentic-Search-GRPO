@@ -2035,3 +2035,32 @@ option:disabled,
   text-align: left;
   padding-bottom: 0.25rem;
 }
+
+.composer-controls .search-sources {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.search-sources legend {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.composer-controls .search-sources label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.category-chips {
+  font-size: 0.7rem;
+  color: var(--muted);
+}

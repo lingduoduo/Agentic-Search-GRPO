@@ -68,6 +68,12 @@ const SourceCard = memo(function SourceCard({ document, index }: SourceCardProps
         >
           #{mmrRank}
         </span>
+        {Array.isArray(document.metadata.categories) &&
+          document.metadata.categories.length > 1 && (
+            <span className="category-chips" title="Found by these search sources">
+              {(document.metadata.categories as string[]).join(" · ")}
+            </span>
+          )}
         <button
           className="source-copy-btn"
           onClick={handleCopy}

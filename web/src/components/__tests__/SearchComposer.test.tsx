@@ -14,7 +14,7 @@ const defaultProps = {
   onSearchUrlChange: vi.fn(),
   onTopKChange: vi.fn(),
   onSourceProviderChange: vi.fn(),
-  onDomainChange: vi.fn(),
+  onDomainsChange: vi.fn(),
   onSubmit: vi.fn(),
 };
 
@@ -134,33 +134,47 @@ describe("SearchComposer", () => {
 describe("SearchComposer domain selector", () => {
   const domainProps = {
     ...defaultProps,
-    domain: "web",
+    domains: ["web"],
     domainOptions: [
       { name: "web", description: "Broad or mixed-topic search; default" },
       { name: "financial", description: "Markets, investments, banking" },
       { name: "social_media", description: "Public social posts" },
+      { name: "news", description: "Current events" },
     ],
-    onDomainChange: vi.fn(),
+    onDomainsChange: vi.fn(),
   };
 
   it("renders the selector even without dev mode", () => {
     // Unlike Source and Retrieval URL, the domain is a product control.
     render(<SearchComposer {...domainProps} />);
-    expect(screen.getByLabelText("Search source")).toHaveValue("web");
+    expect(screen.getByRole("group", { name: "Search source" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "web" })).toBeChecked();
     expect(screen.queryByLabelText(/^Source$/)).not.toBeInTheDocument();
   });
 
-  it("reports the selected domain", async () => {
-    const onDomainChange = vi.fn();
-    render(<SearchComposer {...domainProps} onDomainChange={onDomainChange} />);
-    await userEvent.selectOptions(screen.getByLabelText("Search source"), "financial");
-    expect(onDomainChange).toHaveBeenCalledWith("financial");
+  it("reports the selected domains", async () => {
+    const onDomainsChange = vi.fn();
+    render(<SearchComposer {...domainProps} onDomainsChange={onDomainsChange} />);
+    await userEvent.click(screen.getByRole("checkbox", { name: "financial" }));
+    expect(onDomainsChange).toHaveBeenCalledWith(["financial"]);
   });
 
   it("labels underscored identifiers readably", () => {
     render(<SearchComposer {...domainProps} />);
     expect(
-      screen.getByRole("option", { name: "social media" }),
+      screen.getByRole("checkbox", { name: "social media" }),
     ).toBeInTheDocument();
+  });
+
+  it("disables unselected options at the limit", () => {
+    render(
+      <SearchComposer
+        {...domainProps}
+        domains={["financial", "news", "social_media"]}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "web" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "news" })).toBeEnabled();
+    expect(screen.getByText("Up to 3 search sources")).toBeInTheDocument();
   });
 });

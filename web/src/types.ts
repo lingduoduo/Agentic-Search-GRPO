@@ -45,6 +45,8 @@ export interface AgentExperienceRequest {
   // Honored by auto, search_tool, and hybrid_search; other modes reject a
   // non-web value.
   domain?: string;
+  // Up to three categories, fused; mutually exclusive with a non-web domain.
+  domains?: string[];
 }
 
 export interface ClarificationOptionView {
