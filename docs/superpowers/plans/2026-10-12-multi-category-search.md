@@ -1,6 +1,6 @@
 # Multi-category Search Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Let a query use up to three search-source categories, searched in parallel and fused with RRF, through HTTP (direct and hybrid), the agent tools, MCP and the Assist page. A single category must behave exactly as today.
 
@@ -57,7 +57,7 @@ async def search_categories(query: str, *, domains: list[str], page_size: int,
     time_budget: float | None = None) -> CategorySearch
 ```
 
-- [ ] **Step 1: Write the failing tests.** Create `tests/unit/test_multi_category_search.py`:
+- [x] **Step 1: Write the failing tests.** Create `tests/unit/test_multi_category_search.py`:
 
 ```python
 """search_categories: up to three categories in parallel, fused with RRF."""
@@ -221,9 +221,9 @@ async def test_outer_cancellation_cancels_every_category():
         await task
 ```
 
-- [ ] **Step 2: Run to verify it fails.** Run `pytest tests/unit/test_multi_category_search.py -q`. Expect an ImportError on `normalize_search_domains`.
+- [x] **Step 2: Run to verify it fails.** Run `pytest tests/unit/test_multi_category_search.py -q`. Expect an ImportError on `normalize_search_domains`.
 
-- [ ] **Step 3: Implement.** In `src/internal/tools/search.py`, add `from ..retrieval.fusion import rrf_rank` with the other relative imports. It is light and pulls in no torch. Then add directly below `search_category`:
+- [x] **Step 3: Implement.** In `src/internal/tools/search.py`, add `from ..retrieval.fusion import rrf_rank` with the other relative imports. It is light and pulls in no torch. Then add directly below `search_category`:
 
 ```python
 # Each category is up to two provider calls; three keeps a query at six.
@@ -331,13 +331,13 @@ async def search_categories(
 
 Check `rrf_rank`'s signature and its tie rule in `fusion.py` before relying on them. It returns `(key, score)` pairs sorted by score descending, with ties kept in first-seen order across the sets as given. Also confirm that `logger` and `replace` are in module scope; both already are.
 
-- [ ] **Step 4: Run.** Run `pytest tests/unit/test_multi_category_search.py tests/unit/test_category_search.py -q`. Expect PASS.
-- [ ] **Step 5: Mutation-check each of these; each must turn red, then restore it:**
+- [x] **Step 4: Run.** Run `pytest tests/unit/test_multi_category_search.py tests/unit/test_category_search.py -q`. Expect PASS.
+- [x] **Step 5: Mutation-check each of these; each must turn red, then restore it:**
   - (a) drop the dedup in `normalize_search_domains` (the alias test fails);
   - (b) replace `rrf_rank` with plain concatenation (the shared-first test fails);
   - (c) remove the `return_exceptions` handling so the first exception always raises (the one-raising test fails);
   - (d) remove the `len(domains) == 1` short-circuit (the `categories` key appears and the equality test fails).
-- [ ] **Step 6: Commit.** Message: `feat: search_categories fans out up to three categories with RRF`.
+- [x] **Step 6: Commit.** Message: `feat: search_categories fans out up to three categories with RRF`.
 
 ### Task 2: HTTP `domains`, direct and hybrid
 
@@ -353,7 +353,7 @@ Check `rrf_rank`'s signature and its tie rule in `fusion.py` before relying on t
   - inside `app.py`, the `domain` parameter of `_run_direct_search`, `_run_hybrid_search`, `_auto_search_pipeline`, `_run_search_direct_or_escalate` and `_WebHybridRetrievalStage` accepts `str | tuple[str, ...]`;
   - the helper `_domain_list(domain) -> list[str]`.
 
-- [ ] **Step 1: Write the failing tests.** Append to `tests/unit/servers/web/test_search_domain_http.py`. Reuse the file's `_recording_search_tool`, `_passthrough_fetch`, `_capture_kwarg` and `client` helpers, and its imports of `restricted_query`/`prepare_domain_query`. Import `prepare_domain_query` if the file doesn't already.
+- [x] **Step 1: Write the failing tests.** Append to `tests/unit/servers/web/test_search_domain_http.py`. Reuse the file's `_recording_search_tool`, `_passthrough_fetch`, `_capture_kwarg` and `client` helpers, and its imports of `restricted_query`/`prepare_domain_query`. Import `prepare_domain_query` if the file doesn't already.
 
 ```python
 def test_request_domains_reach_the_search_as_a_tuple(client, monkeypatch):
@@ -438,9 +438,9 @@ def test_response_echoes_domains(client, monkeypatch):
 
 (Set `AGENTIC_SEARCH_CATEGORY_SITES=0` where a test pins the plain fan-out shape. Restricted-leg behaviour is already covered by `search_category`'s tests.)
 
-- [ ] **Step 2: Run to verify it fails.** Run `pytest tests/unit/servers/web/test_search_domain_http.py -q`. The new tests should fail.
+- [x] **Step 2: Run to verify it fails.** Run `pytest tests/unit/servers/web/test_search_domain_http.py -q`. The new tests should fail.
 
-- [ ] **Step 3: Implement in `app.py`:**
+- [x] **Step 3: Implement in `app.py`:**
   - Import `normalize_search_domains, search_categories` from `...tools.search`.
   - `AgentExperienceRequest` gains:
 
@@ -508,12 +508,12 @@ def test_response_echoes_domains(client, monkeypatch):
     `dispatched` and `page_lists` are built from `results` as today.
   - Update the type hint of `domain` in `_run_direct_search`, `_run_hybrid_search`, `_auto_search_pipeline`, `_run_search_direct_or_escalate` and `_WebHybridRetrievalStage.__init__` to `"str | tuple[str, ...]"`, keeping the default `"web"`. Grep for any other place that reads `domain` as a string, such as logs or hook payloads, and make it use `_domain_list`.
 
-- [ ] **Step 4: Run.** Run `pytest tests/unit/servers/web/ tests/unit/test_multi_category_search.py tests/unit/test_category_search.py -q`, then `pytest -q`. Expect PASS. Existing single-`domain` tests must pass **unmodified**.
-- [ ] **Step 5: Mutation-check each of these; each must turn red, then restore it:**
+- [x] **Step 4: Run.** Run `pytest tests/unit/servers/web/ tests/unit/test_multi_category_search.py tests/unit/test_category_search.py -q`, then `pytest -q`. Expect PASS. Existing single-`domain` tests must pass **unmodified**.
+- [x] **Step 5: Mutation-check each of these; each must turn red, then restore it:**
   - send the scoped variant for every expanded query in multi-category hybrid (the hybrid test fails);
   - call `search_category(domain=domains[0])` instead of `search_categories` in direct (the fan-out test fails);
   - drop the `domain` + `domains` rejection (the 400 test fails).
-- [ ] **Step 6: Commit.** Message: `feat: HTTP domains fans out direct and hybrid search`.
+- [x] **Step 6: Commit.** Message: `feat: HTTP domains fans out direct and hybrid search`.
 
 ### Task 3: `web_search`, `search_domain`, `batch_search` and MCP
 
@@ -528,16 +528,16 @@ def test_response_echoes_domains(client, monkeypatch):
   - the `domains` argument (array of category names, 1–3 items) on `web_search`, `search_domain`, each `batch_search` item, and MCP `search_web`/`search_domain`;
   - multi-category results carry `domains: list[str]` in their metadata or result dict.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `tests/unit/test_domain_search_tools.py`: a registry `web_search` call with `domains=["finance", "news"]` issues both suffix queries (with `AGENTIC_SEARCH_CATEGORY_SITES=0`) and returns metadata `domains == ["financial", "news"]`. With `domains` of 4 it returns a validation error and makes no provider call. `domain` plus `domains` is an error.
   - `tests/unit/test_domain_search.py`: `DomainSearch.search(query, domains=["news", "code"])` issues both and returns `{"query", "domains": ["news", "code"], "executed_queries", "results"}`. `tag="financial.quote"` plus `domains` raises `InvalidToolInput` with no call. `domains=["news"]` returns exactly the `domain="news"` result. `batch_search` lets a per-item `domains` override the shared `domain`, and a per-item `tag` override the shared `domains`.
   - `tests/unit/test_domain_search_mcp.py`: MCP `search_web(query, domains=["news", "code"])` issues both through `MCP_WEB_SEARCH_PROVIDER` and returns `domains`. `domains` of 4 returns the error payload with no call.
 
   Write each test with real stub providers, using the patterns already in those files.
 
-- [ ] **Step 2: Run to verify they fail.**
+- [x] **Step 2: Run to verify they fail.**
 
-- [ ] **Step 3: Implement:**
+- [x] **Step 3: Implement:**
   - **`MultiQueryWebSearchTool`:**
     - Schema: add `"domains": {"type": "array", "items": search_domain_parameter(), "minItems": 1, "maxItems": MAX_SEARCH_DOMAINS, "description": "Up to three categories searched in parallel and fused; instead of domain."}`. Drop `default` from the item copy.
     - `execute`: if both `domain` and `domains` are present, raise `InvalidToolInput`. Set `domains = normalize_search_domains(arguments["domains"])` if present, else `[normalize_search_domain(arguments.get("domain", "web"))]`, and call `search_categories(q, domains=domains, ...)` per query in place of `search_category`.
@@ -557,14 +557,14 @@ def test_response_echoes_domains(client, monkeypatch):
   - **MCP `search_domain` / `batch_search`:** pass `domains` through to `DomainSearch`.
   - Update the docstrings to mention `domains` (up to three, fused).
 
-- [ ] **Step 4: Run.** Run `pytest tests/unit/test_domain_search*.py tests/unit/test_search_domain_tools.py tests/unit/test_mcp_server.py tests/unit/test_multi_category_search.py -q`, then `pytest -q`. Expect PASS, with existing tests unmodified.
-- [ ] **Step 5: Mutation-check:**
+- [x] **Step 4: Run.** Run `pytest tests/unit/test_domain_search*.py tests/unit/test_search_domain_tools.py tests/unit/test_mcp_server.py tests/unit/test_multi_category_search.py -q`, then `pytest -q`. Expect PASS, with existing tests unmodified.
+- [x] **Step 5: Mutation-check:**
   - remove the `tag` + `domains` rejection;
   - make the tool ignore `domains`;
   - make MCP ignore `domains`.
 
   Each must turn red. Restore.
-- [ ] **Step 6: Commit.** Message: `feat: domains on web_search, search_domain, batch_search and MCP`.
+- [x] **Step 6: Commit.** Message: `feat: domains on web_search, search_domain, batch_search and MCP`.
 
 ### Task 4: Assist page multi-select and source-card categories
 
@@ -576,7 +576,7 @@ def test_response_echoes_domains(client, monkeypatch):
 **Interfaces:**
 - Produces: `MAX_SEARCH_DOMAINS = 3`, `toggleDomain(current: string[], name: string): string[]`; the `SearchComposer` props `domains?: string[]` and `onDomainsChange(value: string[])`, replacing `domain`/`onDomainChange`; `AgentRequest.domains?: string[]`.
 
-- [ ] **Step 1: Write the failing tests.** Create `web/src/lib/__tests__/domains.test.ts`:
+- [x] **Step 1: Write the failing tests.** Create `web/src/lib/__tests__/domains.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -615,9 +615,9 @@ Then make these test updates:
 - **`App.test.tsx`:** update the domain test to click the "financial" checkbox. The payload is still `domain: "financial"`, and the default is still `domain: "web"`.
 - **`SourceGrid.test.tsx`:** a document whose `metadata.categories` is `["financial", "news"]` renders "financial · news". A single-entry or missing `categories` renders nothing extra.
 
-- [ ] **Step 2: Run to verify they fail.** Run `cd web && npm run test:unit`.
+- [x] **Step 2: Run to verify they fail.** Run `cd web && npm run test:unit`.
 
-- [ ] **Step 3: Implement.** Create `web/src/lib/domains.ts`:
+- [x] **Step 3: Implement.** Create `web/src/lib/domains.ts`:
 
 ```ts
 // Mirrors MAX_SEARCH_DOMAINS in src/internal/tools/search.py.
@@ -653,19 +653,19 @@ Then:
   - After the MMR-rank span, when `Array.isArray(document.metadata.categories) && document.metadata.categories.length > 1`, render `<span className="category-chips" title="Found by these search sources">{(document.metadata.categories as string[]).join(" · ")}</span>`.
   - Add minimal CSS for `.search-sources` (an inline-wrapped checkbox list) and `.category-chips` (small, muted) to the stylesheet the composer already uses. Check with `rg "composer" web/src --glob "*.css"`.
 
-- [ ] **Step 4: Run.** Run `cd web && npm run typecheck && npm run test:unit`. Expect PASS.
-- [ ] **Step 5: Mutation-check:**
+- [x] **Step 4: Run.** Run `cd web && npm run typecheck && npm run test:unit`. Expect PASS.
+- [x] **Step 5: Mutation-check:**
   - make `toggleDomain` append to `["web"]`, so the replace test fails;
   - send `domains` for a single selection, so the AssistPage single test fails.
 
   Restore both.
-- [ ] **Step 6: Commit.** Message: `feat: Assist page selects up to three search sources`.
+- [x] **Step 6: Commit.** Message: `feat: Assist page selects up to three search sources`.
 
 ### Task 5: Docs, review, PR
 
 **Files:** `docs/search-engine.md`, `docs/api-reference.md`, `docs/mcp.md`, `docs/frontend.md`, `README.md`; this plan's checkboxes and Validation record.
 
-- [ ] **Step 1: Docs:**
+- [x] **Step 1: Docs:**
   - **`docs/search-engine.md`:** add a `### Multi-category search` section after `### Category source sites`. It covers:
     - fields: the HTTP `domains`, the tool and MCP `domains`, and the Assist page multi-select;
     - the cap of 3, counted after aliasing;
@@ -680,10 +680,21 @@ Then:
   - **README:** in the "Search-source agents" bullet, replace "Today a request uses one category; searching several at once with fused results is not implemented yet" with "A request may use up to three categories, searched in parallel with results fused (RRF), reranked and cited; multi-category relevance is not yet measured".
 
   Verify every claim against the code.
-- [ ] **Step 2: Full verification:** `pytest -q`; Ruff check and format on changed Python; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the docs link and anchor check over `README.md` and `docs/*.md` (excluding `docs/superpowers`).
-- [ ] **Step 3: Whole-branch review.** One fresh reviewer, on the most capable model, against `origin/main`, the spec, this plan and the Review Focus. Fix material findings RED→GREEN and record rulings.
+- [x] **Step 2: Full verification:** `pytest -q`; Ruff check and format on changed Python; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the docs link and anchor check over `README.md` and `docs/*.md` (excluding `docs/superpowers`).
+- [x] **Step 3: Whole-branch review.** One fresh reviewer, on the most capable model, against `origin/main`, the spec, this plan and the Review Focus. Fix material findings RED→GREEN and record rulings.
 - [ ] **Step 4: PR.** Before each commit, check that `git branch --show-current` is `feat/multi-category-search`. Before pushing, check `git log origin/main -3` for direct pushes. Then push, open a PR against main, watch CI for the final commit, mark it ready, and report the URL. Do not merge.
 
 ## Validation record
 
-Spec approved by the user on 2026-10-12. Plan awaiting review.
+Spec and plan approved by the user on 2026-10-12. Executed subagent-driven, with a fresh implementer and reviewer per task.
+
+- Task 1 was approved first time. Tasks 2, 3 and 4 each needed one fix round:
+  - Task 2: streaming `done` events lacked `domains`.
+  - Task 3: `domain="web"` together with `domains` was rejected, and the web route was duplicated.
+  - Task 4: the helper sat in a gitignored `lib/`, the `done`-event type was missing, `web` couldn't reset the selection at the limit, and the limit hint wasn't accessible.
+- Plan corrections ruled during execution:
+  - Responses are built at 8 return sites through `_finalize_response`, not 2.
+  - The helper moved to `web/src/domains.ts`.
+- Final whole-branch review: 1 critical (the Assist submit handler captured stale `domains`) and 7 minor. Fixed in `25e5dd54` and `a082e2c1` with a barrier-based parallelism test; the scoped re-review was clean.
+- Local checks: `pytest` 5460 passed, 1 skipped; vitest 258 passed; typecheck, Ruff, `git diff --check` and the docs link check all clean.
+- Multi-category relevance is unmeasured, by design; a labelled evaluation is a follow-up.
