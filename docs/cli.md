@@ -182,7 +182,7 @@ The `memory` binary maps failures to the semantic codes in
 
 `cli/` was lifted from a larger upstream Go CLI and still carries that CLI's whole
 feature set, even though only `query` and `memory` have entry points. A
-2026-08-06 audit ([spec](superpowers/specs/2026-08-06-cli-simplification-design.md))
+2026-08-06 audit (its spec was removed with the August–September plans; see git history)
 found **4,358 of 6,676 LOC unreachable from either binary**. It is deliberately
 kept — it compiles, it is test-covered, and it is the starting point for a richer
 client — but **nothing runs it today**, so do not assume a package here is live

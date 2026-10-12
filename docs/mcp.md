@@ -104,17 +104,18 @@ Dynamic tools registered via `FunctionTool` / `ApiToolRegistry` can be mirrored 
 {"query": "battery recycling", "limit": 5, "domain": "academic"}
 ```
 
-For a domain with source sites, the provider first receives the scoped query
+For a domain with source sites, the provider receives two queries in parallel:
+the scoped query
 
 ```text
 battery recycling (site:arxiv.org OR site:semanticscholar.org OR site:pubmed.ncbi.nlm.nih.gov OR site:openreview.net OR site:aclanthology.org)
 ```
 
-and then the suffix query `battery recycling academic research` only if the
-scoped query returned fewer than three usable results (fewer than `limit` when
-`limit` is below three). This applies only when `AGENTIC_SEARCH_CATEGORY_SITES` is on; it is off by
-default. With the setting off, or for a domain without source sites, the
-provider receives the single suffix query, as before. A non-general response includes the original query, `executed_query`
+and the suffix query `battery recycling academic research`. Results from the
+listed hosts win when at least three come back (or `limit`, when `limit` is
+below three). Otherwise the suffix results fill the list. This is on by
+default; with `AGENTIC_SEARCH_CATEGORY_SITES=0`, or for a domain without
+source sites, the provider receives the single suffix query. A non-general response includes the original query, `executed_query`
 (the first query sent) and `executed_queries` (every query sent, in order); an
 empty result looks like:
 
