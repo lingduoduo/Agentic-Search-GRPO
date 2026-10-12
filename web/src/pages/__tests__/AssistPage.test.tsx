@@ -132,4 +132,33 @@ describe("AssistPage search-source taxonomy", () => {
     });
     expect(await screen.findByText("Auto unavailable: searched web")).toBeInTheDocument();
   });
+
+  it("clears the Auto pick when the next search starts", async () => {
+    vi.spyOn(api, "fetchSearchDomains").mockResolvedValue({domains: [
+      {name: "web", description: "General"},
+      {name: "news", description: "Current events"},
+    ]});
+    vi.spyOn(api, "createSession").mockResolvedValue({id: "s", messages: []} as never);
+    let calls = 0;
+    async function* fake() {
+      calls += 1;
+      if (calls === 1) {
+        yield {type: "done", session_id: "s", citations: [], documents: [],
+          auto_domains: {selected: ["news"], status: "ok"}} as const;
+      } else {
+        yield {type: "error", detail: "boom"} as const;
+      }
+    }
+    vi.spyOn(api, "streamAgent").mockImplementation(fake as never);
+    render(<AssistPage />);
+    await screen.findByRole("checkbox", {name: "news"});
+    fireEvent.click(screen.getByRole("checkbox", {name: "Auto"}));
+    fireEvent.change(screen.getByLabelText("Question"), {target: {value: "q"}});
+    fireEvent.click(screen.getByText("Search"));
+    expect(await screen.findByRole("status")).toHaveTextContent("Auto picked: news");
+    fireEvent.click(screen.getByRole("checkbox", {name: "Auto"}));
+    fireEvent.click(screen.getByText("Search"));
+    await screen.findByText("boom");
+    expect(screen.queryByText(/Auto picked/)).not.toBeInTheDocument();
+  });
 });

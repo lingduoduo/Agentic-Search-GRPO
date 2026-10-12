@@ -141,6 +141,7 @@ export function AssistPage() {
     setIntent(undefined);
     setRoute(undefined);
     setRouteDegraded(undefined);
+    setAutoDomains(null);
     // Clear the previous turn's answer so a failed/next query never renders a
     // stale answer or citation anchors pointing at now-removed source cards.
     setAnswer("");
@@ -372,7 +373,7 @@ export function AssistPage() {
       />
 
       {autoDomains && (
-        <p style={{ color: "var(--muted)" }}>
+        <p role="status" style={{ color: "var(--muted)" }}>
           {autoDomains.status === "ok"
             ? `Auto picked: ${autoDomains.selected.join(" · ")}`
             : "Auto unavailable: searched web"}
