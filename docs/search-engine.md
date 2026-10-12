@@ -221,10 +221,12 @@ The same behavior applies on the HTTP direct and hybrid paths
 (`_category_search_fns` in `src/internal/servers/web/app.py`), the multi-query
 `web_search` tool, `DomainSearch`, and the MCP `search_web` tool.
 
-`AGENTIC_SEARCH_CATEGORY_SITES` controls it. **It defaults to off**, so every path
-is hint-only and sends exactly the queries it sent before this feature; set it
-to `1` or `true` to opt in. It was switched off after the pilot below found
-that providers mostly ignore the `site:` clause.
+`AGENTIC_SEARCH_CATEGORY_SITES` controls it. **It defaults to on.** Set it to `0`
+or `false` to make every path hint-only, with exactly the queries sent before
+this feature. It was off from #683, after the pilot below found that providers
+mostly ignore the `site:` clause, until restriction was enforced on result
+hosts (#684), measured better on held-out labels (#685), and its legs ran in
+parallel (#686).
 
 Known cost: when SerpAPI is down, a site-listed category query spends two
 SerpAPI attempts (restricted, then the fallback cascade) before it reaches the
@@ -453,7 +455,7 @@ Under the pre-registered rule this is **better**. Read it with three caveats:
   this run from cache with parallel legs reproduces it exactly: +0.094,
   p = 0.005, and the same fallback rate.
 
-The setting stays **off by default**; `true` gets the measured gain. Restricting
+The setting is **on by default** since the legs run in parallel. Restricting
 only the categories that gained was not done: it would pick categories on the
 same data that measured them.
 
