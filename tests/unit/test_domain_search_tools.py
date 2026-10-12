@@ -362,3 +362,35 @@ async def test_search_domain_tool_accepts_domains(monkeypatch):
     )
     assert errors
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_domain_web_is_allowed_with_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls = []
+    registry = ToolRegistry()
+    registry.register(_web_search_tool(calls))
+    _, _, errors = await registry.invoke(
+        "web_search",
+        {"queries": ["q"], "domain": "web", "domains": ["news", "code"]},
+    )
+    assert not errors and len(calls) == 2
+    calls.clear()
+    with pytest.raises(ValueError):
+        await registry.invoke(
+            "web_search",
+            {"queries": ["q"], "domain": "news", "domains": ["news", "code"]},
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_web_search_one_domains_entry_equals_domain(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls = []
+    tool = _web_search_tool(calls)
+    single = await tool.execute("i", {"queries": ["q"], "domain": "news"})
+    single_calls, calls[:] = list(calls), []
+    listed = await tool.execute("i", {"queries": ["q"], "domains": ["news"]})
+    assert calls == single_calls
+    assert listed[2] == single[2] and listed[0] == single[0]

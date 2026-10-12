@@ -137,9 +137,7 @@ async def test_mcp_search_web_domains_fans_out(monkeypatch):
     result = await module.search_web("rust", domains=["news", "code"])
     assert len(calls) == 2
     assert result["domains"] == ["news", "code"]
-    assert result["executed_queries"] == calls or sorted(
-        result["executed_queries"]
-    ) == sorted(calls)
+    assert sorted(result["executed_queries"]) == sorted(calls)
     assert len(result["results"]) == 2
 
 
@@ -181,3 +179,41 @@ async def test_mcp_search_domain_passes_domains(monkeypatch):
     assert result["domains"] == ["news", "code"] and len(calls) == 2
     batch = await module.batch_search([{"query": "rust"}], domains=["news", "code"])
     assert batch["queries"][0]["domains"] == ["news", "code"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_error_payload_lists_every_category_query(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+    from src.internal.tools.search import prepare_domain_query
+
+    async def serper(query, *, page_size):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    result = await module.search_web("rust", domains=["news", "code"])
+    assert "error" in result
+    assert result["executed_queries"] == [
+        prepare_domain_query("rust", "news"),
+        prepare_domain_query("rust", "code"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_web_one_domains_entry_equals_domain(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    monkeypatch.setenv("MCP_WEB_SEARCH_PROVIDER", "serper")
+    from src.internal.mcp_server.tools import search as module
+
+    calls = []
+
+    async def serper(query, *, page_size):
+        calls.append(query)
+        return [SearchPage(title=query, summary="s", url=f"https://x.test/{query}")]
+
+    monkeypatch.setattr(module, "serper_dev_search", serper)
+    single = await module.search_web("rust", domain="news")
+    single_calls, calls[:] = list(calls), []
+    listed = await module.search_web("rust", domains=["news"])
+    assert listed == single and calls == single_calls

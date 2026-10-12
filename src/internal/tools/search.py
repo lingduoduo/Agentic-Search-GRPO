@@ -1402,7 +1402,11 @@ class MultiQueryWebSearchTool(Tool):
         self, instance_id: str, arguments: dict[str, Any]
     ) -> tuple[str, Any, Any]:
         del instance_id
-        if "domains" in arguments and "domain" in arguments:
+        if (
+            "domains" in arguments
+            and "domain" in arguments
+            and normalize_search_domain(arguments["domain"]) != "web"
+        ):
             raise InvalidToolInput("pass domain or domains, not both")
         if "domains" in arguments:
             domains = normalize_search_domains(arguments["domains"])
@@ -1747,9 +1751,16 @@ class DomainSearch:
             ):
                 domain = None
         if domains is not None:
-            return await self._search_domains(
-                query, domains, params=params, max_results=max_results
+            executed, rows = await self._search_web_categories(
+                query, domains, parse_search_params(params), max_results
             )
+            return {
+                "query": query,
+                "domains": domains,
+                "executed_query": executed[0],
+                "executed_queries": executed,
+                "results": rows,
+            }
         canonical = normalize_search_domain(
             domain if domain is not None else (tag.split(".", 1)[0] if tag else "web")
         )
@@ -1759,33 +1770,11 @@ class DomainSearch:
         options = parse_search_params(params)
         result = {"query": query, "domain": canonical, "tag": tag}
         if tag == f"{canonical}.web":
-            if options:
-                raise InvalidToolInput(
-                    "web capabilities accept max_results, not capability params"
-                )
-            restricted = (
-                (lambda q, n: self.restricted_search_fn(q, page_size=n))
-                if self.restricted_search_fn is not None and category_sites_enabled()
-                else None
+            executed, rows = await self._search_web_categories(
+                query, [canonical], options, max_results
             )
-            category = await search_category(
-                query,
-                domain=canonical,
-                page_size=max_results,
-                search_fn=lambda q, n: self.web_search_fn(q, page_size=n),
-                restricted_fn=restricted,
-            )
-            pages = category.pages
-            errors = [page.error for page in pages if page.error]
-            if errors:
-                raise ValueError("; ".join(errors))
             result.update(
-                executed_query=category.executed_queries[0],
-                executed_queries=category.executed_queries,
-                results=[
-                    {"title": page.title, "content": page.summary, "url": page.url}
-                    for page in pages[:max_results]
-                ],
+                executed_query=executed[0], executed_queries=executed, results=rows
             )
             return result
         if tag not in self.routes:
@@ -1830,10 +1819,11 @@ class DomainSearch:
         )
         return result
 
-    async def _search_domains(
-        self, query: str, domains: list[str], *, params, max_results: int
-    ) -> dict[str, Any]:
-        if parse_search_params(params):
+    async def _search_web_categories(
+        self, query: str, domains: list[str], options: dict, max_results: int
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """The web route for one category or several: (executed queries, rows)."""
+        if options:
             raise InvalidToolInput(
                 "web capabilities accept max_results, not capability params"
             )
@@ -1852,16 +1842,11 @@ class DomainSearch:
         errors = [page.error for page in category.pages if page.error]
         if errors:
             raise ValueError("; ".join(errors))
-        return {
-            "query": query,
-            "domains": domains,
-            "executed_query": category.executed_queries[0],
-            "executed_queries": category.executed_queries,
-            "results": [
-                {"title": page.title, "content": page.summary, "url": page.url}
-                for page in category.pages[:max_results]
-            ],
-        }
+        rows = [
+            {"title": page.title, "content": page.summary, "url": page.url}
+            for page in category.pages[:max_results]
+        ]
+        return category.executed_queries, rows
 
     async def extract(
         self, url: str, *, max_length: int = 5000

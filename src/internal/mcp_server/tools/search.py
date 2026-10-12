@@ -157,7 +157,7 @@ async def search_web(
             if domain != "web":
                 raise ValueError("pass domain or domains, not both")
             categories = normalize_search_domains(domains)
-        executed_queries = [prepare_domain_query(query, categories[0])]
+        executed_queries = [prepare_domain_query(query, c) for c in categories]
         scoped = (
             restricted_query(query, categories[0])
             if len(categories) == 1 and category_sites_enabled()
