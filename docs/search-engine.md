@@ -244,8 +244,10 @@ on `POST /api/agent` instead of `domain`; the agent tools `web_search`,
 
 - **Cap.** At most 3, counted after alias normalization and de-duplication, so
   `["finance", "financial"]` is one category. `web` is allowed and counts.
-  `domain` together with `domains` is rejected unless `domain` is `web` or
-  omitted (HTTP 400; a tool error; an MCP error payload). `tag` together with
+  `domain` together with `domains` is rejected unless `domain` is `web` (or a `web`
+  alias such as `general`) or omitted: HTTP 400; the agent `web_search` tool and `search_domain` (agent and
+  MCP) raise a tool error; MCP `search_web` returns an error payload; `batch_search`
+  (agent and MCP) reports it as that query's `error` entry. `tag` together with
   `domains` is rejected on `search_domain` and `batch_search`. All checks run
   before any provider call.
 - **Fusion.** Categories are searched in parallel and fused by URL with
@@ -256,12 +258,15 @@ on `POST /api/agent` instead of `domain`; the agent tools `web_search`,
   `done` event echo `domains` (null for a single category).
 - **Failures.** A category whose search raises is dropped and the rest are
   fused. If every category raises, the first category's exception is raised. If
-  none returns a usable page, the first category's pages are returned;
+  none returns a usable page, the first category that did not raise has its
+  pages returned;
   `executed_queries` still lists every category's queries.
 - **Cost.** Each site-listed category sends 2 provider calls per query; `web`
   and categories without sites send 1. With the cap of 3 that is at most 6
-  provider calls per query on the direct, tools and MCP paths. Hybrid adds the
-  plain variants below.
+  provider calls per query on the direct, tools and MCP paths. The bound is per
+  provider: auto mode can run a direct search and then escalate to the external
+  fallbacks (SerpAPI, then the browser provider when configured), each up to the
+  same bound, as with a single category. Hybrid adds the plain variants below.
 - **Hybrid.** With several categories, the categories apply to the original
   query only; the expanded variants run plain (as `web`) and the browser
   provider gets one plain-query call. With one category hybrid is unchanged.

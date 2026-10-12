@@ -140,7 +140,7 @@ it onto the assistant turn, and the transcript shows
 - a **⎘ copy** button copies the full content and flips to "copied ✓" for 1.5 s.
 - carries `id="source-{citation}"` so `[D1]`-style anchor links from the answer scroll to it.
 - color-codes the relevance score via `scoreColor()` (green ≥ 0.7, amber ≥ 0.4, orange > 0, grey for 0).
-- shows a category chip line ("a · b") when several search-source categories found the page (`metadata.categories` has more than one entry).
+- shows a category chip line ("a · b", or a single "a") listing the search-source categories that found the page whenever `metadata.categories` is a non-empty list (the key is set only by multi-category searches).
 - tags the source provider with a colored pill via `SOURCE_COLORS` (Browser Retrieval, SerpAPI, Local Retrieval, All Active Sources; grey fallback).
 
 Source cards are frontend-only (no dedicated backend endpoint): they are populated from the `documents` array of the `POST /api/agent` response (see the [Web backend API](api-reference.md#web-backend-api)); the retrieval server returns the same fields as `results[]` from `POST /search`. Inspect that backing data with:
