@@ -234,6 +234,45 @@ browser.
 
 Whether this improves relevance is measured below.
 
+### Multi-category search
+
+A request may name up to three categories. Over HTTP, send `domains` (a list)
+on `POST /api/agent` instead of `domain`; the agent tools `web_search`,
+`search_domain` and `batch_search`, and the MCP `search_web` tool, take the same
+`domains` field; the Assist page offers the multi-select described in
+[the frontend guide](frontend.md).
+
+- **Cap.** At most 3, counted after alias normalization and de-duplication, so
+  `["finance", "financial"]` is one category. `web` is allowed and counts.
+  `domain` together with `domains` is rejected unless `domain` is `web` (or a `web`
+  alias such as `general`) or omitted: HTTP 400; the agent `web_search` tool and `search_domain` (agent and
+  MCP) raise a tool error; MCP `search_web` returns an error payload; `batch_search`
+  (agent and MCP) reports it as that query's `error` entry. `tag` together with
+  `domains` is rejected on `search_domain` and `batch_search`. All checks run
+  before any provider call.
+- **Fusion.** Categories are searched in parallel and fused by URL with
+  reciprocal rank fusion (k = 60); ties go to the first-seen page in category
+  order, and the result is truncated to the page size. Each fused page carries
+  `categories`, the list of categories that found it. A single category is
+  unchanged and has no `categories` key. The HTTP response and the streaming
+  `done` event echo `domains` (null for a single category).
+- **Failures.** A category whose search raises is dropped and the rest are
+  fused. If every category raises, the first category's exception is raised. If
+  none returns a usable page, the first category that did not raise has its
+  pages returned;
+  `executed_queries` still lists every category's queries.
+- **Cost.** Each site-listed category sends 2 provider calls per query; `web`
+  and categories without sites send 1. With the cap of 3 that is at most 6
+  provider calls per query on the direct, tools and MCP paths. The bound is per
+  provider: auto mode can run a direct search and then escalate to the external
+  fallbacks (SerpAPI, then the browser provider when configured), each up to the
+  same bound, as with a single category. Hybrid adds the plain variants below.
+- **Hybrid.** With several categories, the categories apply to the original
+  query only; the expanded variants run plain (as `web`) and the browser
+  provider gets one plain-query call. With one category hybrid is unchanged.
+
+Multi-category relevance is not measured; a labelled evaluation is a follow-up.
+
 ### Does selecting a domain help? Measured, and the answer is: not detectably
 
 The taxonomy shipped with a standing condition — no quality claim without

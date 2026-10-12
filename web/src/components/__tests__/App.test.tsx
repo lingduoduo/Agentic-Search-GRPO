@@ -561,8 +561,7 @@ describe("App search domain", () => {
     });
     mockStreamAgent.mockReturnValue(fakeStream("search"));
     render(<App />);
-    const select = await screen.findByLabelText("Search source");
-    await userEvent.selectOptions(select, "financial");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "financial" }));
     await submitQuery("etf fees");
     await waitFor(() => expect(mockStreamAgent).toHaveBeenCalled());
     expect(mockStreamAgent.mock.calls[0][0]).toMatchObject({

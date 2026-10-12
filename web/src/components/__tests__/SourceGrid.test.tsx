@@ -45,6 +45,24 @@ describe("SourceGrid", () => {
     expect(screen.getByRole("heading", { name: "Local doc" })).toBeInTheDocument();
   });
 
+  it("shows the categories that found a fused result", () => {
+    const fused = { ...doc, metadata: { categories: ["financial", "news"] } };
+    render(<SourceGrid documents={[fused]} />);
+    expect(screen.getByText("financial · news")).toBeInTheDocument();
+  });
+
+  it("shows a single category", () => {
+    const one = { ...doc, metadata: { categories: ["news"] } };
+    render(<SourceGrid documents={[one]} />);
+    expect(screen.getByText("news")).toBeInTheDocument();
+  });
+
+  it("shows nothing extra for missing or empty categories", () => {
+    const empty = { ...doc, metadata: { categories: [] } };
+    const { container } = render(<SourceGrid documents={[empty, doc]} />);
+    expect(container.querySelector(".category-chips")).toBeNull();
+  });
+
   it("renders the citation label", () => {
     render(<SourceGrid documents={[doc]} />);
     expect(screen.getByText("[D1]")).toBeInTheDocument();

@@ -16,10 +16,11 @@ from src.internal.tools.search import google_custom_search
 from src.internal.tools.search import serper_dev_search
 from src.internal.tools.search import serpapi_search
 from src.internal.tools.search import normalize_search_domain
+from src.internal.tools.search import normalize_search_domains
 from src.internal.tools.search import category_sites_enabled
 from src.internal.tools.search import prepare_domain_query
 from src.internal.tools.search import restricted_query
-from src.internal.tools.search import search_category
+from src.internal.tools.search import search_categories
 from src.internal.tools.search import search_domain_parameter
 
 from ..api import mcp_server
@@ -87,11 +88,17 @@ async def search_indexed_documents(
     return {"results": results}
 
 
-def _domain_metadata(domain: str, executed_queries: list[str]) -> dict[str, Any]:
-    if domain == "web":
+def _domain_metadata(domains: list[str], executed_queries: list[str]) -> dict[str, Any]:
+    if len(domains) > 1:
+        return {
+            "domains": domains,
+            "executed_query": executed_queries[0],
+            "executed_queries": executed_queries,
+        }
+    if domains[0] == "web":
         return {}
     return {
-        "domain": domain,
+        "domain": domains[0],
         "executed_query": executed_queries[0],
         "executed_queries": executed_queries,
     }
@@ -103,6 +110,7 @@ async def search_web(
     query: str,
     limit: int = 5,
     domain: str = "web",
+    domains: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Search the public internet for general knowledge and current events.
@@ -111,10 +119,12 @@ async def search_web(
 
     `domain` optionally scopes the search to the category's source sites (falling back
     to a category hint when that returns few results). It is not a hard filter.
-    Omit it or use `web` to preserve the original query.
+    Omit it or use `web` to preserve the original query. `domains` instead takes
+    up to three categories, searched in parallel and fused; do not combine it
+    with `domain`.
 
     Returns ``{"results": [{title, url, snippet}, ...], "query": query}``.
-    Non-web calls also return `domain` and `executed_query`, including when
+    Non-web calls also return `domain` (or `domains`) and `executed_query`, including when
     the provider raises an error. Invalid domains fail before provider dispatch.
     Use ``open_urls`` to fetch full content from returned URLs.
 
@@ -126,7 +136,6 @@ async def search_web(
     {"query": "React 19 release notes", "limit": 5}
     ```
     """
-    domain = normalize_search_domain(domain)
     provider = os.getenv("MCP_WEB_SEARCH_PROVIDER", "google")
     provider_fn = {"serpapi": serpapi_search, "serper": serper_dev_search}.get(
         provider, google_custom_search
@@ -136,18 +145,32 @@ async def search_web(
         return await provider_fn(q, page_size=page_size)
 
     logger.info("MCP Server: web search: query='%s', limit=%s", query, limit)
-    suffix = prepare_domain_query(query, domain)
-    executed_queries = [suffix]
+    # An invalid single domain still raises before dispatch; `domains` problems
+    # return the error payload from inside the try.
+    domain = normalize_search_domain(domain)
+    categories = [domain]
+    executed_queries = [query]
     try:
-        # Inside the try: a malformed setting returns the error payload.
-        scoped = restricted_query(query, domain) if category_sites_enabled() else None
-        executed_queries = [scoped, suffix] if scoped else [suffix]
-        category = await search_category(
+        # Inside the try: a bad selector or malformed setting returns the
+        # error payload, before any provider call.
+        if domains is not None:
+            if domain != "web":
+                raise ValueError("pass domain or domains, not both")
+            categories = normalize_search_domains(domains)
+        executed_queries = [prepare_domain_query(query, c) for c in categories]
+        scoped = (
+            restricted_query(query, categories[0])
+            if len(categories) == 1 and category_sites_enabled()
+            else None
+        )
+        if scoped:
+            executed_queries = [scoped, *executed_queries]
+        category = await search_categories(
             query,
-            domain=domain,
+            domains=categories,
             page_size=limit,
             search_fn=run,
-            restricted_fn=run if scoped else None,
+            restricted_fn=run if category_sites_enabled() else None,
         )
         pages = category.pages
         executed_queries = category.executed_queries
@@ -157,7 +180,7 @@ async def search_web(
             "error": f"Web search failed: {str(exc)}",
             "results": [],
             "query": query,
-            **_domain_metadata(domain, executed_queries),
+            **_domain_metadata(categories, executed_queries),
         }
 
     results = [
@@ -172,7 +195,7 @@ async def search_web(
     return {
         "results": results,
         "query": query,
-        **_domain_metadata(domain, executed_queries),
+        **_domain_metadata(categories, executed_queries),
     }
 
 
@@ -230,17 +253,20 @@ async def search_domain(
     tag: str | None = None,
     params: dict[str, Any] | None = None,
     max_results: int = 5,
+    domains: list[str] | None = None,
 ) -> dict[str, Any]:
     """Search through existing web providers or a local public-data capability.
 
     Discover tags with get_sub_domains. Without a tag, domain selects a
     search-source hint for web search. With a tag, query uses that
-    capability's query format.
+    capability's query format. `domains` (up to three, fused) replaces
+    domain and cannot be combined with a tag.
     Returns the original query, selected domain/tag, and results.
     """
     return await _domain_service().search(
         query,
         domain=domain,
+        domains=domains,
         tag=tag,
         params=params,
         max_results=max_results,
@@ -263,15 +289,18 @@ async def batch_search(
     tag: str | None = None,
     params: dict[str, Any] | None = None,
     max_results: int | None = None,
+    domains: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run 1–5 local domain searches concurrently, retaining order and per-query errors.
 
-    Other arguments supply defaults; per-item fields override them.
+    Other arguments supply defaults (`domains`: up to three, fused); per-item
+    fields override them.
     """
     defaults = {
         key: value
         for key, value in {
             "domain": domain,
+            "domains": domains,
             "tag": tag,
             "params": params,
             "max_results": max_results,

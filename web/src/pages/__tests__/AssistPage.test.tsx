@@ -62,23 +62,45 @@ describe("AssistPage search-source taxonomy", () => {
     vi.spyOn(api, "fetchSearchDomains").mockRejectedValue(new Error("unavailable"));
     render(<AssistPage />);
     await waitFor(() => expect(api.fetchSearchDomains).toHaveBeenCalled());
-    expect(screen.getByLabelText("Search source")).toHaveValue("web");
+    expect(screen.getByRole("checkbox", { name: "web" })).toBeChecked();
   });
 
-  it("submits the selected canonical source", async () => {
+  async function submitWith(selected: string[], options: {typeFirst?: boolean} = {}) {
     vi.spyOn(api, "fetchSearchDomains").mockResolvedValue({domains: [
       {name: "web", description: "General information", typical_sources: ["Web search engines"]},
       {name: "financial", description: "Market data", typical_sources: ["SEC EDGAR"]},
+      {name: "news", description: "Current events"},
     ]});
     vi.spyOn(api, "createSession").mockResolvedValue({id: "source-session", messages: []} as never);
     async function* fake() { yield {type: "answer", text: "Result"} as const; }
     const stream = vi.spyOn(api, "streamAgent").mockImplementation(fake as never);
     render(<AssistPage />);
-    await screen.findByRole("option", {name: "financial"});
-    fireEvent.change(screen.getByLabelText("Search source"), {target: {value: "financial"}});
-    fireEvent.change(screen.getByLabelText("Question"), {target: {value: "earnings"}});
+    await screen.findByRole("checkbox", {name: "financial"});
+    const typeQuestion = () =>
+      fireEvent.change(screen.getByLabelText("Question"), {target: {value: "earnings"}});
+    if (options.typeFirst) typeQuestion();
+    for (const name of selected) fireEvent.click(screen.getByRole("checkbox", {name}));
+    if (!options.typeFirst) typeQuestion();
     fireEvent.click(screen.getByText("Search"));
     await waitFor(() => expect(stream).toHaveBeenCalled());
-    expect(stream.mock.calls[0][0].domain).toBe("financial");
+    return stream.mock.calls[0][0];
+  }
+
+  it("submits a single selected source as domain", async () => {
+    const req = await submitWith(["financial"]);
+    expect(req.domain).toBe("financial");
+    expect(req.domains).toBeUndefined();
+  });
+
+  it("submits several selected sources as domains", async () => {
+    const req = await submitWith(["financial", "news"]);
+    expect(req.domains).toEqual(["financial", "news"]);
+    expect(req.domain).toBeUndefined();
+  });
+
+  it("submits the sources selected after the question was typed", async () => {
+    const req = await submitWith(["financial", "news"], {typeFirst: true});
+    expect(req.domains).toEqual(["financial", "news"]);
+    expect(req.domain).toBeUndefined();
   });
 });

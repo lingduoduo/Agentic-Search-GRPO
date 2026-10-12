@@ -140,7 +140,9 @@ from src.internal.tools.search import (
     RESTRICTABLE_PROVIDERS,
     category_sites_enabled,
     normalize_search_domain,
+    normalize_search_domains,
     prepare_domain_query,
+    search_categories,
     search_category,
 )
 
@@ -354,6 +356,13 @@ class AgentExperienceRequest(BaseModel):
             "identifiers are accepted as aliases. Not a result filter."
         ),
     )
+    domains: list[str] | None = Field(
+        default=None,
+        description=(
+            "Up to three search-source categories searched in parallel and "
+            "fused. Mutually exclusive with a non-'web' domain."
+        ),
+    )
 
 
 class ControlFlowEventView(BaseModel):
@@ -378,6 +387,7 @@ class AgentExperienceResponse(BaseModel):
     clarification: dict | None = None
     tool_calls: list[ToolCallView] = Field(default_factory=list)
     control_flow_trace: list[ControlFlowEventView] = Field(default_factory=list)
+    domains: list[str] | None = None
 
 
 class QueryProcessingHookResponse(BaseModel):
@@ -611,7 +621,7 @@ class _WebHybridRetrievalStage:
         browser_search_url,
         rerank_url,
         source_provider,
-        domain="web",
+        domain: "str | tuple[str, ...]" = "web",
     ) -> None:
         self._llm = llm
         self._search_url = search_url
@@ -700,7 +710,7 @@ async def _auto_search_pipeline(
     history: list,
     source_provider: str,
     extra: dict,
-    domain: str = "web",
+    domain: "str | tuple[str, ...]" = "web",
     retrieval_query: str | None = None,
 ) -> tuple:
     """Run the shared stage composer as the grounded degraded fallback."""
@@ -912,6 +922,7 @@ def _finalize_response(
     hook_metadata: dict,
     extra: dict,
     mode: str,
+    domains: list[str] | None = None,
 ) -> "AgentExperienceResponse":
     """Persist the assistant turn and build the response. Single response tail.
 
@@ -979,6 +990,7 @@ def _finalize_response(
         clarification=clarification,
         tool_calls=tool_calls,
         control_flow_trace=trace_views,
+        domains=domains,
     )
 
 
@@ -1072,7 +1084,7 @@ async def _run_search_direct_or_escalate(
     filters,
     history: list,
     source_provider: str,
-    domain: str = "web",
+    domain: "str | tuple[str, ...]" = "web",
     on_turn=None,
     retrieval_query: str | None = None,
 ) -> tuple:
@@ -1328,7 +1340,7 @@ async def _run_auto_routed(
     history: list,
     resolved,
     source_provider: str = "retrieval",
-    domain: str = "web",
+    domain: "str | tuple[str, ...]" = "web",
     on_turn=None,
     on_approval=None,
     on_escalation=None,
@@ -1790,11 +1802,18 @@ def create_web_app(
         if not query:
             raise HTTPException(status_code=422, detail="query is required")
         try:
-            # Before any provider call, per the taxonomy spec.
-            domain = normalize_search_domain(request.domain)
+            # Before any provider call, per the taxonomy and multi-category specs.
+            if request.domains is not None:
+                if normalize_search_domain(request.domain) != "web":
+                    raise ValueError("send either domain or domains, not both")
+                selected = normalize_search_domains(request.domains)
+                domain = selected[0] if len(selected) == 1 else tuple(selected)
+            else:
+                domain = normalize_search_domain(request.domain)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         _reject_domain_for_mode(domain, request.mode)
+        echoed_domains = list(domain) if isinstance(domain, tuple) else None
         hook_metadata: dict[str, object] = {}
 
         # `caller` is supplied by transports that do not authenticate from
@@ -1947,6 +1966,7 @@ def create_web_app(
                         hook_metadata=hook_metadata,
                         extra=extra,
                         mode="auto",
+                        domains=echoed_domains,
                     )
 
                 # Explicit mode — pin the dispatch, then share the runners + tail.
@@ -1994,6 +2014,7 @@ def create_web_app(
                             "inference": {"mode": "deterministic", "model": None},
                         },
                         mode=mode,
+                        domains=echoed_domains,
                     )
 
                 if mode == "hybrid_search":
@@ -2038,6 +2059,7 @@ def create_web_app(
                             "inference": {"mode": "deterministic", "model": None},
                         },
                         mode=mode,
+                        domains=echoed_domains,
                     )
 
                 if mode == "chat_loop":
@@ -2070,6 +2092,7 @@ def create_web_app(
                         hook_metadata=hook_metadata,
                         extra=extra,
                         mode=mode,
+                        domains=echoed_domains,
                     )
 
                 if mode == "search_agent":
@@ -2117,6 +2140,7 @@ def create_web_app(
                         hook_metadata=hook_metadata,
                         extra=extra,
                         mode=mode,
+                        domains=echoed_domains,
                     )
 
                 if mode == "tool_agent":
@@ -2153,6 +2177,7 @@ def create_web_app(
                         hook_metadata=hook_metadata,
                         extra=extra,
                         mode=mode,
+                        domains=echoed_domains,
                     )
 
                 result = await answer_with_retrieval(
@@ -2217,6 +2242,7 @@ def create_web_app(
                     hook_metadata=hook_metadata,
                     extra=extra,
                     mode=normalized_mode or "auto",
+                    domains=echoed_domains,
                 )
             except Exception as exc:
                 raise _dispatch_failure(exc) from exc
@@ -2241,6 +2267,7 @@ def create_web_app(
                 hook_metadata=hook_metadata,
                 extra=dict(follow_up_meta),
                 mode=mode,
+                domains=echoed_domains,
             )
         finally:
             finished_stages = _stage_metrics.finish_request(stage_token)
@@ -2591,6 +2618,7 @@ def _terminal_events(run_id: str, result: "AgentExperienceResponse") -> list[dic
             "control_flow_trace": [
                 event.model_dump() for event in result.control_flow_trace
             ],
+            "domains": result.domains,
         },
     ]
 
@@ -2655,7 +2683,7 @@ _VALID_AGENT_MODES = {
 _DOMAIN_HONORING_MODES = {"search_tool", "hybrid_search"}
 
 
-def _reject_domain_for_mode(domain: str, mode: str | None) -> None:
+def _reject_domain_for_mode(domain: "str | tuple[str, ...]", mode: str | None) -> None:
     """Refuse a real domain on a mode that would ignore it.
 
     Dropping the field quietly is what the taxonomy spec's rollout boundary
@@ -2663,7 +2691,7 @@ def _reject_domain_for_mode(domain: str, mode: str | None) -> None:
     always fine: it leaves the query unchanged, so no mode can ignore it.
     ``domain`` must already be canonical (``normalize_search_domain``).
     """
-    if domain == "web" or mode is None:
+    if all(d == "web" for d in _domain_list(domain)) or mode is None:
         return
     resolved = _MODE_ALIASES.get(mode, mode)
     if resolved not in _DOMAIN_HONORING_MODES:
@@ -2789,6 +2817,10 @@ def _category_search_fns(provider: str, **search_kwargs):
     return provider_search, (provider_search if restrictable else None)
 
 
+def _domain_list(domain: "str | tuple[str, ...]") -> list[str]:
+    return [domain] if isinstance(domain, str) else list(domain)
+
+
 def _tool_provider_for(source_provider: str):
     return "retrieval" if source_provider == "browser" else source_provider
 
@@ -2806,10 +2838,15 @@ async def _run_direct_search(
     rerank_url: str | None = None,
     top_k: int,
     filters: dict | None = None,
-    domain: str = "web",
+    domain: "str | tuple[str, ...]" = "web",
 ) -> list[ContextDocument]:
     # Over-fetch so MMR has candidates beyond top_k to diversify from.
     fetch_k = top_k * 2
+    domains = _domain_list(domain)
+    # Several categories have no single hint; the browser gets the raw query.
+    browser_query = (
+        query if len(domains) > 1 else prepare_domain_query(query, domains[0])
+    )
     documents: list[ContextDocument] = []
     for provider in _source_providers_for(source_provider):
         if provider == "browser":
@@ -2840,9 +2877,9 @@ async def _run_direct_search(
             search_fn, restricted_fn = _category_search_fns(
                 provider, search_url=search_url
             )
-            category = await search_category(
+            category = await search_categories(
                 query,
-                domain=domain,
+                domains=domains,
                 page_size=fetch_k,
                 search_fn=search_fn,
                 restricted_fn=restricted_fn,
@@ -2863,7 +2900,7 @@ async def _run_direct_search(
     # "auto" (internal + serpapi) deliberately excludes the slow browser.
     if browser_search_url and source_provider not in {"browser", "all", "auto"}:
         browser_docs = await _run_browser_search(
-            prepare_domain_query(query, domain),
+            browser_query,
             browser_search_url=browser_search_url,
             top_k=fetch_k,
             existing_count=len(documents),
@@ -2998,9 +3035,14 @@ async def _run_hybrid_search(
     top_k: int,
     filters: SearchFilters | None,
     source_provider: str,
-    domain: str = "web",
+    domain: "str | tuple[str, ...]" = "web",
 ) -> _HybridSearchResult:
     hybrid = get_timeout_policies().retrieval.web_hybrid
+    domains = _domain_list(domain)
+    # Several categories have no single hint; the browser gets the raw query.
+    browser_query = (
+        query if len(domains) > 1 else prepare_domain_query(query, domains[0])
+    )
     if source_provider == "retrieval":
         # Path A — corpus retrieval with its own query expansion pipeline.
         # Over-fetch so MMR has candidates beyond top_k to diversify from.
@@ -3039,7 +3081,7 @@ async def _run_hybrid_search(
         browser_docs: list[ContextDocument] = []
         if browser_search_url:
             browser_docs = await _run_browser_search(
-                prepare_domain_query(query, domain),
+                browser_query,
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
@@ -3063,7 +3105,7 @@ async def _run_hybrid_search(
                 return []
             # IDs are globally reassigned by _finalize_hybrid -> _reindex_documents, so starting at 0 here is safe.
             return await _run_browser_search(
-                prepare_domain_query(query, domain),
+                browser_query,
                 browser_search_url=browser_search_url,
                 top_k=top_k * 2,
                 existing_count=0,
@@ -3099,20 +3141,45 @@ async def _run_hybrid_search(
                 timeout_seconds=hybrid.provider_timeout_seconds,
                 max_retries=hybrid.provider_max_retries,
             )
-            results = await asyncio.gather(
-                *[
-                    search_category(
-                        eq,
-                        domain=domain,
+            # Leaves a quarter of the leg budget for SerpAPI page fetch.
+            budget = 0.75 * hybrid.provider_wait_seconds
+            if len(domains) == 1:
+                results = await asyncio.gather(
+                    *[
+                        search_category(
+                            eq,
+                            domain=domains[0],
+                            page_size=top_k,
+                            search_fn=search_fn,
+                            restricted_fn=restricted_fn,
+                            time_budget=budget,
+                        )
+                        for eq in executed_queries
+                    ]
+                )
+            else:
+                results = await asyncio.gather(
+                    search_categories(
+                        executed_queries[0],
+                        domains=domains,
                         page_size=top_k,
                         search_fn=search_fn,
                         restricted_fn=restricted_fn,
-                        # Leaves a quarter of the leg budget for SerpAPI page fetch.
-                        time_budget=0.75 * hybrid.provider_wait_seconds,
-                    )
-                    for eq in executed_queries
-                ]
-            )
+                        time_budget=budget,
+                    ),
+                    *[
+                        # Variants run plain: categories apply to the original
+                        # query only.
+                        search_category(
+                            eq,
+                            domain="web",
+                            page_size=top_k,
+                            search_fn=search_fn,
+                            time_budget=budget,
+                        )
+                        for eq in executed_queries[1:]
+                    ],
+                )
             dispatched = [r.executed_queries[0] for r in results]
             page_lists = [r.pages for r in results]
         if _is_web_provider(provider):

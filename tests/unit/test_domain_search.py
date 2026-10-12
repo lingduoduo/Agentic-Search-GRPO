@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from src.internal.tools.base import FunctionTool, ToolEffect
+from src.internal.tools.base import FunctionTool, InvalidToolInput, ToolEffect
 from src.internal.tools.search import DomainSearch
 from src.internal.tools.search import SearchPage
 from src.internal.tools.search import AVAILABLE_DOMAINS
@@ -413,3 +413,88 @@ async def test_web_capability_setting_off_issues_one_suffix_call(monkeypatch):
     await client.search("battery", domain="academic")
     assert normal == ["battery academic research"]
     assert restricted == []
+
+
+def _recording_web():
+    calls = []
+
+    async def web(query, *, page_size, **kwargs):
+        calls.append(query)
+        return [SearchPage(title=query, summary="Body", url=f"https://x.test/{query}")]
+
+    return DomainSearch(web_search_fn=web, tools=[]), calls
+
+
+@pytest.mark.asyncio
+async def test_search_domains_fans_out_and_reports_categories(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    client, calls = _recording_web()
+    result = await client.search("rust", domains=["news", "code"])
+    assert sorted(calls) == sorted(result["executed_queries"])
+    assert len(calls) == 2
+    assert result["domains"] == ["news", "code"]
+    assert set(result) >= {"query", "domains", "executed_queries", "results"}
+    assert len(result["results"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_domains_rejects_tag_and_other_selectors_before_dispatch():
+    client, calls = _recording_web()
+    for extra in (
+        {"tag": "financial.quote"},
+        {"domain": "news"},
+    ):
+        with pytest.raises(InvalidToolInput):
+            await client.search("rust", domains=["news", "code"], **extra)
+    with pytest.raises(InvalidToolInput):
+        await client.search("rust", domains=["news", "code", "film", "academic"])
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_domains_accepts_a_web_alias_domain(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    client, calls = _recording_web()
+    result = await client.search("rust", domain="general", domains=["news", "code"])
+    assert result["domains"] == ["news", "code"]
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_one_domains_entry_equals_domain(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    client, _ = _recording_web()
+    single = await client.search("rust", domain="news")
+    via_list = await client.search("rust", domains=["news"])
+    assert via_list == single
+
+
+@pytest.mark.asyncio
+async def test_batch_domains_and_tag_override_shared_selectors(monkeypatch):
+    client, _ = _recording_web()
+    seen = []
+
+    async def search(query, **options):
+        seen.append(options)
+        return {"query": query}
+
+    monkeypatch.setattr(client, "search", search)
+    await client.batch_search(
+        [
+            {"query": "a", "domains": ["news", "code"]},
+            {"query": "b", "domain": "film"},
+            {"query": "c", "tag": "academic.arxiv"},
+            {"query": "d"},
+        ],
+        domain="finance",
+        domains=["news", "code"],
+        tag="finance.quote",
+    )
+    assert seen[0] == {"domains": ["news", "code"]}
+    assert seen[1] == {"domain": "film"}
+    assert seen[2] == {"tag": "academic.arxiv"}
+    assert seen[3] == {
+        "domain": "finance",
+        "domains": ["news", "code"],
+        "tag": "finance.quote",
+    }

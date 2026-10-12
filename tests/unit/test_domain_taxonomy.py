@@ -180,7 +180,14 @@ def test_the_schema_no_longer_advertises_the_aliases():
     properties = _search_properties()
     assert "sub_domain" not in properties
     assert "sub_domain_params" not in properties
-    assert set(properties) == {"query", "domain", "tag", "params", "max_results"}
+    assert set(properties) == {
+        "query",
+        "domain",
+        "domains",
+        "tag",
+        "params",
+        "max_results",
+    }
 
 
 def test_mcp_wrappers_drop_the_aliases():
