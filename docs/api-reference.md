@@ -286,7 +286,10 @@ are in [API request routing](request-routing.md).
 The request's optional `domain` (default `web`) adds a search-source hint to web
 provider queries; `GET /api/search-domains` lists the 20 accepted categories with
 their `description` and `typical_sources`. Legacy topic identifiers are accepted
-as aliases. See
+as aliases. Instead of `domain`, `domains` takes up to three categories searched
+in parallel and fused (RRF); the response and the streaming `done` event echo
+`domains` (null for a single category). See
+[Multi-category search](search-engine.md#multi-category-search) and
 [Domains over HTTP](search-engine.md#domains-over-http-and-in-the-web-ui).
 
 ## Chat and session API

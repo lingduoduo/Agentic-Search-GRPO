@@ -138,6 +138,14 @@ when the provider raises). Invalid domain values produce a tool error before any
 provider call. The tool description lists the accepted domains; MCP exposes a
 string parameter and validates it at execution time.
 
+`search_web` also accepts `domains`, a list of up to three categories (counted
+after aliasing; `web` counts) searched in parallel and fused with RRF. Passing
+it with a `domain` other than `web` returns the error payload. A multi-category
+response carries `domains`, `executed_query` and `executed_queries`.
+`search_domain` and
+`batch_search` take `domains` too (not combined with `tag`). See
+[Multi-category search](search-engine.md#multi-category-search).
+
 Domain hints do not select providers or guarantee category membership.
 `search_indexed_documents` does not accept a domain argument; its document-set
 and authorization behavior is unchanged.

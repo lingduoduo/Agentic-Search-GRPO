@@ -140,6 +140,7 @@ it onto the assistant turn, and the transcript shows
 - a **⎘ copy** button copies the full content and flips to "copied ✓" for 1.5 s.
 - carries `id="source-{citation}"` so `[D1]`-style anchor links from the answer scroll to it.
 - color-codes the relevance score via `scoreColor()` (green ≥ 0.7, amber ≥ 0.4, orange > 0, grey for 0).
+- shows a category chip line ("a · b") when several search-source categories found the page (`metadata.categories` has more than one entry).
 - tags the source provider with a colored pill via `SOURCE_COLORS` (Browser Retrieval, SerpAPI, Local Retrieval, All Active Sources; grey fallback).
 
 Source cards are frontend-only (no dedicated backend endpoint): they are populated from the `documents` array of the `POST /api/agent` response (see the [Web backend API](api-reference.md#web-backend-api)); the retrieval server returns the same fields as `results[]` from `POST /search`. Inspect that backing data with:
@@ -174,7 +175,7 @@ The intent itself comes from the backend's routing decision — see the `respons
 
 | Component | What it does |
 |-----------|--------------|
-| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, a **Search source** selector (options from `GET /api/search-domains`, default `web`, tooltip shows each category's topics and typical sources, sent as the agent request's `domain`: a query hint for web search providers, not a result filter), source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
+| `SearchComposer` | Single input box (no mode selector), per-intent example-query chips, a **Search source** checkbox group (options from `GET /api/search-domains`, default `web`; up to three categories, sent as `domains` when several are chosen; choosing a category replaces `web`, and `web` resets the selection even at the limit; tooltip shows each category's topics and typical sources, a single category is sent as the agent request's `domain`: a query hint for web search providers, not a result filter), source-provider / retrieval-URL / top-K controls, Cmd+Enter submit |
 | `AnswerPanel` | Streamed markdown answer + intent badge + `[D1]` citation anchor links |
 | `SourceGrid` | Expand/collapse source cards with copy-to-clipboard and citation `id` anchors |
 | `SessionTimeline` | Chat-bubble history (user right, assistant left; system filtered) |
