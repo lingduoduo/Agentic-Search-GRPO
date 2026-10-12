@@ -28,6 +28,7 @@ from src.internal.tools.search import (
     DOMAIN_REGISTRY,
     SearchPage,
     normalize_search_domain,
+    prepare_domain_query,
     restricted_query,
 )
 
@@ -708,3 +709,142 @@ async def test_direct_search_default_sends_both_legs(monkeypatch):
             ("serpapi", "etf fees financial market data filings"),
         ]
     )
+
+
+# --- several categories (multi-category search) ------------------------------
+
+
+def test_request_domains_reach_the_search_as_a_tuple(client, monkeypatch):
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    r = client.post(
+        "/api/agent",
+        json={
+            "query": "acme earnings",
+            "mode": "search_tool",
+            "domains": ["finance", "news"],
+        },
+    )
+    assert captured["domain"] == ("financial", "news")
+    assert r.status_code == 200
+
+
+def test_single_entry_domains_is_a_plain_domain(client, monkeypatch):
+    captured: dict = {}
+    _capture_kwarg(monkeypatch, "_run_direct_search", captured)
+    client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "search_tool", "domains": ["finance"]},
+    )
+    assert captured["domain"] == "financial"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"domains": ["financial", "news", "code", "legal"]},
+        {"domains": []},
+        {"domains": ["nope"]},
+        {"domain": "news", "domains": ["code"]},
+    ],
+)
+def test_bad_domains_are_rejected_before_any_search(client, monkeypatch, body):
+    called = []
+
+    async def boom(*a, **k):
+        called.append(1)
+        return []
+
+    monkeypatch.setattr("src.internal.servers.web.app.search_tool", boom)
+    r = client.post("/api/agent", json={"query": "q", "mode": "search_tool", **body})
+    assert r.status_code == 400
+    assert called == []
+
+
+def test_domains_respect_the_mode_rule(client):
+    r = client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "chat_once", "domains": ["news", "code"]},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_direct_search_fans_out_and_tags_categories(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    answers = {
+        prepare_domain_query("q", "news"): [
+            SearchPage(title="n", url="https://shared.example/x", summary="c")
+        ],
+        prepare_domain_query("q", "code"): [
+            SearchPage(title="c", url="https://shared.example/x", summary="c")
+        ],
+    }
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool",
+        _recording_search_tool(calls, answers),
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    docs = await _run_direct_search(
+        "q",
+        source_provider="serpapi",
+        search_url="http://x/retrieve",
+        top_k=2,
+        domain=("news", "code"),
+    )
+    assert sorted(q for _, q in calls) == sorted(
+        [prepare_domain_query("q", "news"), prepare_domain_query("q", "code")]
+    )
+    assert docs and docs[0].metadata["categories"] == ["news", "code"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_several_categories_scope_only_the_original_query(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    calls: list = []
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.search_tool", _recording_search_tool(calls)
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.fetch_pages_concurrently", _passthrough_fetch
+    )
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._expanded_queries",
+        lambda query, llm: [query, f"{query} alt"],
+    )
+    browser: list = []
+
+    async def fake_browser(query, **_k):
+        browser.append(query)
+        return []
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._run_browser_search", fake_browser
+    )
+    await _run_hybrid_search(
+        "q",
+        llm=None,
+        search_url="http://x/retrieve",
+        browser_search_url="http://b/retrieve",
+        top_k=2,
+        filters=None,
+        source_provider="all",
+        domain=("news", "code"),
+    )
+    web = sorted(q for p, q in calls if p == "serpapi")
+    assert web == sorted(
+        [prepare_domain_query("q", "news"), prepare_domain_query("q", "code"), "q alt"]
+    )
+    assert browser == ["q"]
+
+
+def test_response_echoes_domains(client, monkeypatch):
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    r = client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "search_tool", "domains": ["news", "code"]},
+    )
+    assert r.json()["domains"] == ["news", "code"]
