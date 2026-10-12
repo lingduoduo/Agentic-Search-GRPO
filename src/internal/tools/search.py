@@ -20,6 +20,7 @@ from ...context.retrieval.client import SearchClient, SearchClientConfig, aiohtt
 from ..cache.serving import serving_cache
 from ..observability.prometheus import observe_stale_serve
 from ..configs.timeouts import get_timeout_policies
+from ..retrieval.fusion import rrf_rank
 from ..resilience.circuit_breaker import (
     CircuitOpenError,
     get_breaker,
@@ -511,6 +512,111 @@ async def search_category(
                 task.cancel()
             elif not task.cancelled():
                 task.exception()  # retrieved, so a dropped leg logs no warning
+
+
+# Each category is up to two provider calls; three keeps a query at six.
+MAX_SEARCH_DOMAINS = 3
+
+
+def normalize_search_domains(values) -> list[str]:
+    """Canonical, de-duplicated categories for one request, or reject it.
+
+    Aliases collapse before the cap is counted, so ["finance", "financial"]
+    is one category. Raised before any provider call.
+    """
+    if not isinstance(values, list) or not values:
+        raise InvalidToolInput("domains must be a non-empty list of categories")
+    canonical: list[str] = []
+    for value in values:
+        name = normalize_search_domain(value)
+        if name not in canonical:
+            canonical.append(name)
+    if len(canonical) > MAX_SEARCH_DOMAINS:
+        raise InvalidToolInput(
+            f"at most {MAX_SEARCH_DOMAINS} categories per search; got {len(canonical)}"
+        )
+    return canonical
+
+
+async def search_categories(
+    query: str,
+    *,
+    domains: list[str],
+    page_size: int,
+    search_fn: PageSearch,
+    restricted_fn: PageSearch | None = None,
+    time_budget: float | None = None,
+) -> CategorySearch:
+    """Search up to three categories in parallel and fuse them with RRF.
+
+    One category is exactly ``search_category``. With several, each category
+    contributes its usable pages as a ranked list; RRF (k=60) fuses them by
+    URL, ties first-seen in category order, truncated to ``page_size``.
+    """
+    if len(domains) == 1:
+        return await search_category(
+            query,
+            domain=domains[0],
+            page_size=page_size,
+            search_fn=search_fn,
+            restricted_fn=restricted_fn,
+            time_budget=time_budget,
+        )
+    outcomes = await asyncio.gather(
+        *[
+            search_category(
+                query,
+                domain=domain,
+                page_size=page_size,
+                search_fn=search_fn,
+                restricted_fn=restricted_fn,
+                time_budget=time_budget,
+            )
+            for domain in domains
+        ],
+        return_exceptions=True,
+    )
+    for outcome in outcomes:
+        # CancelledError is a BaseException; never treat it as a dropped category.
+        if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
+            raise outcome
+    succeeded = [
+        (domain, o)
+        for domain, o in zip(domains, outcomes)
+        if not isinstance(o, Exception)
+    ]
+    for domain, o in zip(domains, outcomes):
+        if isinstance(o, Exception):
+            logger.info("category %s search failed: %s", domain, o)
+    if not succeeded:
+        raise next(o for o in outcomes if isinstance(o, Exception))
+
+    executed = [q for _, o in succeeded for q in o.executed_queries]
+    fallback_used = any(o.fallback_used for _, o in succeeded)
+    ranked_lists = [
+        (domain, [p for p in o.pages if _usable_page(p)]) for domain, o in succeeded
+    ]
+    if not any(pages for _, pages in ranked_lists):
+        first = succeeded[0][1]
+        return CategorySearch(first.pages, executed, fallback_used=fallback_used)
+
+    first_page: dict[str, SearchPage] = {}
+    found_by: dict[str, list[str]] = {}
+    for domain, pages in ranked_lists:
+        for page in pages:
+            first_page.setdefault(page.url, page)
+            found_by.setdefault(page.url, [])
+            if domain not in found_by[page.url]:
+                found_by[page.url].append(domain)
+    ranked = rrf_rank([pages for _, pages in ranked_lists], lambda p: p.url)
+    fused = [
+        replace(
+            first_page[url],
+            metadata={**(first_page[url].metadata or {}), "categories": found_by[url]},
+        )
+        for url, _score in ranked[:page_size]
+    ]
+    return CategorySearch(fused, executed, fallback_used=fallback_used)
 
 
 def search_domain_parameter() -> dict[str, object]:
