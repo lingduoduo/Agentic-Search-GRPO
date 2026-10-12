@@ -848,3 +848,54 @@ def test_response_echoes_domains(client, monkeypatch):
         json={"query": "q", "mode": "search_tool", "domains": ["news", "code"]},
     )
     assert r.json()["domains"] == ["news", "code"]
+
+
+def _sse_events(text: str) -> list[dict]:
+    import json
+
+    return [
+        json.loads(line[len("data:") :].strip())
+        for line in text.splitlines()
+        if line.strip().startswith("data:") and line[len("data:") :].strip()
+    ]
+
+
+def test_stream_done_event_echoes_domains(client, monkeypatch):
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    r = client.post(
+        "/api/agent/stream",
+        json={"query": "q", "mode": "search_tool", "domains": ["news", "code"]},
+    )
+    assert r.status_code == 200
+    done = next(e for e in _sse_events(r.text) if e["type"] == "done")
+    assert done["domains"] == ["news", "code"]
+
+
+def test_single_entry_domains_echoes_null(client, monkeypatch):
+    _capture_kwarg(monkeypatch, "_run_direct_search", {})
+    r = client.post(
+        "/api/agent",
+        json={"query": "q", "mode": "search_tool", "domains": ["finance"]},
+    )
+    assert r.status_code == 200
+    assert r.json()["domains"] is None
+
+
+def test_auto_mode_forwards_several_domains_to_the_search_leaf(client, monkeypatch):
+    from src.internal.servers.web.intent import RouteDecision, RouteStrategy
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app.recognize_intent",
+        lambda *a, **k: RouteDecision(RouteStrategy.SEARCH),
+    )
+    captured: dict = {}
+
+    async def fake_search(query, **kwargs):
+        captured["domain"] = kwargs.get("domain")
+        return "answer", [], [], "search", {}
+
+    monkeypatch.setattr(
+        "src.internal.servers.web.app._run_search_direct_or_escalate", fake_search
+    )
+    client.post("/api/agent", json={"query": "q", "domains": ["news", "code"]})
+    assert captured["domain"] == ("news", "code")

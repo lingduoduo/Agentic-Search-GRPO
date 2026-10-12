@@ -2618,6 +2618,7 @@ def _terminal_events(run_id: str, result: "AgentExperienceResponse") -> list[dic
             "control_flow_trace": [
                 event.model_dump() for event in result.control_flow_trace
             ],
+            "domains": result.domains,
         },
     ]
 
