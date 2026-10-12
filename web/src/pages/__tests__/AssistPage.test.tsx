@@ -65,14 +65,22 @@ describe("AssistPage search-source taxonomy", () => {
     expect(screen.getByRole("checkbox", { name: "web" })).toBeChecked();
   });
 
-  async function submitWith(selected: string[], options: {typeFirst?: boolean} = {}) {
+  async function submitWith(
+    selected: string[],
+    options: {typeFirst?: boolean; done?: Record<string, unknown>} = {},
+  ) {
     vi.spyOn(api, "fetchSearchDomains").mockResolvedValue({domains: [
       {name: "web", description: "General information", typical_sources: ["Web search engines"]},
       {name: "financial", description: "Market data", typical_sources: ["SEC EDGAR"]},
       {name: "news", description: "Current events"},
     ]});
     vi.spyOn(api, "createSession").mockResolvedValue({id: "source-session", messages: []} as never);
-    async function* fake() { yield {type: "answer", text: "Result"} as const; }
+    async function* fake() {
+      yield {type: "answer", text: "Result"} as const;
+      if (options.done) {
+        yield {type: "done", session_id: "source-session", citations: [], documents: [], ...options.done} as const;
+      }
+    }
     const stream = vi.spyOn(api, "streamAgent").mockImplementation(fake as never);
     render(<AssistPage />);
     await screen.findByRole("checkbox", {name: "financial"});
@@ -102,5 +110,26 @@ describe("AssistPage search-source taxonomy", () => {
     const req = await submitWith(["financial", "news"], {typeFirst: true});
     expect(req.domains).toEqual(["financial", "news"]);
     expect(req.domain).toBeUndefined();
+  });
+
+  it("sends domains: ['auto'] for Auto, selected after typing", async () => {
+    const req = await submitWith(["Auto"], {typeFirst: true});
+    expect(req.domains).toEqual(["auto"]);
+    expect(req.domain).toBeUndefined();
+  });
+
+  it("shows what auto picked and keeps Auto selected", async () => {
+    await submitWith(["Auto"], {
+      done: {auto_domains: {selected: ["financial", "news"], status: "ok"}},
+    });
+    expect(await screen.findByText("Auto picked: financial · news")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", {name: "Auto"})).toBeChecked();
+  });
+
+  it("says when auto was unavailable", async () => {
+    await submitWith(["Auto"], {
+      done: {auto_domains: {selected: [], status: "unavailable"}},
+    });
+    expect(await screen.findByText("Auto unavailable: searched web")).toBeInTheDocument();
   });
 });

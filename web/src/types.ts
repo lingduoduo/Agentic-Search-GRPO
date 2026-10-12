@@ -79,7 +79,13 @@ export interface ControlFlowEventView {
   details: Record<string, string | number | boolean | null>;
 }
 
+export interface AutoDomains {
+  selected: string[];
+  status: "ok" | "unavailable";
+}
+
 export interface AgentExperienceResponse {
+  auto_domains?: AutoDomains | null;
   session_id: string;
   answer: string;
   citations: string[];
@@ -295,6 +301,7 @@ export interface SSEDoneEvent {
   clarification?: ClarificationView | null;
   // Categories searched, echoed on multi-category requests.
   domains?: string[];
+  auto_domains?: AutoDomains | null;
 }
 
 export interface SSEErrorEvent {

@@ -3,7 +3,7 @@ import { memo } from "react";
 import type { FormEvent } from "react";
 import { Loader2, Search } from "lucide-react";
 import type { SearchDomainOption, SearchSourceProvider } from "../types";
-import { MAX_SEARCH_DOMAINS, toggleDomain } from "../domains";
+import { AUTO, MAX_SEARCH_DOMAINS, toggleDomain } from "../domains";
 
 const SOURCE_OPTIONS: Array<{
   value: SearchSourceProvider;
@@ -136,6 +136,14 @@ export const SearchComposer = memo(function SearchComposer({
 
         <fieldset className="search-sources">
           <legend>Search source</legend>
+          <label title="Pick up to three sources automatically">
+            <input
+              type="checkbox"
+              checked={domains.includes(AUTO)}
+              onChange={() => onDomainsChange(toggleDomain(domains, AUTO))}
+            />
+            Auto
+          </label>
           {domainOptions.map((opt) => {
             const checked = domains.includes(opt.name);
             // "web" stays clickable at the limit: it is how the user resets.
