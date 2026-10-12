@@ -289,6 +289,23 @@ def normalize_search_domain(value: str = "web") -> str:
     raise InvalidToolInput("domain must be one of: " + ", ".join(DOMAIN_REGISTRY))
 
 
+AUTO_DOMAIN = "auto"
+
+
+async def resolve_auto_domains(
+    query: str, domains: list[str] | None
+) -> tuple[list[str] | None, dict | None]:
+    """Expand domains == ["auto"] into selected categories; anything else unchanged."""
+    if not domains or AUTO_DOMAIN not in [str(d).strip().lower() for d in domains]:
+        return domains, None
+    if len(domains) != 1:
+        raise InvalidToolInput("auto cannot be combined with named categories")
+    from .category_selection import select_for_query
+
+    selected, status = await asyncio.to_thread(select_for_query, query)
+    return selected, {"selected": selected, "status": status}
+
+
 def normalize_search_tag(tag: str) -> str:
     """Migrate legacy capability tags before domain/tag agreement checks."""
     if not isinstance(tag, str) or "." not in tag:
