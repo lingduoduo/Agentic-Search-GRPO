@@ -1,6 +1,6 @@
 # Automatic Category Selection Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `domains: ["auto"]` picks 1–3 search-source categories for a query by nearest examples (e5), runs the normal multi-category search, and is measured against a pre-registered bar on held-out labels.
 
@@ -75,7 +75,7 @@ DEFAULT_TOP_K, DEFAULT_SELECT_MARGIN  # re-exported from src/shared_configs/inte
 MAX_SELECTED = 3
 ```
 
-- [ ] **Step 1: Write the failing tests.** Create `tests/unit/test_category_index.py`. Use one-hot vectors so the cosines are exact, following `tests/unit/test_ml_intent.py`:
+- [x] **Step 1: Write the failing tests.** Create `tests/unit/test_category_index.py`. Use one-hot vectors so the cosines are exact, following `tests/unit/test_ml_intent.py`:
 
 ```python
 """CategoryIndex: top-k mean per category, margin selection, at most three."""
@@ -178,9 +178,9 @@ def test_build_uses_the_injected_encoder(tmp_path):
 
 (The signature of `load_category_examples` gains `require_all_categories: bool = True`, so the rejection tests can use small files.)
 
-- [ ] **Step 2: Run to verify it fails.** Run `pytest tests/unit/test_category_index.py -q`. Expect an ImportError.
+- [x] **Step 2: Run to verify it fails.** Run `pytest tests/unit/test_category_index.py -q`. Expect an ImportError.
 
-- [ ] **Step 3: Implement** `src/model/pre_training/categories/model.py`:
+- [x] **Step 3: Implement** `src/model/pre_training/categories/model.py`:
   - **Imports:** import only numpy, json, hashlib, pathlib and dataclasses at module level. Get `DOMAIN_REGISTRY` with `from src.internal.tools.search import DOMAIN_REGISTRY`, and confirm this import doesn't pull torch, checking the way the intent test does. Get `fingerprint`, `DEFAULT_ENCODER` and `encode_texts` from `src.model.pre_training.intents` (`data.fingerprint`, `model.DEFAULT_ENCODER`, `model.encode_texts`).
   - **`load_category_examples(path, *, require_all_categories=True)`:**
     - The file must be a JSON list of `{"id", "category", "text"}` with non-empty strings.
@@ -207,12 +207,12 @@ def test_build_uses_the_injected_encoder(tmp_path):
   - Define `DEFAULT_CATEGORY_TOP_K = 3` and `DEFAULT_CATEGORY_SELECT_MARGIN = 0.02` in `src/shared_configs/intent.py`, beside the intent defaults. `model.py` re-exports them as `DEFAULT_TOP_K` and `DEFAULT_SELECT_MARGIN`. This is mandatory: `app_configs` must import these defaults from `shared_configs`, never from `categories.model`, which imports `tools.search` and would create an import cycle through the configs package.
   - `__init__.py` exports the public names.
 
-- [ ] **Step 4: Run.** Run `pytest tests/unit/test_category_index.py -q`. Expect PASS. Confirm torch isn't imported: `python -c "import sys, src.model.pre_training.categories.model; print('torch' in sys.modules)"` prints False.
-- [ ] **Step 5: Mutation checks.** Each must turn red, then restore:
+- [x] **Step 4: Run.** Run `pytest tests/unit/test_category_index.py -q`. Expect PASS. Confirm torch isn't imported: `python -c "import sys, src.model.pre_training.categories.model; print('torch' in sys.modules)"` prints False.
+- [x] **Step 5: Mutation checks.** Each must turn red, then restore:
   - (a) drop the `[:MAX_SELECTED]` cap;
   - (b) use the best single similarity instead of the top-k mean;
   - (c) drop the normalized-text uniqueness check.
-- [ ] **Step 6: Commit.** Message: `feat: category index for automatic source selection`.
+- [x] **Step 6: Commit.** Message: `feat: category index for automatic source selection`.
 
 ### Task 2: Examples, CLI (build, tune, evaluate), leakage guard
 
@@ -236,7 +236,7 @@ CLI commands:
 - `tune --index data/category_index --labels data/eval/source_category_queries.json --report data/eval/category_selection_tuning.json`
 - `evaluate --index ... --labels ... --report data/eval/category_selection.json [--top-k K --select-margin M]` (the defaults come from the model constants)
 
-- [ ] **Step 1: Draft the examples blind.** Dispatch a fresh subagent with this prompt. It must not read `data/eval/`, `docs/superpowers/`, or `.superpowers/`.
+- [x] **Step 1: Draft the examples blind.** Dispatch a fresh subagent with this prompt. It must not read `data/eval/`, `docs/superpowers/`, or `.superpowers/`.
 
   > Write `data/category_examples.json` in /Users/linghuang/Git/Agentic-Search. Do not open anything under data/eval/, docs/superpowers/ or .superpowers/, and do not grep for eval query text. Format: a JSON list of {"id": "<category>-<n>", "category": "<category>", "text": "<query>"}. For EACH of these 20 categories write exactly 8 short, varied, realistic search queries a person would type, with no site names and without the category word itself:
   >
@@ -265,7 +265,7 @@ CLI commands:
 
   Validate it with `load_category_examples` (160 examples, all categories present). Then commit it on its own (`git add -f data/category_examples.json`): `data: category selection examples (drafted blind to eval labels)`.
 
-- [ ] **Step 2: Write the failing tests.** Create `tests/unit/test_category_evaluation.py`:
+- [x] **Step 2: Write the failing tests.** Create `tests/unit/test_category_evaluation.py`:
 
 ```python
 """Category selection evaluation: splits, metrics, tuning, leakage."""
@@ -337,9 +337,9 @@ def test_bar_constants_are_the_preregistered_ones():
     assert (BAR_COVERAGE, BAR_MEAN_PICKS) == (0.80, 2.0)
 ```
 
-- [ ] **Step 3: Run to verify it fails.** Expect an ImportError.
+- [x] **Step 3: Run to verify it fails.** Expect an ImportError.
 
-- [ ] **Step 4: Implement:**
+- [x] **Step 4: Implement:**
   - **`evaluation.py`:**
     - `split_eval_labels` reads the marked source-category label file (`taxonomy == "source_categories"`). It walks `domains` in file order; the first query of each category goes to dev, and the rest go to test.
     - `evaluate_selection` encodes the queries once, using `encode or encode_texts`, runs `index.select` per query, and computes:
@@ -351,9 +351,9 @@ def test_bar_constants_are_the_preregistered_ones():
     - `tune` evaluates every grid pair on dev and picks by `(-coverage, mean_picks, top_k, select_margin)`. It returns `{"top_k", "select_margin", "grid": [rows]}`.
   - **`cli.py`:** argparse with `build`, `tune` and `evaluate`. `build` writes `<output>/index.npz`. `tune` and `evaluate` write JSON reports. `evaluate` adds `"bar": {"coverage": BAR_COVERAGE, "mean_picks": BAR_MEAN_PICKS}`, `"passed": coverage >= BAR_COVERAGE and mean_picks <= BAR_MEAN_PICKS`, `"split": "test"`, and the `top_k`/`select_margin` used.
 
-- [ ] **Step 5: Run.** Run `pytest tests/unit/test_category_evaluation.py tests/unit/test_category_index.py -q`. Expect PASS.
+- [x] **Step 5: Run.** Run `pytest tests/unit/test_category_evaluation.py tests/unit/test_category_index.py -q`. Expect PASS.
 
-- [ ] **Step 6: Build and tune for real** (local encoder, no API calls):
+- [x] **Step 6: Build and tune for real** (local encoder, no API calls):
 
   ```bash
   python -m src.model.pre_training.categories.cli build --examples data/category_examples.json --output data/category_index
@@ -362,10 +362,10 @@ def test_bar_constants_are_the_preregistered_ones():
 
   Set `DEFAULT_CATEGORY_TOP_K` and `DEFAULT_CATEGORY_SELECT_MARGIN` in `src/shared_configs/intent.py` to the tuned values. **Do not run `evaluate` yet**; Task 6 runs it exactly once.
 
-- [ ] **Step 7: Mutation checks.** Each must turn red, then restore:
+- [x] **Step 7: Mutation checks.** Each must turn red, then restore:
   - (a) make the split use the last query per category instead of the first;
   - (b) swap the tuning tie-break to prefer more picks.
-- [ ] **Step 8: Commit.** Message: `feat: category selection CLI with dev-only tuning`. Include `data/eval/category_selection_tuning.json` via `git add -f`. The index itself is not committed.
+- [x] **Step 8: Commit.** Message: `feat: category selection CLI with dev-only tuning`. Include `data/eval/category_selection_tuning.json` via `git add -f`. The index itself is not committed.
 
 ### Task 3: Settings, serving adapter, resolver
 
@@ -382,7 +382,7 @@ def test_bar_constants_are_the_preregistered_ones():
 - `search.AUTO_DOMAIN = "auto"`
 - `async search.resolve_auto_domains(query: str, domains: list[str] | None) -> tuple[list[str] | None, dict | None]`
 
-- [ ] **Step 1: Write the failing tests.** Create `tests/unit/test_auto_domains.py`:
+- [x] **Step 1: Write the failing tests.** Create `tests/unit/test_auto_domains.py`:
 
 ```python
 """resolve_auto_domains: opt-in, falls back to web, never blocks the loop."""
@@ -479,9 +479,9 @@ async def test_encoding_runs_off_the_event_loop(tmp_path, monkeypatch):
 
 In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the tuned `DEFAULT_TOP_K`, margin equal to the tuned `DEFAULT_SELECT_MARGIN`) and validation: `top_k` of 0 raises, and a margin of 1.5 raises.
 
-- [ ] **Step 2: Run to verify they fail.**
+- [x] **Step 2: Run to verify they fail.**
 
-- [ ] **Step 3: Implement:**
+- [x] **Step 3: Implement:**
   - **`app_configs.py`:** add three fields beside the intent fields:
     - `category_index_path: Path | None = None`
     - `category_top_k: int`
@@ -526,12 +526,12 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
     ```
 
   `domain="auto"` already fails `normalize_search_domain` as an unknown category. Add a test that pins it.
-- [ ] **Step 4: Run.** Run `pytest tests/unit/test_auto_domains.py tests/unit/test_configs.py tests/unit/test_category_index.py -q`, then `pytest -q`. Expect PASS.
-- [ ] **Step 5: Mutation checks.** Each must turn red, then restore:
+- [x] **Step 4: Run.** Run `pytest tests/unit/test_auto_domains.py tests/unit/test_configs.py tests/unit/test_category_index.py -q`, then `pytest -q`. Expect PASS.
+- [x] **Step 5: Mutation checks.** Each must turn red, then restore:
   - (a) call `select_for_query` directly instead of through `to_thread`;
   - (b) don't cache a failed load;
   - (c) let `auto` mix with names.
-- [ ] **Step 6: Commit.** Message: `feat: resolve domains=["auto"] through the category index`.
+- [x] **Step 6: Commit.** Message: `feat: resolve domains=["auto"] through the category index`.
 
 ### Task 4: Entry points: HTTP, tools, MCP
 
@@ -546,7 +546,7 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
 - **HTTP:** for an `auto` request, `domains` echoes the resolved list, **even for one category**: `echoed_domains = selected if auto_info else (existing rule)`. The mode rule applies to the resolved categories.
 - **Single domain:** when `auto` resolves to one category, the selection travels through `app.py` as a plain `str`, exactly like a single named category.
 
-- [ ] **Step 1: Write the failing tests.** For each entry point, with `resolve_auto_domains` patched where it is used (`src.internal.servers.web.app.resolve_auto_domains`, or the `search` module attribute for the tools), returning `(["news", "code"], {"selected": ["news", "code"], "status": "ok"})`:
+- [x] **Step 1: Write the failing tests.** For each entry point, with `resolve_auto_domains` patched where it is used (`src.internal.servers.web.app.resolve_auto_domains`, or the `search` module attribute for the tools), returning `(["news", "code"], {"selected": ["news", "code"], "status": "ok"})`:
   - **HTTP `search_tool`:** `_run_direct_search` receives `domain == ("news", "code")`; the response has `domains == ["news", "code"]` and `auto_domains == {...}`.
   - **HTTP single-category auto:** the patched resolver returns `(["news"], {...})`. The leaf receives `domain == "news"`, a `str`, and the response's `domains == ["news"]`.
   - **HTTP request without `auto`:** the response's `auto_domains` is None. Also check the stream `done` event: it has `auto_domains` for `auto` and null otherwise.
@@ -557,18 +557,18 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
   - **MCP `search_web(q, domains=["auto"])`:** the result has `domains` and `auto_domains`.
 
   Write real tests with stub providers, using each file's existing helpers.
-- [ ] **Step 2: Run to verify they fail.**
-- [ ] **Step 3: Implement:**
+- [x] **Step 2: Run to verify they fail.**
+- [x] **Step 3: Implement:**
   - **HTTP:** in `_run_agent_impl`, before `normalize_search_domains`, run `requested, auto_info = await resolve_auto_domains(query, request.domains)`. Normalize `requested`. `echoed_domains` is `list(selected)` when `auto_info` is set, and otherwise follows today's rule. Pass `auto_domains=auto_info` through `_finalize_response` (all its call sites) and into `_terminal_events`.
   - **Tools:** in `MultiQueryWebSearchTool.execute` and `DomainSearch.search`, resolve first, then run today's code. Add `auto_domains` to the metadata/result when it is set.
   - **Schemas:** add `"auto"` to `domains.items.enum` (`list(DOMAIN_REGISTRY) + [AUTO_DOMAIN]`). Make sure `_source_validation_arguments` does not fail on `"auto"`; it already leaves unknown values as they are for validation.
   - **MCP:** `search_web` and `search_domain` resolve inside the existing `try` (or before it, following the current `domains` handling), and add `auto_domains` to their outputs.
-- [ ] **Step 4: Run.** Run the touched suites, then `pytest -q`. Existing tests must pass unmodified, except schema tests that pin the `domains` enum exactly; extend those with `"auto"`.
-- [ ] **Step 5: Mutation checks.** Each must turn red, then restore:
+- [x] **Step 4: Run.** Run the touched suites, then `pytest -q`. Existing tests must pass unmodified, except schema tests that pin the `domains` enum exactly; extend those with `"auto"`.
+- [x] **Step 5: Mutation checks.** Each must turn red, then restore:
   - (a) skip the resolver on HTTP;
   - (b) echo a one-category auto pick as null;
   - (c) drop `auto_domains` from the done event.
-- [ ] **Step 6: Commit.** Message: `feat: domains=["auto"] on HTTP, tools and MCP`.
+- [x] **Step 6: Commit.** Message: `feat: domains=["auto"] on HTTP, tools and MCP`.
 
 ### Task 5: Assist page: the Auto option
 
@@ -576,7 +576,7 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
 
 **Interfaces:** `AUTO = "auto"`; `toggleDomain` handles `auto`; `AgentExperienceResponse.auto_domains?: {selected: string[]; status: "ok" | "unavailable"} | null`; `SSEDoneEvent.auto_domains?` has the same shape.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - **`domains.test.ts`:**
     - `toggleDomain(["web"], "auto")` → `["auto"]`;
     - `toggleDomain(["auto"], "news")` → `["news"]`;
@@ -588,8 +588,8 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
     - After a stream whose done event has `auto_domains: {selected: ["financial", "news"], status: "ok"}`, the page shows "Auto picked: financial · news".
     - With `status: "unavailable"`, it shows "Auto unavailable: searched web".
     - The selection stays `["auto"]` after the search.
-- [ ] **Step 2: Run to verify they fail.**
-- [ ] **Step 3: Implement:**
+- [x] **Step 2: Run to verify they fail.**
+- [x] **Step 3: Implement:**
   - **`toggleDomain`:**
     - `name === AUTO` → `["auto"]` (selecting it again when it's the current selection → `["web"]`);
     - any other name while the selection is `["auto"]` → behave as if starting from `["web"]`.
@@ -598,15 +598,15 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
     - Store `autoDomains` from the done event (and the JSON response, if that path exists).
     - Render one muted line under the composer when set.
     - The request already sends `domains` for a non-single selection. `["auto"]` has length 1, so add an explicit rule: `domains[0] === AUTO ? { domains } : (single ? { domain } : { domains })`.
-- [ ] **Step 4: Run.** Run `cd web && npm run typecheck && npm run test:unit`. Expect PASS.
-- [ ] **Step 5: Mutation checks.** Each must turn red, then restore:
+- [x] **Step 4: Run.** Run `cd web && npm run typecheck && npm run test:unit`. Expect PASS.
+- [x] **Step 5: Mutation checks.** Each must turn red, then restore:
   - (a) send `domain: "auto"` for the single auto selection;
   - (b) let category ticks append to `["auto"]`.
-- [ ] **Step 6: Commit.** Message: `feat: Assist page Auto search source`.
+- [x] **Step 6: Commit.** Message: `feat: Assist page Auto search source`.
 
 ### Task 6: Evaluation run, docs, review, PR
 
-- [ ] **Step 1: Run the pre-registered evaluation exactly once:**
+- [x] **Step 1: Run the pre-registered evaluation exactly once:**
 
   ```bash
   python -m src.model.pre_training.categories.cli build --examples data/category_examples.json --output data/category_index
@@ -614,18 +614,31 @@ In `tests/unit/test_configs.py`, add the defaults (path None, top_k equal to the
   ```
 
   Also run the eval-gate leakage check: every example's e5 cosine to every eval query must be ≤ 0.95. Report the maximum and the pair. Commit the report with `git add -f data/eval/category_selection.json`. Whatever the result, do not change the examples, the grid or the defaults afterwards.
-- [ ] **Step 2: CI.** Add a step to `.github/workflows/eval-gate.yml`, next to the intent index build: build `data/category_index` and run `evaluate`. Follow that workflow's pattern of skipping when the encoder is unavailable. Do not fail CI on the bar; the PR description records the result. The leakage cosine check fails the step if any pair exceeds 0.95.
-- [ ] **Step 3: Docs:**
+- [x] **Step 2: CI.** Add a step to `.github/workflows/eval-gate.yml`, next to the intent index build: build `data/category_index` and run `evaluate`. Follow that workflow's pattern of skipping when the encoder is unavailable. Do not fail CI on the bar; the PR description records the result. The leakage cosine check fails the step if any pair exceeds 0.95.
+- [x] **Step 3: Docs:**
   - **`docs/search-engine.md`:** an "Automatic category selection" section covering opt-in `domains: ["auto"]`; the method (e5 nearest examples, top-k mean, margin, at most 3); the examples (written blind to the eval labels); the fallback; the settings; the measured test result against the bar (coverage, mean picks, top-1, the worst confusions); and the caveats from the spec.
   - **`docs/configuration.md`:** three rows.
   - **`api-reference`, `mcp`, `frontend`:** the `auto` option.
   - **README:** one clause about opt-in automatic selection.
 
   Verify every claim against the code.
-- [ ] **Step 4: Full verification:** `pytest -q`; Ruff; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the docs link check.
-- [ ] **Step 5: Whole-branch review.** One fresh reviewer, on the most capable model, against `origin/main`, the spec, this plan and the Review Focus. Fix material findings RED→GREEN and record rulings.
+- [x] **Step 4: Full verification:** `pytest -q`; Ruff; `cd web && npm run typecheck && npm run test:unit`; `git diff --check`; the docs link check.
+- [x] **Step 5: Whole-branch review.** One fresh reviewer, on the most capable model, against `origin/main`, the spec, this plan and the Review Focus. Fix material findings RED→GREEN and record rulings.
 - [ ] **Step 6: PR.** Before each commit, check the branch. Before pushing, check `git log origin/main -3`. Push, open the PR with the evaluation result in its description, watch CI on the final commit, and report. Do not merge.
 
 ## Validation record
 
-Spec approved by the user on 2026-10-12. Plan awaiting review.
+Spec and plan approved by the user on 2026-10-12. Executed subagent-driven, with a fresh implementer and reviewer per task.
+
+- **Examples:** 160 examples, written blind to the eval labels (`041ca0c0`). No normalized-text overlap.
+- **Tuning (dev split, 16 queries):** `top_k=3`, `select_margin=0.0`, coverage 0.938 (15/16), mean picks 1.0. Re-running the tuning reproduces the committed report byte for byte.
+- **Pre-registered test result (48 queries, run once, `9bab5428`):** coverage **0.729** (35/48), mean picks 1.00, top-1 0.729. **The bar (0.80) is missed**, so the feature ships opt-in and the docs report the miss.
+- **Leakage:** two independent paraphrase pairs scored above 0.95 e5 cosine, both in the test split. Excluding them gives coverage 0.717 (n=46), so the conclusion is unchanged. The examples were kept and the CI guard allowlists exactly these two pairs (a ruling). Process lesson: run the semantic leakage check *before* the test measurement.
+- **Fix rounds:** Task 5 needed one, because a stale Auto pick stayed visible during the next search. Plan corrections: the tie test expected a registry-ordered pair, and defaults live in `shared_configs` to avoid an import cycle.
+- **Final review:** ready to merge, with 0 critical and 0 important findings. The fix wave `4d7ba460` covered:
+  - `auto` on a non-search mode is now rejected before selection;
+  - non-list input is guarded;
+  - CI warns when a fresh evaluation drifts from the committed numbers.
+
+  The re-review was clean.
+- **Local checks:** `pytest` 5523 passed, 1 skipped; vitest 265 passed; typecheck, Ruff, `git diff --check` and the docs link check all clean.
