@@ -377,3 +377,41 @@ def test_main_dry_run_reports_the_pilot_call_count(tmp_path, capsys):
     assert (
         "17 labelled queries; 33 live provider calls needed." in capsys.readouterr().out
     )
+
+
+# --- confirmatory run: --skip-per-category ------------------------------------
+
+
+def test_skip_per_category_drops_the_first_k_in_file_order():
+    cli = _cli()
+    labels = [
+        SourceLabelledQuery("academic", "a1", {"x"}),
+        SourceLabelledQuery("code", "c1", {"x"}),
+        SourceLabelledQuery("academic", "a2", {"x"}),
+        SourceLabelledQuery("code", "c2", {"x"}),
+        SourceLabelledQuery("academic", "a3", {"x"}),
+    ]
+    assert [x.query for x in cli.select_labels(labels, None, skip=1)] == [
+        "a2",
+        "c2",
+        "a3",
+    ]
+    # skip applies before the per-category cap.
+    assert [x.query for x in cli.select_labels(labels, 1, skip=1)] == ["a2", "c2"]
+
+
+def test_skip_one_over_the_frozen_file_excludes_every_pilot_query():
+    cli = _cli()
+    labels = load_source_labels()
+    pilot = {(x.domain, x.query) for x in cli.select_labels(labels, 1)}
+    held_out = cli.select_labels(labels, None, skip=1)
+    assert len(held_out) == 48
+    assert not pilot & {(x.domain, x.query) for x in held_out}
+
+
+def test_main_rejects_a_negative_skip(tmp_path):
+    cli = _cli()
+    with pytest.raises(SystemExit):
+        cli.main(
+            ["--skip-per-category", "-1", "--cache-dir", str(tmp_path), "--dry-run"]
+        )

@@ -356,6 +356,9 @@ detect a large effect: a pilot can show that restriction clearly helps or
 clearly hurts, but a
 null pilot means the sample was too small to tell, not that restriction does
 not help. `--provider serper` runs the same comparison on Serper's free tier.
+`--skip-per-category K` drops the first K labels of each category before
+selecting, so `--skip-per-category 1` holds out the pilot for a confirmatory
+run on the other 48.
 
 **Pilot finding (2026-10-11): the restriction mostly does not happen.** The
 pilot (`--per-category 1 --no-plain --control "what is a bond"`, SerpAPI) was
@@ -406,10 +409,46 @@ settle it. The `statistics` query stays excluded: its suffix arm failed in both
 pilot attempts, so it was never cached, and the re-score made no live calls.
 The report is `data/eval/source_category_relevance_hostfilter.json`.
 
-The setting stays **off by default**. Two costs remain unresolved. The `site:`
-OR query is slow: up to 90 s in probes, capped by the 15 s client timeout in
-production. And with the setting on, the fallback fires for most queries, so
-most category searches would make two provider calls.
+**Confirmatory run (2026-10-11): better.** The run used the 48 labels the pilot
+did not touch (`--skip-per-category 1 --no-plain --control "what is a bond"`,
+SerpAPI), with host-filtered restriction. A temporary operator timeout file
+allowed 90 s and one attempt per call, so slow `site:` queries were not charged
+twice. 44 of 48 queries were usable and the control passed (delta 0, Jaccard
+1.0).
+
+| Measure | Value |
+| --- | --- |
+| Category − suffix authority precision, pooled mean | **+0.094** |
+| Paired permutation p (two-sided) | **0.005** |
+| Cliff's delta | 0.14 |
+| Fallback rate | 0.83 |
+| Added time when the fallback fires (suffix call, n = 40) | 8.6 s |
+| On-list share of authority hosts (per-query mean) | 0.35 |
+
+Under the pre-registered rule this is **better**. Read it with three caveats:
+
+- **The gain is concentrated.** It comes mostly from `code` (+0.58),
+  `social_media` (+0.28), `events` (+0.24), `jobs` (+0.13) and `financial`
+  (+0.13). Most other categories are near zero: their restricted search found
+  no on-list result and fell back to the suffix query. A few are slightly
+  negative, the largest `business` at −0.04. Per-category figures are three
+  queries or fewer and are descriptive only.
+- **Part of it is constructed.** 35% of the authority hosts are on their own
+  category's site list, so restricting to those sites raises the score partly
+  by construction. The true gain is likely smaller than +0.094.
+- **It costs latency.** The fallback fires for 83% of queries and adds about
+  8.6 s each time. The `site:` OR query itself can also be slow: up to 90 s in
+  probes, capped by the 15 s client timeout in production.
+
+The setting stays **off by default** for that latency, and setting it to `true`
+gets the measured gain today. Two directions would cut the cost before
+defaulting it on:
+
+- Restrict only the categories that benefit.
+- Run the restricted and suffix queries in parallel rather than in sequence.
+
+The report is `data/eval/source_category_relevance_confirmatory.json`. The run
+used 102 SerpAPI searches.
 
 ### Domains over HTTP and in the web UI
 

@@ -10,6 +10,8 @@ Usage:
     python -m examples.run_source_category_eval --control "what is a bond"
     # pilot: first label per category, no plain arm (33 calls with one control)
     python -m examples.run_source_category_eval --per-category 1 --no-plain --control "what is a bond"
+    # confirmatory: the 48 labels the pilot did not use
+    python -m examples.run_source_category_eval --skip-per-category 1 --no-plain --control "what is a bond"
 """
 
 from __future__ import annotations
@@ -146,20 +148,25 @@ def summarise_source(outcomes: list[SourceQueryOutcome]) -> dict:
     }
 
 
-def select_labels(labels, per_category: int | None):
-    """The first ``per_category`` labels of each category, in file order.
+def select_labels(labels, per_category: int | None, skip: int = 0):
+    """Labels of each category in file order: drop the first ``skip``, then
+    keep at most ``per_category`` (None keeps the rest).
 
-    Mechanical on purpose: a pilot subset chosen before any result exists
-    cannot be cherry-picked. None keeps every label.
+    Mechanical on purpose: a subset chosen before any result exists cannot be
+    cherry-picked. ``skip=1`` holds out the one-per-category pilot, so a
+    confirmatory run never re-scores queries already analysed.
     """
-    if per_category is None:
-        return list(labels)
-    counts: dict[str, int] = {}
+    seen: dict[str, int] = {}
+    kept: dict[str, int] = {}
     picked = []
     for label in labels:
-        if counts.get(label.domain, 0) < per_category:
-            counts[label.domain] = counts.get(label.domain, 0) + 1
-            picked.append(label)
+        seen[label.domain] = seen.get(label.domain, 0) + 1
+        if seen[label.domain] <= skip:
+            continue
+        if per_category is not None and kept.get(label.domain, 0) >= per_category:
+            continue
+        kept[label.domain] = kept.get(label.domain, 0) + 1
+        picked.append(label)
     return picked
 
 
@@ -217,6 +224,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Pilot: keep only the first N labels of each category, in file order.",
     )
     parser.add_argument(
+        "--skip-per-category",
+        type=int,
+        default=0,
+        help="Drop the first K labels of each category first (1 holds out the pilot).",
+    )
+    parser.add_argument(
         "--no-plain",
         action="store_true",
         help="Skip the plain arm; the pre-registered rule compares category with suffix only.",
@@ -230,8 +243,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.per_category is not None and args.per_category < 1:
         parser.error("--per-category must be at least 1")
+    if args.skip_per_category < 0:
+        parser.error("--skip-per-category must not be negative")
     include_plain = not args.no_plain
-    labels = select_labels(load_source_labels(args.labels), args.per_category)
+    labels = select_labels(
+        load_source_labels(args.labels), args.per_category, args.skip_per_category
+    )
     labels += [SourceLabelledQuery("web", q, {"example.com"}) for q in args.control]
     cache = DiskCache(args.cache_dir)
     print(
@@ -244,6 +261,7 @@ def main(argv: list[str] | None = None) -> None:
     # as the full pre-registered run.
     report["sample"] = {
         "per_category": args.per_category,
+        "skip_per_category": args.skip_per_category,
         "plain_arm": include_plain,
         "n_labels": len(labels) - len(args.control),
         "provider": args.provider,
