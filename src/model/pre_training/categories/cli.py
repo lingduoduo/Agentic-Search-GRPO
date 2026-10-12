@@ -12,6 +12,7 @@ from .evaluation import (
     BAR_COVERAGE,
     BAR_MEAN_PICKS,
     evaluate_selection,
+    find_leakage,
     split_eval_labels,
     tune,
 )
@@ -37,6 +38,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     b.add_argument("--examples", type=Path, required=True)
     b.add_argument("--output", type=Path, required=True)
 
+    lk = sub.add_parser("leakage", help="fail on an example too close to an eval query")
+    lk.add_argument("--examples", type=Path, required=True)
+    lk.add_argument("--labels", type=Path, required=True)
+
     for name in ("tune", "evaluate"):
         p = sub.add_parser(name)
         p.add_argument("--index", type=Path, required=True)
@@ -53,6 +58,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         index.save(args.output / INDEX_FILENAME)
         print(f"wrote {args.output / INDEX_FILENAME}")
         return 0
+
+    if args.command == "leakage":
+        result = find_leakage(args.examples, args.labels)
+        print(f"max cosine {result['max_cosine']:.3f}: {result['max_pair']}")
+        for pair in result["allowed"]:
+            print(f"allowlisted: {pair}")
+        for pair in result["flagged"]:
+            print(f"LEAKAGE: {pair}")
+        return 1 if result["flagged"] else 0
 
     index = CategoryIndex.load(args.index / INDEX_FILENAME)
     dev, test = split_eval_labels(args.labels)

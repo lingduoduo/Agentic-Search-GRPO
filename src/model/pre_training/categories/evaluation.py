@@ -11,12 +11,31 @@ import numpy as np
 
 from src.model.pre_training.intents.model import encode_texts
 
-from .model import CategoryIndex
+from .model import CategoryIndex, load_category_examples
 
 GRID_TOP_K = (1, 2, 3, 5)
 GRID_MARGIN = (0.00, 0.01, 0.02, 0.03, 0.05)
 BAR_COVERAGE = 0.80
 BAR_MEAN_PICKS = 2.0
+
+LEAKAGE_THRESHOLD = 0.95
+# Example/eval pairs above the threshold that were found by the one-time test
+# run (data/eval/category_selection.json) and kept. Both are in the test split
+# and both are independent paraphrases: the examples were written blind to the
+# labels, and were not edited after the run. Excluding the two queries, test
+# coverage is 0.717 (n=46) against 0.729 (n=48), so the result does not rest on
+# them. Any other pair above the threshold fails the eval gate.
+LEAKAGE_ALLOWLIST = frozenset(
+    {
+        # e5 cosine 0.956, travel
+        (
+            "best time to visit iceland",
+            "best time to visit iceland to see the northern lights",
+        ),
+        # e5 cosine 0.973, statistics
+        ("us unemployment rate by month", "us unemployment rate historical monthly"),
+    }
+)
 
 Labels = list[tuple[str, str]]
 
@@ -32,6 +51,47 @@ def split_eval_labels(path: Path | str) -> tuple[Labels, Labels]:
         for i, entry in enumerate(entries):
             (dev if i == 0 else test).append((category, entry["query"]))
     return dev, test
+
+
+def find_leakage(
+    examples_path: Path | str,
+    labels_path: Path | str,
+    *,
+    encode: Callable[[Sequence[str]], np.ndarray] | None = None,
+) -> dict:
+    """Example/eval-query pairs whose cosine exceeds ``LEAKAGE_THRESHOLD``."""
+    encode = encode or (lambda texts: encode_texts(texts))
+    examples = [
+        e.text
+        for e in load_category_examples(
+            Path(examples_path), require_all_categories=False
+        )
+    ]
+    dev, test = split_eval_labels(labels_path)
+    queries = [q for _, q in dev + test]
+    sims = (
+        np.asarray(encode(examples), dtype=np.float32)
+        @ np.asarray(encode(queries), dtype=np.float32).T
+    )
+    flagged, allowed = [], []
+    for i, j in zip(*np.nonzero(sims > LEAKAGE_THRESHOLD)):
+        pair = {
+            "example": examples[i],
+            "query": queries[j],
+            "cosine": float(sims[i, j]),
+        }
+        key = (
+            " ".join(examples[i].lower().split()),
+            " ".join(queries[j].lower().split()),
+        )
+        (allowed if key in LEAKAGE_ALLOWLIST else flagged).append(pair)
+    i, j = np.unravel_index(int(np.argmax(sims)), sims.shape)
+    return {
+        "max_cosine": float(sims[i, j]),
+        "max_pair": {"example": examples[i], "query": queries[j]},
+        "allowed": allowed,
+        "flagged": flagged,
+    }
 
 
 def evaluate_selection(

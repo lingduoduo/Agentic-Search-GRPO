@@ -183,6 +183,42 @@ jobs:
             --canonical data/intent_canonical.json \
             --output data/intent_index
 
+      # Automatic category selection (domains: ["auto"]) shares the encoder, so
+      # it is measured here. The pre-registered bar (coverage >= 0.80, mean
+      # picks <= 2.0) is reported, not enforced: the one-time test run missed
+      # it (data/eval/category_selection.json) and the feature ships opt-in.
+      # The report goes to /tmp so the committed result is never rewritten.
+      # The leakage check is enforced: it fails on any example within e5
+      # cosine 0.95 of an eval query, except the two documented pairs in
+      # LEAKAGE_ALLOWLIST. Like the intent bars, a missing encoder is a
+      # failure here, not a skip — these commands import it and error out.
+      - name: Build and evaluate the category index
+        run: |
+          python -m src.model.pre_training.categories.cli build \
+            --examples data/category_examples.json \
+            --output data/category_index
+          python -m src.model.pre_training.categories.cli evaluate \
+            --index data/category_index \
+            --labels data/eval/source_category_queries.json \
+            --report /tmp/category_selection.json
+          python - <<'EOF'
+          import json, os
+          r = json.load(open("/tmp/category_selection.json"))
+          line = (
+              f"Category selection (test n={r['n']}): coverage {r['coverage']:.3f}, "
+              f"mean picks {r['mean_picks']:.2f}, top-1 {r['top1']:.3f}; "
+              f"bar {'met' if r['passed'] else 'MISSED'} (not enforced)"
+          )
+          print(line)
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write(line + "\n")
+          EOF
+
+      - name: Category example leakage check
+        run: |
+          python -m src.model.pre_training.categories.cli leakage \
+            --examples data/category_examples.json \
+            --labels data/eval/source_category_queries.json
+
       # The latency bar is deliberately excluded. It measures wall-clock p95 for
       # one encode-and-decide, and the 25ms ceiling was set against real serving
       # hardware — a shared CI runner is 2-3x slower, so it fails on hardware
