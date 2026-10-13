@@ -81,6 +81,19 @@ jobs:
           ./promtool check rules deploy/prometheus/agentic-search-alerts.yml
           cd deploy/prometheus && ../../promtool test rules agentic-search-alerts.test.yml
 
+  renovate-config:
+    name: Renovate config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Renovate 44 needs Node 24. Same version the Renovate workflow runs, so
+      # a config this accepts is a config the scheduled run accepts.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Validate renovate.json
+        run: npx --yes -p renovate@44.117.0 renovate-config-validator --strict renovate.json
+
   docker-context:
     name: Docker build context
     runs-on: ubuntu-latest

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigestsToSemver"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "commitMessagePrefix": "chore(deps):",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "automerge": false,
+  "pre-commit": {
+    "enabled": true
+  },
+  "pip_requirements": {
+    "managerFilePatterns": [
+      "/(^|/)requirements(-[\\w-]+)?\\.txt$/"
+    ]
+  },
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "packageRules": [
+    {
+      "description": "Major upgrades are never opened automatically: request them from the Dependency Dashboard.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Group Python minor/patch updates into one PR.",
+      "matchManagers": [
+        "pip_requirements",
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "python minor and patch"
+    },
+    {
+      "description": "Group npm minor/patch updates into one PR.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "npm minor and patch"
+    },
+    {
+      "description": "Group Go module minor/patch updates into one PR.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "go minor and patch"
+    },
+    {
+      "description": "Group GitHub Actions minor/patch/digest updates into one PR.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Group pre-commit hook updates into one PR.",
+      "matchManagers": [
+        "pre-commit"
+      ],
+      "groupName": "pre-commit hooks"
+    },
+    {
+      "description": "Base-image runtime versions (python, node) need explicit approval: CI tests Python 3.10 and 3.12 only, and a runtime bump is never a routine update.",
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose"
+      ],
+      "matchPackageNames": [
+        "python",
+        "node"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "PROTECTED: fastapi 0.137.x+ regresses app.include_router (silently mounts no routes) - see requirements.txt.",
+      "matchPackageNames": [
+        "fastapi"
+      ],
+      "allowedVersions": "<0.137"
+    },
+    {
+      "description": "PROTECTED: aiohttp==3.9.3 is load-bearing - with openai 3.x resolved against it, `import openai` fails; the pin and the openai<3 cap move together, by hand - see requirements-unit-test.txt.",
+      "matchPackageNames": [
+        "aiohttp"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "PROTECTED: openai stays <3 while aiohttp is pinned at 3.9.3 (see the aiohttp rule).",
+      "matchPackageNames": [
+        "openai"
+      ],
+      "allowedVersions": "<3"
+    },
+    {
+      "description": "PROTECTED: mcp 2.x removed mcp.client.streamable_http.streamablehttp_client, which src/internal/tools/mcp_client.py imports (#650).",
+      "matchPackageNames": [
+        "mcp"
+      ],
+      "allowedVersions": "<2"
+    },
+    {
+      "description": "PROTECTED: fastmcp 4.x requires mcp 2.x (see the mcp rule, #650).",
+      "matchPackageNames": [
+        "fastmcp"
+      ],
+      "allowedVersions": "<4"
+    }
+  ]
+}
