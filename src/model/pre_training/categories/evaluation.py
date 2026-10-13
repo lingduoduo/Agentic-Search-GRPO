@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
 import numpy as np
 
+from src.internal.tools.search import DOMAIN_REGISTRY
 from src.model.pre_training.intents.model import encode_texts
 
 from .model import CategoryIndex, load_category_examples
@@ -161,4 +163,189 @@ def tune(
         "top_k": best["top_k"],
         "select_margin": best["select_margin"],
         "grid": rows,
+    }
+
+
+V2_MARKER = "category_selection_v2"
+V2_BAR_HIT, V2_BAR_PRECISION, V2_BAR_MEAN_PICKS = 0.85, 0.60, 2.0
+
+
+@dataclass(frozen=True)
+class MultiLabelQuery:
+    id: str
+    primary: str
+    query: str
+    acceptable: tuple[str, ...]
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def load_multilabel_queries(path: Path | str) -> list[MultiLabelQuery]:
+    payload = json.loads(Path(path).read_text())
+    if payload.get("taxonomy") != V2_MARKER:
+        raise ValueError(f"{path}: taxonomy is not {V2_MARKER}")
+    out: list[MultiLabelQuery] = []
+    seen: set[str] = set()
+    for rec in payload["queries"]:
+        qid, primary = rec["id"], rec["primary"]
+        acceptable = tuple(rec["acceptable"])
+        if primary not in DOMAIN_REGISTRY:
+            raise ValueError(f"{qid}: primary {primary!r} is not a category")
+        if primary not in acceptable:
+            raise ValueError(f"{qid}: primary {primary!r} is not in acceptable")
+        if not 1 <= len(acceptable) <= 3 or any(
+            c not in DOMAIN_REGISTRY for c in acceptable
+        ):
+            raise ValueError(f"{qid}: acceptable must be 1-3 known categories")
+        key = _normalize(rec["query"])
+        if key in seen:
+            raise ValueError(f"{qid}: duplicate query {rec['query']!r}")
+        seen.add(key)
+        out.append(MultiLabelQuery(qid, primary, rec["query"], acceptable))
+    return out
+
+
+def _evaluate_vectors(
+    index: CategoryIndex,
+    queries: Sequence[MultiLabelQuery],
+    vectors: np.ndarray,
+    top_k: int,
+    select_margin: float,
+) -> dict:
+    hits = top1 = picks = good = 0
+    per: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    confusion: dict[str, Counter] = defaultdict(Counter)
+    for q, vector in zip(queries, vectors):
+        chosen = index.select(vector, top_k=top_k, select_margin=select_margin)
+        ok = [c for c in chosen if c in q.acceptable]
+        hit = bool(ok)
+        hits += hit
+        top1 += chosen[0] == q.primary
+        picks += len(chosen)
+        good += len(ok)
+        per[q.primary][0] += 1
+        per[q.primary][1] += hit
+        for picked in chosen:
+            if picked not in q.acceptable:
+                confusion[q.primary][picked] += 1
+    n = len(queries)
+    return {
+        "n": n,
+        "hit": hits / n if n else 0.0,
+        "precision": good / picks if picks else 0.0,
+        "mean_picks": picks / n if n else 0.0,
+        "top1": top1 / n if n else 0.0,
+        "per_primary": {c: {"n": a, "hit": b} for c, (a, b) in sorted(per.items())},
+        "confusion": {c: dict(v) for c, v in sorted(confusion.items())},
+    }
+
+
+def evaluate_multilabel(
+    index: CategoryIndex,
+    queries: Sequence[MultiLabelQuery],
+    *,
+    top_k: int,
+    select_margin: float,
+    encode: Callable[[Sequence[str]], np.ndarray] | None = None,
+) -> dict:
+    encode = encode or (lambda texts: encode_texts(texts))
+    vectors = np.asarray(encode([q.query for q in queries]), dtype=np.float32)
+    return _evaluate_vectors(index, queries, vectors, top_k, select_margin)
+
+
+def _feasible(row: dict) -> bool:
+    return (
+        row["precision"] >= V2_BAR_PRECISION and row["mean_picks"] <= V2_BAR_MEAN_PICKS
+    )
+
+
+def _choose_tuning(grid: Sequence[dict]) -> tuple[dict, bool]:
+    feasible = [r for r in grid if _feasible(r)]
+    if feasible:
+        best = min(
+            feasible,
+            key=lambda r: (
+                -r["hit"],
+                -r["precision"],
+                r["mean_picks"],
+                r["top_k"],
+                r["select_margin"],
+            ),
+        )
+        return best, True
+    best = min(
+        grid,
+        key=lambda r: (-r["hit"], r["mean_picks"], r["top_k"], r["select_margin"]),
+    )
+    return best, False
+
+
+def tune_multilabel(
+    index: CategoryIndex,
+    queries: Sequence[MultiLabelQuery],
+    *,
+    encode: Callable[[Sequence[str]], np.ndarray] | None = None,
+) -> dict:
+    encode = encode or (lambda texts: encode_texts(texts))
+    vectors = np.asarray(encode([q.query for q in queries]), dtype=np.float32)
+    grid = []
+    for top_k in GRID_TOP_K:
+        for margin in GRID_MARGIN:
+            r = _evaluate_vectors(index, queries, vectors, top_k, margin)
+            grid.append(
+                {
+                    "top_k": top_k,
+                    "select_margin": margin,
+                    "hit": r["hit"],
+                    "precision": r["precision"],
+                    "mean_picks": r["mean_picks"],
+                }
+            )
+    best, feasible = _choose_tuning(grid)
+    return {
+        "top_k": best["top_k"],
+        "select_margin": best["select_margin"],
+        "feasible": feasible,
+        "grid": grid,
+    }
+
+
+def find_leakage_multilabel(
+    examples_path: Path | str,
+    v2_path: Path | str,
+    *,
+    dev_path: Path | str | None = None,
+    encode: Callable[[Sequence[str]], np.ndarray] | None = None,
+) -> dict:
+    """Example pairs above ``LEAKAGE_THRESHOLD`` against v2 queries; no allowlist."""
+    encode = encode or (lambda texts: encode_texts(texts))
+    examples = [
+        e.text
+        for e in load_category_examples(
+            Path(examples_path), require_all_categories=False
+        )
+    ]
+    queries = [q.query for q in load_multilabel_queries(v2_path)]
+    if dev_path is not None:
+        queries += [q.query for q in load_multilabel_queries(dev_path)]
+    sims = (
+        np.asarray(encode(examples), dtype=np.float32)
+        @ np.asarray(encode(queries), dtype=np.float32).T
+    )
+    flagged = [
+        {
+            "example": examples[i],
+            "query": queries[j],
+            "cosine": float(sims[i, j]),
+        }
+        for i, j in zip(*np.nonzero(sims > LEAKAGE_THRESHOLD))
+    ]
+    i, j = np.unravel_index(int(np.argmax(sims)), sims.shape)
+    return {
+        "max_cosine": float(sims[i, j]),
+        "max_pair": {"example": examples[i], "query": queries[j]},
+        "allowed": [],
+        "flagged": flagged,
     }
