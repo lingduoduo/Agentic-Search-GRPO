@@ -188,8 +188,12 @@ def load_multilabel_queries(path: Path | str) -> list[MultiLabelQuery]:
         raise ValueError(f"{path}: taxonomy is not {V2_MARKER}")
     out: list[MultiLabelQuery] = []
     seen: set[str] = set()
+    seen_ids: set[str] = set()
     for rec in payload["queries"]:
         qid, primary = rec["id"], rec["primary"]
+        if qid in seen_ids:
+            raise ValueError(f"duplicate id {qid!r}")
+        seen_ids.add(qid)
         acceptable = tuple(rec["acceptable"])
         if primary not in DOMAIN_REGISTRY:
             raise ValueError(f"{qid}: primary {primary!r} is not a category")
@@ -222,7 +226,7 @@ def _evaluate_vectors(
         ok = [c for c in chosen if c in q.acceptable]
         hit = bool(ok)
         hits += hit
-        top1 += chosen[0] == q.primary
+        top1 += chosen[0] in q.acceptable
         picks += len(chosen)
         good += len(ok)
         per[q.primary][0] += 1
@@ -237,7 +241,7 @@ def _evaluate_vectors(
         "precision": good / picks if picks else 0.0,
         "mean_picks": picks / n if n else 0.0,
         "top1": top1 / n if n else 0.0,
-        "per_primary": {c: {"n": a, "hit": b} for c, (a, b) in sorted(per.items())},
+        "per_primary": {c: {"n": a, "hit": b / a} for c, (a, b) in sorted(per.items())},
         "confusion": {c: dict(v) for c, v in sorted(confusion.items())},
     }
 
@@ -319,7 +323,7 @@ def find_leakage_multilabel(
     dev_path: Path | str | None = None,
     encode: Callable[[Sequence[str]], np.ndarray] | None = None,
 ) -> dict:
-    """Example pairs above ``LEAKAGE_THRESHOLD`` against v2 queries; no allowlist."""
+    """Examples (and dev queries) against v2 test queries; no allowlist."""
     encode = encode or (lambda texts: encode_texts(texts))
     examples = [
         e.text
@@ -327,25 +331,24 @@ def find_leakage_multilabel(
             Path(examples_path), require_all_categories=False
         )
     ]
-    queries = [q.query for q in load_multilabel_queries(v2_path)]
+    right = [q.query for q in load_multilabel_queries(v2_path)]
+    left = list(examples)
     if dev_path is not None:
-        queries += [q.query for q in load_multilabel_queries(dev_path)]
+        left += [q.query for q in load_multilabel_queries(dev_path)]
     sims = (
-        np.asarray(encode(examples), dtype=np.float32)
-        @ np.asarray(encode(queries), dtype=np.float32).T
+        np.asarray(encode(left), dtype=np.float32)
+        @ np.asarray(encode(right), dtype=np.float32).T
     )
     flagged = [
-        {
-            "example": examples[i],
-            "query": queries[j],
-            "cosine": float(sims[i, j]),
-        }
-        for i, j in zip(*np.nonzero(sims > LEAKAGE_THRESHOLD))
+        {"example": left[i], "query": right[j], "cosine": float(sims[i, j])}
+        for i in range(len(left))
+        for j in range(len(right))
+        if sims[i, j] > LEAKAGE_THRESHOLD or _normalize(left[i]) == _normalize(right[j])
     ]
     i, j = np.unravel_index(int(np.argmax(sims)), sims.shape)
     return {
         "max_cosine": float(sims[i, j]),
-        "max_pair": {"example": examples[i], "query": queries[j]},
+        "max_pair": {"example": left[i], "query": right[j]},
         "allowed": [],
         "flagged": flagged,
     }

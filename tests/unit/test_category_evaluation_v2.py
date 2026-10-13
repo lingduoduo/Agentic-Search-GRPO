@@ -93,6 +93,9 @@ def test_metrics_hit_pooled_precision_and_confusion():
     assert r["mean_picks"] == 1.5  # 2 picks + 1 pick
     assert r["precision"] == pytest.approx(2 / 3)  # 2 acceptable of 3 picks
     assert r["confusion"]["code"] == {"news": 1}
+    assert r["top1"] == 0.5  # q1's first pick is acceptable, q2's is not
+    assert r["per_primary"]["news"] == {"n": 1, "hit": 1.0}
+    assert r["per_primary"]["code"] == {"n": 1, "hit": 0.0}
 
 
 def test_tuning_prefers_a_feasible_point_with_max_hit():
@@ -216,10 +219,42 @@ def test_leakage_against_has_no_allowlist_and_checks_dev(tmp_path):
     )
     r = find_leakage_multilabel(ex, test, encode=_same_vector_encoder)
     assert len(r["flagged"]) == 1 and r["allowed"] == []
-    # A dev-only leak is flagged only when the dev file is passed.
-    ex, test, dev = _leak_files(tmp_path, "dev near", "unrelated", "dev near")
-    assert (
-        find_leakage_multilabel(ex, test, encode=_same_vector_encoder)["flagged"] == []
+
+    # A dev query near a TEST query is flagged, and only when dev is passed.
+    ex, test, dev = _leak_files(tmp_path, "unrelated ex", "test near", "dev near")
+    enc = lambda texts: np.array(  # noqa: E731
+        [[1.0, 0.0] if t in {"dev near", "test near"} else [0.0, 1.0] for t in texts],
+        dtype=np.float32,
     )
+    assert find_leakage_multilabel(ex, test, encode=enc)["flagged"] == []
+    r = find_leakage_multilabel(ex, test, dev_path=dev, encode=enc)
+    assert [(p["example"], p["query"]) for p in r["flagged"]] == [
+        ("dev near", "test near")
+    ]
+    # An example near a DEV query (test unrelated) is not flagged.
+    ex, test, dev = _leak_files(tmp_path, "dev near", "unrelated", "dev near")
     r = find_leakage_multilabel(ex, test, dev_path=dev, encode=_same_vector_encoder)
-    assert len(r["flagged"]) == 1
+    assert r["flagged"] == []
+    # Normalized equality is flagged even when the encoder says they are far apart.
+    ex, test, dev = _leak_files(tmp_path, "Same  Text", "same text", "other")
+    orth = lambda texts: np.eye(8, dtype=np.float32)[[i for i, _ in enumerate(texts)]]  # noqa: E731
+    r = find_leakage_multilabel(ex, test, dev_path=dev, encode=orth)
+    assert len(r["flagged"]) == 1 and r["flagged"][0]["example"] == "Same  Text"
+
+
+def test_loader_rejects_duplicate_ids(tmp_path):
+    qs = [_q(1, "news", "a", ["news"]), {**_q(1, "code", "b", ["code"])}]
+    with pytest.raises(ValueError, match="id"):
+        load_multilabel_queries(_write(tmp_path, qs))
+
+
+def test_top1_accepts_any_acceptable_and_per_primary_hit_is_a_rate():
+    qs = [
+        MultiLabelQuery("1", "news", "q1", ("news", "financial")),  # picks financial
+        MultiLabelQuery("2", "code", "q2", ("code",)),  # picks code
+        MultiLabelQuery("3", "code", "q3", ("code",)),  # picks news: miss
+    ]
+    enc = _enc({"q1": _unit(0, 1, 0), "q2": _unit(0, 0, 1), "q3": _unit(1, 0, 0)})
+    r = evaluate_multilabel(_index(), qs, top_k=1, select_margin=0.0, encode=enc)
+    assert r["top1"] == pytest.approx(2 / 3)
+    assert r["per_primary"]["code"] == {"n": 2, "hit": 0.5}
