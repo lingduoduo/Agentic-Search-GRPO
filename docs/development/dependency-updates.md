@@ -16,6 +16,7 @@ from the Renovate GitHub App. The policy lives in
   - pre-commit hooks
 - Majors are never opened automatically. They appear on the **Dependency Dashboard** issue, and ticking one there opens its PR on the next run.
 - A minor or major bump of a `python`/`node` runtime version also waits for dashboard approval, in its own "runtime versions" group. That covers base images in the Dockerfiles and compose, and `python-version`/`node-version` in workflows. CI tests Python 3.10 and 3.12 only.
+- A release must be at least **3 days old** (`minimumReleaseAge`) before Renovate proposes it; until then it proposes the newest release that is old enough. Docker tags carry no release timestamp, so Docker updates skip this check (otherwise they would wait forever).
 - GitHub Actions are pinned to commit digests, with the version in a comment.
 - At most 5 open Renovate PRs, and at most 2 created per hour.
 - Every PR is labelled `dependencies` and titled `chore(deps): …`.
@@ -41,18 +42,19 @@ requirements file. To lift a protection, delete the rule in the same PR that
 fixes the reason it existed.
 
 `renovate.json` is validated in CI by the **Renovate config** job
-(`renovate-config-validator --strict`). To check it locally (Renovate 44 needs
-Node 24):
+(`renovate-config-validator --strict`), using the `renovate-version` that
+`renovate.yml` runs. To check it locally (Renovate 44 needs Node 24; substitute
+that version for `44.155.1` if it has moved):
 
 ```bash
-npx --yes -p renovate@44.117.0 renovate-config-validator --strict renovate.json
+npx --yes -p node@24 -p renovate@44.155.1 renovate-config-validator --strict renovate.json
 ```
 
 To preview what Renovate would propose without opening anything:
 
 ```bash
 LOG_LEVEL=debug RENOVATE_GITHUB_COM_TOKEN=$(gh auth token) \
-  npx --yes -p node@24 -p renovate@44.117.0 \
+  npx --yes -p node@24 -p renovate@44.155.1 \
   renovate --platform=local --dry-run=lookup --onboarding=false
 ```
 
