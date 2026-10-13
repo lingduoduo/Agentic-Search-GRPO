@@ -71,6 +71,10 @@ Gated tools prompt for approval on the streaming path, at parity with the
 auto-router: the endpoint emits `approval_required` events through the
 `ToolApprovalBroker` and waits for the user's decision via the shared
 `POST /api/agent/approvals/{approval_id}` endpoint (authenticated users only).
+A call whose arguments are not a valid JSON object is rejected before the
+approval prompt: it is never offered for approval or run, and the model gets
+`invalid_arguments` with the decode error. The whole batch is resolved this way
+before any call in it executes.
 A failed side-effecting call is escalated the same way, through
 `escalation_required` events and `POST /api/agent/escalations/{escalation_id}`.
 

@@ -248,6 +248,10 @@ Typed dataclasses loaded from environment variables. Key env vars:
 Split by when the training happens. `serving.py` is neither half — it is the
 backend that loads and runs a model, whatever produced it.
 
+- `pre_training/categories/` — the nearest-example search-source category selector behind
+  `domains: ["auto"]`, built offline by `python -m src.model.pre_training.categories.cli build`
+  (also `tune`/`evaluate`/`leakage`, `tune-v2`/`evaluate-v2`); served via
+  `src/internal/tools/category_selection.py`
 - `pre_training/intents/` — the nearest-canonical-example intent router, built offline
   by `python -m src.model.pre_training.intents.cli build` and loaded read-only on the
   request path

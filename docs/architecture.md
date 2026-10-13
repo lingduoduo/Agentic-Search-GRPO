@@ -14,6 +14,7 @@ src/
 ├── model/                       # Split by *when* the training happens
 │   ├── serving.py               # ServerManager backends — neither half; runs whatever model exists
 │   ├── pre_training/
+│   │   ├── categories/          # Nearest-example search-source category selector for `domains: ["auto"]` (built offline, e5 embeddings, read-only at serve time)
 │   │   └── intents/             # Nearest-canonical-example intent router (built offline, read-only at serve time)
 │   └── post_training/           # Not part of the serving stack
 │       ├── data.py              # Prompt/dataset construction, shared by SFT and RL
@@ -47,7 +48,7 @@ src/
     ├── retrieval/               # Retrieval core: service, fusion, query transforms, routers
     ├── routing/                 # Routing layer: per-query router (heuristic default, optional logical/semantic strategies)
     ├── search/                  # SearchPipeline stages (context, retrieve, rank) + query processing
-    ├── tools/                   # Internal tool registry
+    ├── tools/                   # Internal tool registry; search-source categories + auto selection (`search.py`, `category_selection.py`)
     ├── utils/                   # License, encryption, telemetry utilities
     └── servers/
         ├── app.py               # Shared helpers for the standalone search servers
