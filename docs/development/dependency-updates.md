@@ -15,7 +15,7 @@ from the Renovate GitHub App. The policy lives in
   - GitHub Actions
   - pre-commit hooks
 - Majors are never opened automatically. They appear on the **Dependency Dashboard** issue, and ticking one there opens its PR on the next run.
-- A minor or major bump of the `python`/`node` base images, in the Dockerfiles or compose, also waits for dashboard approval. CI tests Python 3.10 and 3.12 only.
+- A minor or major bump of a `python`/`node` runtime version also waits for dashboard approval, in its own "runtime versions" group. That covers base images in the Dockerfiles and compose, and `python-version`/`node-version` in workflows. CI tests Python 3.10 and 3.12 only.
 - GitHub Actions are pinned to commit digests, with the version in a comment.
 - At most 5 open Renovate PRs, and at most 2 created per hour.
 - Every PR is labelled `dependencies` and titled `chore(deps): …`.
@@ -70,8 +70,17 @@ fall back.
    - Pull requests
    - Issues (for the Dependency Dashboard)
    - Workflows (to update `.github/workflows/*`)
+
+   Fine-grained tokens default to read-only. With Contents read-only, Renovate
+   can read the repo but cannot push a single branch.
 4. Repository → **Settings → Secrets and variables → Actions → New repository secret**, name `RENOVATE_TOKEN`.
 5. Run the workflow once from the Actions tab. That creates the Dependency Dashboard issue.
 
-The token expires according to the lifetime you chose. When it does, the
-scheduled run fails at the token step or with a 401: rotate the secret.
+Renovate itself exits successfully when it cannot push a branch. The workflow's
+**Fail on branch or repository errors** step reads Renovate's log and fails the
+run on any `Error updating branch` warning or any ERROR, so a missing permission
+shows up as a red run. Other warnings appear as annotations only.
+
+The token expires according to the lifetime you chose. An expired token is
+still a non-empty secret, so the first step passes and the run fails when
+Renovate cannot authenticate: rotate the secret.
