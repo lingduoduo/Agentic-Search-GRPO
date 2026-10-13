@@ -18,4 +18,12 @@ describe("toggleDomain", () => {
   it("selecting web explicitly clears the others", () => {
     expect(toggleDomain(["financial", "news"], "web")).toEqual(["web"]);
   });
+  it("auto replaces any selection and toggles back to web", () => {
+    expect(toggleDomain(["web"], "auto")).toEqual(["auto"]);
+    expect(toggleDomain(["news", "code"], "auto")).toEqual(["auto"]);
+    expect(toggleDomain(["auto"], "auto")).toEqual(["web"]);
+  });
+  it("a category replaces auto instead of appending", () => {
+    expect(toggleDomain(["auto"], "news")).toEqual(["news"]);
+  });
 });

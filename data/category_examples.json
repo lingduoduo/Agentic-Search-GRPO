@@ -1,0 +1,802 @@
+[
+  {
+    "id": "web-1",
+    "category": "web",
+    "text": "why is the sky blue"
+  },
+  {
+    "id": "web-2",
+    "category": "web",
+    "text": "how does a heat pump work"
+  },
+  {
+    "id": "web-3",
+    "category": "web",
+    "text": "what causes inflation"
+  },
+  {
+    "id": "web-4",
+    "category": "web",
+    "text": "difference between a virus and bacteria"
+  },
+  {
+    "id": "web-5",
+    "category": "web",
+    "text": "how do noise cancelling headphones work"
+  },
+  {
+    "id": "web-6",
+    "category": "web",
+    "text": "what is the speed of sound"
+  },
+  {
+    "id": "web-7",
+    "category": "web",
+    "text": "why do cats purr"
+  },
+  {
+    "id": "web-8",
+    "category": "web",
+    "text": "how are rainbows formed"
+  },
+  {
+    "id": "academic-1",
+    "category": "academic",
+    "text": "peer reviewed studies on intermittent fasting"
+  },
+  {
+    "id": "academic-2",
+    "category": "academic",
+    "text": "transformer attention mechanism original paper"
+  },
+  {
+    "id": "academic-3",
+    "category": "academic",
+    "text": "meta-analysis of mindfulness and anxiety"
+  },
+  {
+    "id": "academic-4",
+    "category": "academic",
+    "text": "CRISPR off-target effects research"
+  },
+  {
+    "id": "academic-5",
+    "category": "academic",
+    "text": "citation for dropout regularization"
+  },
+  {
+    "id": "academic-6",
+    "category": "academic",
+    "text": "recent preprints on protein folding"
+  },
+  {
+    "id": "academic-7",
+    "category": "academic",
+    "text": "systematic review of remote work productivity"
+  },
+  {
+    "id": "academic-8",
+    "category": "academic",
+    "text": "graph neural networks survey 2024"
+  },
+  {
+    "id": "code-1",
+    "category": "code",
+    "text": "TypeError: cannot read properties of undefined"
+  },
+  {
+    "id": "code-2",
+    "category": "code",
+    "text": "python requests timeout example"
+  },
+  {
+    "id": "code-3",
+    "category": "code",
+    "text": "rust borrow checker mutable reference error"
+  },
+  {
+    "id": "code-4",
+    "category": "code",
+    "text": "git rebase vs merge"
+  },
+  {
+    "id": "code-5",
+    "category": "code",
+    "text": "open source react date picker repo"
+  },
+  {
+    "id": "code-6",
+    "category": "code",
+    "text": "kubernetes CrashLoopBackOff fix"
+  },
+  {
+    "id": "code-7",
+    "category": "code",
+    "text": "how to use pandas groupby with multiple columns"
+  },
+  {
+    "id": "code-8",
+    "category": "code",
+    "text": "Stripe API create payment intent node"
+  },
+  {
+    "id": "social_media-1",
+    "category": "social_media",
+    "text": "what do people think of the new iPhone"
+  },
+  {
+    "id": "social_media-2",
+    "category": "social_media",
+    "text": "honest opinions on standing desks"
+  },
+  {
+    "id": "social_media-3",
+    "category": "social_media",
+    "text": "is the steam deck worth it discussion"
+  },
+  {
+    "id": "social_media-4",
+    "category": "social_media",
+    "text": "people's experiences with keto diet"
+  },
+  {
+    "id": "social_media-5",
+    "category": "social_media",
+    "text": "thread about remote work burnout"
+  },
+  {
+    "id": "social_media-6",
+    "category": "social_media",
+    "text": "hot takes on the latest marvel movie"
+  },
+  {
+    "id": "social_media-7",
+    "category": "social_media",
+    "text": "what are users saying about windows 12"
+  },
+  {
+    "id": "social_media-8",
+    "category": "social_media",
+    "text": "forum discussion best mechanical keyboard switches"
+  },
+  {
+    "id": "resource-1",
+    "category": "resource",
+    "text": "free resume template download"
+  },
+  {
+    "id": "resource-2",
+    "category": "resource",
+    "text": "public dataset of housing prices"
+  },
+  {
+    "id": "resource-3",
+    "category": "resource",
+    "text": "open source alternative to photoshop"
+  },
+  {
+    "id": "resource-4",
+    "category": "resource",
+    "text": "invoice template for freelancers"
+  },
+  {
+    "id": "resource-5",
+    "category": "resource",
+    "text": "image classification dataset with labels"
+  },
+  {
+    "id": "resource-6",
+    "category": "resource",
+    "text": "free icon pack svg"
+  },
+  {
+    "id": "resource-7",
+    "category": "resource",
+    "text": "project management spreadsheet template"
+  },
+  {
+    "id": "resource-8",
+    "category": "resource",
+    "text": "csv of world countries and capitals"
+  },
+  {
+    "id": "news-1",
+    "category": "news",
+    "text": "latest earthquake today"
+  },
+  {
+    "id": "news-2",
+    "category": "news",
+    "text": "election results tonight"
+  },
+  {
+    "id": "news-3",
+    "category": "news",
+    "text": "what happened at the summit this week"
+  },
+  {
+    "id": "news-4",
+    "category": "news",
+    "text": "breaking wildfire evacuation update"
+  },
+  {
+    "id": "news-5",
+    "category": "news",
+    "text": "airline strike latest"
+  },
+  {
+    "id": "news-6",
+    "category": "news",
+    "text": "supreme court ruling today reaction"
+  },
+  {
+    "id": "news-7",
+    "category": "news",
+    "text": "central bank rate decision announced"
+  },
+  {
+    "id": "news-8",
+    "category": "news",
+    "text": "hurricane path update"
+  },
+  {
+    "id": "official-1",
+    "category": "official",
+    "text": "IRS tax filing deadline announcement"
+  },
+  {
+    "id": "official-2",
+    "category": "official",
+    "text": "WHO guidance on measles outbreak"
+  },
+  {
+    "id": "official-3",
+    "category": "official",
+    "text": "python 3.13 release notes"
+  },
+  {
+    "id": "official-4",
+    "category": "official",
+    "text": "passport renewal requirements state department"
+  },
+  {
+    "id": "official-5",
+    "category": "official",
+    "text": "FDA approval announcement new drug"
+  },
+  {
+    "id": "official-6",
+    "category": "official",
+    "text": "EU commission press release AI act"
+  },
+  {
+    "id": "official-7",
+    "category": "official",
+    "text": "kubernetes deprecation policy documentation"
+  },
+  {
+    "id": "official-8",
+    "category": "official",
+    "text": "city council statement on road closures"
+  },
+  {
+    "id": "legal-1",
+    "category": "legal",
+    "text": "GDPR right to be forgotten requirements"
+  },
+  {
+    "id": "legal-2",
+    "category": "legal",
+    "text": "Roe v Wade decision summary"
+  },
+  {
+    "id": "legal-3",
+    "category": "legal",
+    "text": "tenant rights eviction notice california"
+  },
+  {
+    "id": "legal-4",
+    "category": "legal",
+    "text": "fair use copyright exceptions"
+  },
+  {
+    "id": "legal-5",
+    "category": "legal",
+    "text": "statute of limitations for breach of contract"
+  },
+  {
+    "id": "legal-6",
+    "category": "legal",
+    "text": "HIPAA privacy rule requirements"
+  },
+  {
+    "id": "legal-7",
+    "category": "legal",
+    "text": "non compete agreement enforceability"
+  },
+  {
+    "id": "legal-8",
+    "category": "legal",
+    "text": "Miranda rights case history"
+  },
+  {
+    "id": "financial-1",
+    "category": "financial",
+    "text": "Apple quarterly earnings report"
+  },
+  {
+    "id": "financial-2",
+    "category": "financial",
+    "text": "tesla 10-K annual filing"
+  },
+  {
+    "id": "financial-3",
+    "category": "financial",
+    "text": "S&P 500 today"
+  },
+  {
+    "id": "financial-4",
+    "category": "financial",
+    "text": "nvidia stock price after earnings"
+  },
+  {
+    "id": "financial-5",
+    "category": "financial",
+    "text": "bitcoin price chart"
+  },
+  {
+    "id": "financial-6",
+    "category": "financial",
+    "text": "treasury yield curve inversion"
+  },
+  {
+    "id": "financial-7",
+    "category": "financial",
+    "text": "microsoft dividend history"
+  },
+  {
+    "id": "financial-8",
+    "category": "financial",
+    "text": "fed funds futures probabilities"
+  },
+  {
+    "id": "patent-1",
+    "category": "patent",
+    "text": "prior art search for foldable phone hinge"
+  },
+  {
+    "id": "patent-2",
+    "category": "patent",
+    "text": "trademark registration for a coffee brand name"
+  },
+  {
+    "id": "patent-3",
+    "category": "patent",
+    "text": "USPTO office action response"
+  },
+  {
+    "id": "patent-4",
+    "category": "patent",
+    "text": "who owns the rights to the lithium battery invention"
+  },
+  {
+    "id": "patent-5",
+    "category": "patent",
+    "text": "how to file a provisional application"
+  },
+  {
+    "id": "patent-6",
+    "category": "patent",
+    "text": "trademark infringement check logo"
+  },
+  {
+    "id": "patent-7",
+    "category": "patent",
+    "text": "intellectual property claims for drone delivery"
+  },
+  {
+    "id": "patent-8",
+    "category": "patent",
+    "text": "expired drug exclusivity filings"
+  },
+  {
+    "id": "product-1",
+    "category": "product",
+    "text": "sony wh-1000xm5 vs bose qc ultra"
+  },
+  {
+    "id": "product-2",
+    "category": "product",
+    "text": "best budget laptop for students"
+  },
+  {
+    "id": "product-3",
+    "category": "product",
+    "text": "dyson v15 price"
+  },
+  {
+    "id": "product-4",
+    "category": "product",
+    "text": "iphone 16 pro battery life review"
+  },
+  {
+    "id": "product-5",
+    "category": "product",
+    "text": "samsung 65 inch oled specs"
+  },
+  {
+    "id": "product-6",
+    "category": "product",
+    "text": "cheapest air fryer with good ratings"
+  },
+  {
+    "id": "product-7",
+    "category": "product",
+    "text": "garmin forerunner 265 features"
+  },
+  {
+    "id": "product-8",
+    "category": "product",
+    "text": "ergonomic office chair under 300"
+  },
+  {
+    "id": "business-1",
+    "category": "business",
+    "text": "Patagonia company profile"
+  },
+  {
+    "id": "business-2",
+    "category": "business",
+    "text": "who is the CEO of Spotify"
+  },
+  {
+    "id": "business-3",
+    "category": "business",
+    "text": "semiconductor industry overview"
+  },
+  {
+    "id": "business-4",
+    "category": "business",
+    "text": "top competitors of Airbnb"
+  },
+  {
+    "id": "business-5",
+    "category": "business",
+    "text": "how many employees does Costco have"
+  },
+  {
+    "id": "business-6",
+    "category": "business",
+    "text": "electric vehicle market share by manufacturer"
+  },
+  {
+    "id": "business-7",
+    "category": "business",
+    "text": "Nike headquarters and revenue"
+  },
+  {
+    "id": "business-8",
+    "category": "business",
+    "text": "biggest logistics companies in europe"
+  },
+  {
+    "id": "local-1",
+    "category": "local",
+    "text": "pizza near me open now"
+  },
+  {
+    "id": "local-2",
+    "category": "local",
+    "text": "pharmacy hours sunday"
+  },
+  {
+    "id": "local-3",
+    "category": "local",
+    "text": "closest gas station"
+  },
+  {
+    "id": "local-4",
+    "category": "local",
+    "text": "dentist accepting new patients nearby"
+  },
+  {
+    "id": "local-5",
+    "category": "local",
+    "text": "coffee shop with wifi downtown"
+  },
+  {
+    "id": "local-6",
+    "category": "local",
+    "text": "dmv office hours near me"
+  },
+  {
+    "id": "local-7",
+    "category": "local",
+    "text": "24 hour urgent care close by"
+  },
+  {
+    "id": "local-8",
+    "category": "local",
+    "text": "hardware store open late"
+  },
+  {
+    "id": "travel-1",
+    "category": "travel",
+    "text": "cheap flights to tokyo in march"
+  },
+  {
+    "id": "travel-2",
+    "category": "travel",
+    "text": "hotels near the eiffel tower"
+  },
+  {
+    "id": "travel-3",
+    "category": "travel",
+    "text": "best time to visit iceland"
+  },
+  {
+    "id": "travel-4",
+    "category": "travel",
+    "text": "things to do in lisbon for 3 days"
+  },
+  {
+    "id": "travel-5",
+    "category": "travel",
+    "text": "do I need a visa for vietnam"
+  },
+  {
+    "id": "travel-6",
+    "category": "travel",
+    "text": "round trip nyc to london fares"
+  },
+  {
+    "id": "travel-7",
+    "category": "travel",
+    "text": "all inclusive resorts in cancun"
+  },
+  {
+    "id": "travel-8",
+    "category": "travel",
+    "text": "train from rome to florence schedule"
+  },
+  {
+    "id": "media-1",
+    "category": "media",
+    "text": "northern lights photos"
+  },
+  {
+    "id": "media-2",
+    "category": "media",
+    "text": "how to make sourdough video"
+  },
+  {
+    "id": "media-3",
+    "category": "media",
+    "text": "true crime podcast recommendations"
+  },
+  {
+    "id": "media-4",
+    "category": "media",
+    "text": "funny cat videos compilation"
+  },
+  {
+    "id": "media-5",
+    "category": "media",
+    "text": "nasa james webb images"
+  },
+  {
+    "id": "media-6",
+    "category": "media",
+    "text": "ted talk on procrastination"
+  },
+  {
+    "id": "media-7",
+    "category": "media",
+    "text": "lofi music playlist"
+  },
+  {
+    "id": "media-8",
+    "category": "media",
+    "text": "documentary about deep sea creatures"
+  },
+  {
+    "id": "books-1",
+    "category": "books",
+    "text": "novels similar to the night circus"
+  },
+  {
+    "id": "books-2",
+    "category": "books",
+    "text": "who wrote the remains of the day"
+  },
+  {
+    "id": "books-3",
+    "category": "books",
+    "text": "Haruki Murakami latest novel"
+  },
+  {
+    "id": "books-4",
+    "category": "books",
+    "text": "best sci-fi series of all time"
+  },
+  {
+    "id": "books-5",
+    "category": "books",
+    "text": "summary of atomic habits"
+  },
+  {
+    "id": "books-6",
+    "category": "books",
+    "text": "stephen king bibliography in order"
+  },
+  {
+    "id": "books-7",
+    "category": "books",
+    "text": "nonfiction about the history of salt"
+  },
+  {
+    "id": "books-8",
+    "category": "books",
+    "text": "award winning fantasy novels 2025"
+  },
+  {
+    "id": "education-1",
+    "category": "education",
+    "text": "free online machine learning course"
+  },
+  {
+    "id": "education-2",
+    "category": "education",
+    "text": "learn spanish for beginners"
+  },
+  {
+    "id": "education-3",
+    "category": "education",
+    "text": "calculus tutorial derivatives"
+  },
+  {
+    "id": "education-4",
+    "category": "education",
+    "text": "how to learn piano online"
+  },
+  {
+    "id": "education-5",
+    "category": "education",
+    "text": "SQL beginner lessons"
+  },
+  {
+    "id": "education-6",
+    "category": "education",
+    "text": "online MBA programs accredited"
+  },
+  {
+    "id": "education-7",
+    "category": "education",
+    "text": "python course with certificate"
+  },
+  {
+    "id": "education-8",
+    "category": "education",
+    "text": "beginner watercolor painting class"
+  },
+  {
+    "id": "events-1",
+    "category": "events",
+    "text": "taylor swift concert dates 2026"
+  },
+  {
+    "id": "events-2",
+    "category": "events",
+    "text": "NeurIPS 2026 deadline"
+  },
+  {
+    "id": "events-3",
+    "category": "events",
+    "text": "music festivals this summer in europe"
+  },
+  {
+    "id": "events-4",
+    "category": "events",
+    "text": "comic con tickets"
+  },
+  {
+    "id": "events-5",
+    "category": "events",
+    "text": "marathon race schedule october"
+  },
+  {
+    "id": "events-6",
+    "category": "events",
+    "text": "tech conferences in san francisco"
+  },
+  {
+    "id": "events-7",
+    "category": "events",
+    "text": "broadway shows playing this weekend"
+  },
+  {
+    "id": "events-8",
+    "category": "events",
+    "text": "world cup match schedule"
+  },
+  {
+    "id": "jobs-1",
+    "category": "jobs",
+    "text": "software engineer openings remote"
+  },
+  {
+    "id": "jobs-2",
+    "category": "jobs",
+    "text": "average salary of a nurse in texas"
+  },
+  {
+    "id": "jobs-3",
+    "category": "jobs",
+    "text": "data scientist hiring entry level"
+  },
+  {
+    "id": "jobs-4",
+    "category": "jobs",
+    "text": "part time warehouse work"
+  },
+  {
+    "id": "jobs-5",
+    "category": "jobs",
+    "text": "product manager salary range"
+  },
+  {
+    "id": "jobs-6",
+    "category": "jobs",
+    "text": "teaching positions abroad"
+  },
+  {
+    "id": "jobs-7",
+    "category": "jobs",
+    "text": "how much do electricians make"
+  },
+  {
+    "id": "jobs-8",
+    "category": "jobs",
+    "text": "UX designer vacancies london"
+  },
+  {
+    "id": "statistics-1",
+    "category": "statistics",
+    "text": "US unemployment rate by month"
+  },
+  {
+    "id": "statistics-2",
+    "category": "statistics",
+    "text": "world population 2025"
+  },
+  {
+    "id": "statistics-3",
+    "category": "statistics",
+    "text": "median household income by state"
+  },
+  {
+    "id": "statistics-4",
+    "category": "statistics",
+    "text": "GDP growth rate china"
+  },
+  {
+    "id": "statistics-5",
+    "category": "statistics",
+    "text": "percentage of adults who smoke"
+  },
+  {
+    "id": "statistics-6",
+    "category": "statistics",
+    "text": "census data on household size"
+  },
+  {
+    "id": "statistics-7",
+    "category": "statistics",
+    "text": "consumer price index latest"
+  },
+  {
+    "id": "statistics-8",
+    "category": "statistics",
+    "text": "survey results on remote work adoption"
+  }
+]

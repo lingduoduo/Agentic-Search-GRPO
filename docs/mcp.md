@@ -143,8 +143,12 @@ after aliasing; `web` counts) searched in parallel and fused with RRF. Passing
 it with a `domain` other than `web` returns the error payload. A multi-category
 response carries `domains`, `executed_query` and `executed_queries`.
 `search_domain` and
-`batch_search` take `domains` too (not combined with `tag`). See
-[Multi-category search](search-engine.md#multi-category-search).
+`batch_search` take `domains` too (not combined with `tag`). On all three,
+`domains: ["auto"]` (opt-in) picks the categories from the query (for
+`batch_search`, separately for each query) and the response adds `domains` and
+`auto_domains` (`{"selected": [...], "status": "ok" | "unavailable"}`). See
+[Multi-category search](search-engine.md#multi-category-search) and
+[Automatic category selection](search-engine.md#automatic-category-selection).
 
 Domain hints do not select providers or guarantee category membership.
 `search_indexed_documents` does not accept a domain argument; its document-set

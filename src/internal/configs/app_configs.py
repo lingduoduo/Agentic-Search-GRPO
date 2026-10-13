@@ -17,6 +17,8 @@ from typing import Mapping
 from urllib.parse import urlparse
 
 from src.shared_configs.intent import (
+    DEFAULT_CATEGORY_SELECT_MARGIN,
+    DEFAULT_CATEGORY_TOP_K,
     DEFAULT_MIN_MODULE_SCORE,
     DEFAULT_MIN_ROUTE_MARGIN,
     DEFAULT_TOP_K,
@@ -252,6 +254,10 @@ class AppSettings:
     intent_min_module_score: float = DEFAULT_MIN_MODULE_SCORE
     # Neighbors averaged per route, selected jointly with the route margin.
     intent_top_k: int = DEFAULT_TOP_K
+    # Automatic source-category selection (domains=["auto"]); unset disables it.
+    category_index_path: Path | None = None
+    category_top_k: int = DEFAULT_CATEGORY_TOP_K
+    category_select_margin: float = DEFAULT_CATEGORY_SELECT_MARGIN
     route_clarification: bool = True
     timeouts: TimeoutPolicies = field(default_factory=get_timeout_policies)
 
@@ -267,6 +273,15 @@ class AppSettings:
                 )
         if self.intent_top_k <= 0:
             raise ValueError("intent_top_k must be a positive integer")
+        if self.category_top_k <= 0:
+            raise ValueError("category_top_k must be a positive integer")
+        if (
+            not math.isfinite(self.category_select_margin)
+            or not 0.0 <= self.category_select_margin <= 1.0
+        ):
+            raise ValueError(
+                "category_select_margin must be a finite value between 0 and 1"
+            )
 
 
 def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
@@ -287,6 +302,17 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
     intent_top_k = get_env_int(source, "AGENTIC_SEARCH_INTENT_TOP_K", DEFAULT_TOP_K)
     intent_shadow_mode = get_env_bool(
         source, "AGENTIC_SEARCH_INTENT_SHADOW_MODE", False
+    )
+    category_top_k = get_env_int(
+        source, "AGENTIC_SEARCH_CATEGORY_TOP_K", DEFAULT_CATEGORY_TOP_K
+    )
+    category_select_margin = get_env_float(
+        source,
+        "AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN",
+        DEFAULT_CATEGORY_SELECT_MARGIN,
+    )
+    category_index_path_value = get_env_str(
+        source, "AGENTIC_SEARCH_CATEGORY_INDEX_PATH", None
     )
     intent_index_path_value = get_env_str(
         source, "AGENTIC_SEARCH_INTENT_INDEX_PATH", None
@@ -400,6 +426,11 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
         intent_min_route_margin=intent_min_route_margin,
         intent_min_module_score=intent_min_module_score,
         intent_top_k=intent_top_k,
+        category_index_path=(
+            Path(category_index_path_value) if category_index_path_value else None
+        ),
+        category_top_k=category_top_k,
+        category_select_margin=category_select_margin,
         route_clarification=get_env_bool(
             source, "AGENTIC_SEARCH_ROUTE_CLARIFICATION", True
         ),

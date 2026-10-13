@@ -1,0 +1,113 @@
+{
+  "n": 48,
+  "coverage": 0.7291666666666666,
+  "mean_picks": 1.0,
+  "top1": 0.7291666666666666,
+  "per_category": {
+    "academic": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "books": {
+      "n": 3,
+      "coverage": 0.3333333333333333
+    },
+    "business": {
+      "n": 3,
+      "coverage": 0.6666666666666666
+    },
+    "code": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "education": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "events": {
+      "n": 3,
+      "coverage": 0.6666666666666666
+    },
+    "financial": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "jobs": {
+      "n": 3,
+      "coverage": 0.3333333333333333
+    },
+    "legal": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "media": {
+      "n": 3,
+      "coverage": 0.6666666666666666
+    },
+    "news": {
+      "n": 3,
+      "coverage": 0.3333333333333333
+    },
+    "patent": {
+      "n": 3,
+      "coverage": 0.6666666666666666
+    },
+    "resource": {
+      "n": 3,
+      "coverage": 0.3333333333333333
+    },
+    "social_media": {
+      "n": 3,
+      "coverage": 0.6666666666666666
+    },
+    "statistics": {
+      "n": 3,
+      "coverage": 1.0
+    },
+    "travel": {
+      "n": 3,
+      "coverage": 1.0
+    }
+  },
+  "confusion": {
+    "books": {
+      "product": 1,
+      "academic": 1
+    },
+    "business": {
+      "statistics": 1
+    },
+    "events": {
+      "education": 1
+    },
+    "jobs": {
+      "statistics": 1,
+      "official": 1
+    },
+    "media": {
+      "resource": 1
+    },
+    "news": {
+      "financial": 1,
+      "academic": 1
+    },
+    "patent": {
+      "academic": 1
+    },
+    "resource": {
+      "education": 1,
+      "academic": 1
+    },
+    "social_media": {
+      "web": 1
+    }
+  },
+  "split": "test",
+  "top_k": 3,
+  "select_margin": 0.0,
+  "bar": {
+    "coverage": 0.8,
+    "mean_picks": 2.0
+  },
+  "passed": false
+}

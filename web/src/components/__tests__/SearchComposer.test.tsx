@@ -1,5 +1,5 @@
 // web/src/components/__tests__/SearchComposer.test.tsx
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SearchComposer } from "../SearchComposer";
@@ -201,5 +201,24 @@ describe("SearchComposer domain selector", () => {
     );
     await userEvent.click(screen.getByRole("checkbox", { name: "web" }));
     expect(onDomainsChange).toHaveBeenCalledWith(["web"]);
+  });
+
+  it("lists Auto first, reports it, and never limit-disables it", async () => {
+    const onDomainsChange = vi.fn();
+    const { rerender } = render(
+      <SearchComposer {...domainProps} onDomainsChange={onDomainsChange} />,
+    );
+    const group = screen.getByRole("group", { name: "Search source" });
+    expect(within(group).getAllByRole("checkbox")[0]).toHaveAccessibleName("Auto");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Auto" }));
+    expect(onDomainsChange).toHaveBeenCalledWith(["auto"]);
+    rerender(
+      <SearchComposer
+        {...domainProps}
+        domains={["financial", "news", "social_media"]}
+        onDomainsChange={onDomainsChange}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "Auto" })).toBeEnabled();
   });
 });

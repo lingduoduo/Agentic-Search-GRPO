@@ -498,3 +498,68 @@ async def test_batch_domains_and_tag_override_shared_selectors(monkeypatch):
         "domains": ["news", "code"],
         "tag": "finance.quote",
     }
+
+
+def _patch_search_resolver(monkeypatch, selected, status="ok"):
+    seen = []
+
+    async def fake_resolve(query, domains):
+        seen.append((query, domains))
+        if domains == ["auto"]:
+            return list(selected), {"selected": list(selected), "status": status}
+        return domains, None
+
+    monkeypatch.setattr("src.internal.tools.search.resolve_auto_domains", fake_resolve)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_search_auto_reports_domains_and_auto_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    seen = _patch_search_resolver(monkeypatch, ["news", "code"])
+    client, calls = _recording_web()
+    result = await client.search("rust", domains=["auto"])
+    assert seen == [("rust", ["auto"])]
+    assert len(calls) == 2
+    assert result["domains"] == ["news", "code"]
+    assert result["auto_domains"] == {"selected": ["news", "code"], "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_search_single_category_auto_reports_its_pick(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    _patch_search_resolver(monkeypatch, ["news"])
+    client, calls = _recording_web()
+    result = await client.search("rust", domains=["auto"])
+    assert result["domain"] == "news"
+    assert result["domains"] == ["news"]
+    assert result["auto_domains"]["selected"] == ["news"]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_without_auto_has_no_auto_domains(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    client, _ = _recording_web()
+    assert "auto_domains" not in await client.search("rust", domains=["news", "code"])
+    assert "auto_domains" not in await client.search("rust", domain="news")
+
+
+@pytest.mark.asyncio
+async def test_search_auto_rejects_tag_and_mixed_names_before_dispatch():
+    client, calls = _recording_web()
+    with pytest.raises(InvalidToolInput):
+        await client.search("rust", domains=["auto"], tag="financial.quote")
+    with pytest.raises(InvalidToolInput):
+        await client.search("rust", domains=["auto", "news"])
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_batch_search_resolves_auto_per_item(monkeypatch):
+    monkeypatch.setenv("AGENTIC_SEARCH_CATEGORY_SITES", "0")
+    seen = _patch_search_resolver(monkeypatch, ["news", "code"])
+    client, _ = _recording_web()
+    out = await client.batch_search([{"query": "a"}, {"query": "b"}], domains=["auto"])
+    assert sorted(seen) == [("a", ["auto"]), ("b", ["auto"])]
+    assert all(item["auto_domains"]["selected"] == ["news", "code"] for item in out)

@@ -8,6 +8,7 @@ import {
   submitToolApproval,
   submitToolEscalation,
 } from "../api";
+import { AUTO } from "../domains";
 import { AnswerPanel } from "../components/AnswerPanel";
 import { ClarificationPrompt } from "../components/ClarificationPrompt";
 import { DevConsole } from "../components/debug/DevConsole";
@@ -23,6 +24,7 @@ import type {
   ClarificationView,
   ControlFlowEventView,
   ProgressStep,
+  AutoDomains,
   SearchDomainOption,
   SearchSourceProvider,
   SourceDocumentView,
@@ -53,6 +55,7 @@ export function AssistPage() {
   const [query, setQuery] = useState("");
   const [searchUrl, setSearchUrl] = useState(DEFAULT_SEARCH_URL);
   const [topK, setTopK] = useState(5);
+  const [autoDomains, setAutoDomains] = useState<AutoDomains | null>(null);
   const [domains, setDomains] = useState<string[]>(["web"]);
   const [domainOptions, setDomainOptions] = useState<SearchDomainOption[]>([
     { name: "web", description: "General information, websites, explanations, references" },
@@ -138,6 +141,7 @@ export function AssistPage() {
     setIntent(undefined);
     setRoute(undefined);
     setRouteDegraded(undefined);
+    setAutoDomains(null);
     // Clear the previous turn's answer so a failed/next query never renders a
     // stale answer or citation anchors pointing at now-removed source cards.
     setAnswer("");
@@ -165,7 +169,9 @@ export function AssistPage() {
         // Only forwarded in dev mode; otherwise the backend resolves the URL.
         search_url: DEV_MODE ? searchUrl : undefined,
         top_k: topK,
-        ...(domains.length === 1 ? { domain: domains[0] } : { domains }),
+        ...(domains[0] !== AUTO && domains.length === 1
+          ? { domain: domains[0] }
+          : { domains }),
         source_provider: DEV_MODE ? sourceProvider : undefined,
         route: options?.route,
       };
@@ -212,6 +218,7 @@ export function AssistPage() {
               ? { view: event.clarification, query: normalizedQuery }
               : null,
           );
+          setAutoDomains(event.auto_domains ?? null);
           setRoute(event.route ?? undefined);
           setRouteDegraded(event.route_degraded ?? undefined);
           // ClarificationPrompt already renders the question; don't duplicate
@@ -364,6 +371,14 @@ export function AssistPage() {
           handleSubmit(q);
         }}
       />
+
+      {autoDomains && (
+        <p role="status" style={{ color: "var(--muted)" }}>
+          {autoDomains.status === "ok"
+            ? `Auto picked: ${autoDomains.selected.join(" · ")}`
+            : "Auto unavailable: searched web"}
+        </p>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 

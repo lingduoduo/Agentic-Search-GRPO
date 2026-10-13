@@ -274,3 +274,38 @@ def test_tool_approval_timeout_must_be_positive() -> None:
 def test_tool_approval_timeout_must_be_finite(value: str) -> None:
     with pytest.raises(ValueError, match="TOOL_APPROVAL_TIMEOUT_SECONDS"):
         load_app_settings({"TOOL_APPROVAL_TIMEOUT_SECONDS": value})
+
+
+def test_category_settings_defaults():
+    from src.shared_configs.intent import (
+        DEFAULT_CATEGORY_SELECT_MARGIN,
+        DEFAULT_CATEGORY_TOP_K,
+    )
+
+    settings = load_app_settings({})
+    assert settings.category_index_path is None
+    assert settings.category_top_k == DEFAULT_CATEGORY_TOP_K
+    assert settings.category_select_margin == DEFAULT_CATEGORY_SELECT_MARGIN
+
+
+def test_category_settings_read_from_env():
+    settings = load_app_settings(
+        {
+            "AGENTIC_SEARCH_CATEGORY_INDEX_PATH": "/models/cat",
+            "AGENTIC_SEARCH_CATEGORY_TOP_K": "5",
+            "AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN": "0.1",
+        }
+    )
+    assert settings.category_index_path == Path("/models/cat")
+    assert settings.category_top_k == 5
+    assert settings.category_select_margin == 0.1
+
+
+def test_category_top_k_must_be_positive():
+    with pytest.raises(ValueError, match="category_top_k"):
+        AppSettings(category_top_k=0)
+
+
+def test_category_select_margin_must_be_a_probability():
+    with pytest.raises(ValueError, match="category_select_margin"):
+        AppSettings(category_select_margin=1.5)
