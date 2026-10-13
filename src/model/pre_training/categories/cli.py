@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -30,6 +31,20 @@ from .model import (
     CategoryIndex,
     build_category_index,
 )
+
+
+# The pre-registered v2 test set; tuning must never see it.
+V2_TEST_LABELS = Path(__file__).resolve().parents[4] / (
+    "data/eval/category_selection_test_v2.json"
+)
+TEST_ID_PREFIX = "t-"
+
+
+def _provenance(labels: Path) -> dict:
+    return {
+        "labels_path": str(labels),
+        "labels_sha256": hashlib.sha256(labels.read_bytes()).hexdigest(),
+    }
 
 
 def _write(path: Path, payload: dict) -> None:
@@ -93,10 +108,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"LEAKAGE: {pair}")
         return 1 if result["flagged"] else 0
 
-    index = CategoryIndex.load(args.index / INDEX_FILENAME)
     if args.command == "tune-v2":
-        result = tune_multilabel(index, load_multilabel_queries(args.labels))
+        queries = load_multilabel_queries(args.labels)
+        if args.labels.resolve() == V2_TEST_LABELS or any(
+            q.id.startswith(TEST_ID_PREFIX) for q in queries
+        ):
+            parser.error(
+                f"tune-v2 refuses {args.labels}: it is the v2 test set (or holds "
+                f"{TEST_ID_PREFIX!r} test ids); tune on the dev file"
+            )
+        index = CategoryIndex.load(args.index / INDEX_FILENAME)
+        result = tune_multilabel(index, queries)
         result["split"] = "dev_v2"
+        result.update(_provenance(args.labels))
         _write(args.report, result)
         print(
             f"top_k={result['top_k']} select_margin={result['select_margin']} "
@@ -104,6 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    index = CategoryIndex.load(args.index / INDEX_FILENAME)
     if args.command == "evaluate-v2":
         result = evaluate_multilabel(
             index,
@@ -124,6 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "passed": result["hit"] >= V2_BAR_HIT
                 and result["precision"] >= V2_BAR_PRECISION
                 and result["mean_picks"] <= V2_BAR_MEAN_PICKS,
+                **_provenance(args.labels),
             }
         )
         _write(args.report, result)
@@ -137,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tune":
         result = tune(index, dev)
         result["split"] = "dev"
+        result.update(_provenance(args.labels))
         _write(args.report, result)
         print(f"top_k={result['top_k']} select_margin={result['select_margin']}")
         return 0
@@ -152,6 +179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "bar": {"coverage": BAR_COVERAGE, "mean_picks": BAR_MEAN_PICKS},
             "passed": result["coverage"] >= BAR_COVERAGE
             and result["mean_picks"] <= BAR_MEAN_PICKS,
+            **_provenance(args.labels),
         }
     )
     _write(args.report, result)

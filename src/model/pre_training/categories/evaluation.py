@@ -13,7 +13,7 @@ import numpy as np
 from src.internal.tools.search import DOMAIN_REGISTRY
 from src.model.pre_training.intents.model import encode_texts
 
-from .model import CategoryIndex, load_category_examples
+from .model import CategoryIndex, _normalize, load_category_examples
 
 GRID_TOP_K = (1, 2, 3, 5)
 GRID_MARGIN = (0.00, 0.01, 0.02, 0.03, 0.05)
@@ -178,10 +178,6 @@ class MultiLabelQuery:
     acceptable: tuple[str, ...]
 
 
-def _normalize(text: str) -> str:
-    return " ".join(text.lower().split())
-
-
 def load_multilabel_queries(path: Path | str) -> list[MultiLabelQuery]:
     payload = json.loads(Path(path).read_text())
     if payload.get("taxonomy") != V2_MARKER:
@@ -190,11 +186,23 @@ def load_multilabel_queries(path: Path | str) -> list[MultiLabelQuery]:
     seen: set[str] = set()
     seen_ids: set[str] = set()
     for rec in payload["queries"]:
+        if not isinstance(rec, dict):
+            raise ValueError(f"{path}: query record must be an object: {rec!r}")
+        for key in ("id", "primary", "query"):
+            if not isinstance(rec.get(key), str):
+                raise ValueError(f"{path}: record needs a string {key}: {rec!r}")
+        acceptable = rec.get("acceptable")
+        if not isinstance(acceptable, list) or not all(
+            isinstance(c, str) for c in acceptable
+        ):
+            raise ValueError(f"{path}: record needs an acceptable list: {rec!r}")
         qid, primary = rec["id"], rec["primary"]
         if qid in seen_ids:
             raise ValueError(f"duplicate id {qid!r}")
         seen_ids.add(qid)
         acceptable = tuple(rec["acceptable"])
+        if len(set(acceptable)) != len(acceptable):
+            raise ValueError(f"{qid}: duplicate entry in acceptable")
         if primary not in DOMAIN_REGISTRY:
             raise ValueError(f"{qid}: primary {primary!r} is not a category")
         if primary not in acceptable:

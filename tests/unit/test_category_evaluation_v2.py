@@ -296,3 +296,232 @@ def test_v2_files_load_and_test_set_has_three_per_category():
     dev = load_multilabel_queries(repo / "data/eval/category_selection_dev_v2.json")
     assert len(test) == 60 and set(Counter(q.primary for q in test).values()) == {3}
     assert len(dev) == 64
+
+
+def _collisions(examples, dev, test):
+    """Example or dev texts that normalize equal to a test query."""
+    from src.model.pre_training.categories.model import _normalize
+
+    keys = {_normalize(t) for t in test}
+    return [
+        (kind, text)
+        for kind, texts in (("example", examples), ("dev", dev))
+        for text in texts
+        if _normalize(text) in keys
+    ]
+
+
+def test_no_example_or_dev_query_equals_a_test_query():
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    examples = [
+        r["text"]
+        for r in json.loads((repo / "data" / "category_examples.json").read_text())
+    ]
+    dev = [
+        q.query
+        for q in load_multilabel_queries(
+            repo / "data/eval/category_selection_dev_v2.json"
+        )
+    ]
+    test = [
+        q.query
+        for q in load_multilabel_queries(
+            repo / "data/eval/category_selection_test_v2.json"
+        )
+    ]
+    assert _collisions(examples, dev, test) == []
+    # Positive control: a test query copied (re-cased) into the examples is caught.
+    leaked = examples + ["  " + test[0].upper() + " "]
+    assert _collisions(leaked, dev, test) == [("example", leaked[-1])]
+
+
+@pytest.mark.parametrize(
+    "record,msg",
+    [
+        ({"primary": "news", "query": "a", "acceptable": ["news"]}, "id"),
+        ({"id": 1, "primary": "news", "query": "a", "acceptable": ["news"]}, "id"),
+        ({"id": "q1", "query": "a", "acceptable": ["news"]}, "primary"),
+        (
+            {"id": "q1", "primary": ["news"], "query": "a", "acceptable": ["news"]},
+            "primary",
+        ),
+        ({"id": "q1", "primary": "news", "acceptable": ["news"]}, "query"),
+        (
+            {"id": "q1", "primary": "news", "query": None, "acceptable": ["news"]},
+            "query",
+        ),
+        ({"id": "q1", "primary": "news", "query": "a"}, "acceptable"),
+        (
+            {"id": "q1", "primary": "news", "query": "a", "acceptable": "news"},
+            "acceptable",
+        ),
+        (
+            {
+                "id": "q1",
+                "primary": "news",
+                "query": "a",
+                "acceptable": ["news", "news"],
+            },
+            "acceptable",
+        ),
+    ],
+)
+def test_loader_rejects_malformed_records_with_value_error(tmp_path, record, msg):
+    with pytest.raises(ValueError, match=msg):
+        load_multilabel_queries(_write(tmp_path, [record]))
+
+
+def _cli_setup(tmp_path, monkeypatch, ids):
+    """Tiny one-hot index on disk + v2 labels; encoder maps query text -> vector."""
+    from src.model.pre_training.categories import evaluation
+    from src.model.pre_training.categories.model import INDEX_FILENAME
+
+    _index().save(tmp_path / "index" / INDEX_FILENAME)
+    vec = {"qa": [1.0, 0.0, 0.0], "qb": [0.0, 0.0, 1.0]}
+    monkeypatch.setattr(
+        evaluation,
+        "encode_texts",
+        lambda texts: np.array([vec[t] for t in texts], dtype=np.float32),
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "taxonomy": "category_selection_v2",
+                "queries": [
+                    {
+                        "id": ids[0],
+                        "primary": "news",
+                        "query": "qa",
+                        "acceptable": ["news"],
+                    },
+                    {
+                        "id": ids[1],
+                        "primary": "code",
+                        "query": "qb",
+                        "acceptable": ["code"],
+                    },
+                ],
+            }
+        )
+    )
+    return tmp_path / "index", labels
+
+
+def _sha256(path):
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_tune_v2_refuses_test_set_ids(tmp_path, monkeypatch, capsys):
+    from src.model.pre_training.categories import cli
+
+    index, labels = _cli_setup(tmp_path, monkeypatch, ["d-news-1", "t-code-1"])
+    report = tmp_path / "tuning.json"
+    argv = ["tune-v2", "--index", str(index), "--labels", str(labels)]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--report", str(report)])
+    assert exc.value.code != 0
+    assert "test set" in capsys.readouterr().err
+    assert not report.exists()
+
+
+def test_tune_v2_refuses_the_committed_test_file(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+
+    from src.model.pre_training.categories import cli
+
+    index, _ = _cli_setup(tmp_path, monkeypatch, ["d-1", "d-2"])
+    repo = Path(__file__).resolve().parents[2]
+    test_file = repo / "data/eval/category_selection_test_v2.json"
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            ["tune-v2", "--index", str(index), "--labels", str(test_file)]
+            + ["--report", str(tmp_path / "r.json")]
+        )
+    assert exc.value.code != 0
+    assert "test set" in capsys.readouterr().err
+
+
+def test_tune_v2_on_dev_ids_runs_and_records_label_provenance(tmp_path, monkeypatch):
+    from src.model.pre_training.categories import cli
+
+    index, labels = _cli_setup(tmp_path, monkeypatch, ["d-news-1", "d-code-1"])
+    report = tmp_path / "tuning.json"
+    argv = ["tune-v2", "--index", str(index), "--labels", str(labels)]
+    assert cli.main(argv + ["--report", str(report)]) == 0
+    r = json.loads(report.read_text())
+    assert r["split"] == "dev_v2" and r["feasible"] is True
+    assert r["labels_path"] == str(labels)
+    assert r["labels_sha256"] == _sha256(labels)
+
+
+def test_evaluate_v2_report_split_bar_and_inclusive_pass(tmp_path, monkeypatch):
+    from src.model.pre_training.categories import cli
+
+    index, labels = _cli_setup(tmp_path, monkeypatch, ["t-news-1", "t-code-1"])
+    report = tmp_path / "eval.json"
+    argv = ["evaluate-v2", "--index", str(index), "--labels", str(labels)]
+    argv += ["--report", str(report), "--top-k", "1", "--select-margin", "0"]
+    assert cli.main(argv) == 0
+    r = json.loads(report.read_text())
+    assert r["split"] == "test_v2" and (r["top_k"], r["select_margin"]) == (1, 0.0)
+    assert r["bar"] == {"hit": 0.85, "precision": 0.60, "mean_picks": 2.0}
+    assert (r["hit"], r["precision"], r["mean_picks"]) == (1.0, 1.0, 1.0)
+    assert r["passed"] is True
+    assert r["labels_sha256"] == _sha256(labels)
+    # Bars equal to the achieved values still pass (all three bounds inclusive).
+    monkeypatch.setattr(cli, "V2_BAR_HIT", 1.0)
+    monkeypatch.setattr(cli, "V2_BAR_PRECISION", 1.0)
+    monkeypatch.setattr(cli, "V2_BAR_MEAN_PICKS", 1.0)
+    assert cli.main(argv) == 0
+    assert json.loads(report.read_text())["passed"] is True
+    monkeypatch.setattr(cli, "V2_BAR_MEAN_PICKS", 0.99)
+    assert cli.main(argv) == 0
+    assert json.loads(report.read_text())["passed"] is False
+
+
+def test_leakage_cli_against_uses_v2_check_and_labels_uses_round_one(
+    tmp_path, monkeypatch
+):
+    from src.model.pre_training.categories import cli, evaluation
+
+    monkeypatch.setattr(evaluation, "encode_texts", _same_vector_encoder)
+    example = "best time to visit iceland"
+    query = "best time to visit iceland to see the northern lights"
+    ex, test, _ = _leak_files(tmp_path, example, query, "unrelated")
+    # v2: the round-one allowlisted pair is flagged.
+    assert cli.main(["leakage", "--examples", str(ex), "--against", str(test)]) == 1
+    # Round one: the same pair is allowlisted.
+    labels = tmp_path / "round_one.json"
+    labels.write_text(
+        json.dumps(
+            {"taxonomy": "source_categories", "domains": {"travel": [{"query": query}]}}
+        )
+    )
+    assert cli.main(["leakage", "--examples", str(ex), "--labels", str(labels)]) == 0
+
+
+def test_leakage_cli_needs_labels_or_against(tmp_path):
+    from src.model.pre_training.categories import cli
+
+    ex, _, _ = _leak_files(tmp_path, "a", "b", "c")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["leakage", "--examples", str(ex)])
+    assert exc.value.code != 0
+
+
+def test_tune_v2_refuses_the_test_path_even_with_dev_ids(tmp_path, monkeypatch):
+    from src.model.pre_training.categories import cli
+
+    index, labels = _cli_setup(tmp_path, monkeypatch, ["d-news-1", "d-code-1"])
+    monkeypatch.setattr(cli, "V2_TEST_LABELS", labels.resolve())
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            ["tune-v2", "--index", str(index), "--labels", str(labels)]
+            + ["--report", str(tmp_path / "r.json")]
+        )
+    assert exc.value.code != 0
