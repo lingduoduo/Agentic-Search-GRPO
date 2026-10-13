@@ -267,19 +267,23 @@ def test_top1_accepts_any_acceptable_and_per_primary_hit_is_a_rate():
 
 def test_round_one_examples_are_unchanged():
     # v2 only appends examples; the 160 round-one records stay byte-identical
-    # so the round-one result (0.729) remains reproducible.
-    import subprocess
+    # so the round-one result (0.729) remains reproducible. Fingerprint of the
+    # round-one example set as merged in #689 (ebd01873), so the check needs no
+    # git history (CI checkouts are shallow).
+    import hashlib
     from pathlib import Path
 
-    repo = Path(__file__).resolve().parents[2]
-    original = json.loads(
-        subprocess.check_output(
-            ["git", "show", "041ca0c0:data/category_examples.json"], cwd=repo
-        )
+    round_one_sha256 = (
+        "1ec71f7a766e267611b44120019acb4828571efc98c11a4e1b4d560dfa44bf89"
     )
+    repo = Path(__file__).resolve().parents[2]
     current = json.loads((repo / "data" / "category_examples.json").read_text())
+    original = current[:160]
     assert len(original) == 160
-    assert current[:160] == original
+    digest = hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert digest == round_one_sha256
     assert len(current) > 160
 
 
