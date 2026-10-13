@@ -263,3 +263,32 @@ def test_top1_accepts_any_acceptable_and_per_primary_hit_is_a_rate():
     r = evaluate_multilabel(_index(), qs, top_k=1, select_margin=0.0, encode=enc)
     assert r["top1"] == pytest.approx(2 / 3)
     assert r["per_primary"]["code"] == {"n": 2, "hit": 0.5}
+
+
+def test_round_one_examples_are_unchanged():
+    # v2 only appends examples; the 160 round-one records stay byte-identical
+    # so the round-one result (0.729) remains reproducible.
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    original = json.loads(
+        subprocess.check_output(
+            ["git", "show", "041ca0c0:data/category_examples.json"], cwd=repo
+        )
+    )
+    current = json.loads((repo / "data" / "category_examples.json").read_text())
+    assert len(original) == 160
+    assert current[:160] == original
+    assert len(current) > 160
+
+
+def test_v2_files_load_and_test_set_has_three_per_category():
+    from collections import Counter
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    test = load_multilabel_queries(repo / "data/eval/category_selection_test_v2.json")
+    dev = load_multilabel_queries(repo / "data/eval/category_selection_dev_v2.json")
+    assert len(test) == 60 and set(Counter(q.primary for q in test).values()) == {3}
+    assert len(dev) == 64

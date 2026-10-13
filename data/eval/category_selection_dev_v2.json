@@ -1,0 +1,530 @@
+{
+  "taxonomy": "category_selection_v2",
+  "queries": [
+    {
+      "id": "d-academic-1",
+      "primary": "academic",
+      "query": "attention is all you need transformer paper",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "d-academic-2",
+      "primary": "academic",
+      "query": "jinek 2012 programmable dual-rna-guided dna endonuclease crispr cas9",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "d-academic-3",
+      "primary": "academic",
+      "query": "bert pre-training of deep bidirectional transformers how many citations",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "d-academic-4",
+      "primary": "academic",
+      "query": "intermittent fasting weight loss randomized controlled trial results",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "d-code-1",
+      "primary": "code",
+      "query": "python requests session retry with backoff example",
+      "acceptable": [
+        "code"
+      ]
+    },
+    {
+      "id": "d-code-2",
+      "primary": "code",
+      "query": "react useEffect cleanup function example",
+      "acceptable": [
+        "code",
+        "official"
+      ]
+    },
+    {
+      "id": "d-code-3",
+      "primary": "code",
+      "query": "tokio spawn_blocking vs spawn rust",
+      "acceptable": [
+        "code",
+        "official"
+      ]
+    },
+    {
+      "id": "d-code-4",
+      "primary": "code",
+      "query": "numpy operands could not be broadcast together with shapes error",
+      "acceptable": [
+        "code"
+      ]
+    },
+    {
+      "id": "d-social_media-1",
+      "primary": "social_media",
+      "query": "is the steam deck worth buying for emulation experiences",
+      "acceptable": [
+        "social_media",
+        "product"
+      ]
+    },
+    {
+      "id": "d-social_media-2",
+      "primary": "social_media",
+      "query": "what do people think about switching from vscode to neovim",
+      "acceptable": [
+        "social_media"
+      ]
+    },
+    {
+      "id": "d-social_media-3",
+      "primary": "social_media",
+      "query": "anyone regret installing a heat pump in a cold climate",
+      "acceptable": [
+        "social_media"
+      ]
+    },
+    {
+      "id": "d-social_media-4",
+      "primary": "social_media",
+      "query": "honest opinions on moving to austin texas",
+      "acceptable": [
+        "social_media"
+      ]
+    },
+    {
+      "id": "d-resource-1",
+      "primary": "resource",
+      "query": "imagenet dataset download",
+      "acceptable": [
+        "resource"
+      ]
+    },
+    {
+      "id": "d-resource-2",
+      "primary": "resource",
+      "query": "free resume templates for google docs",
+      "acceptable": [
+        "resource"
+      ]
+    },
+    {
+      "id": "d-resource-3",
+      "primary": "resource",
+      "query": "squad question answering leaderboard",
+      "acceptable": [
+        "resource"
+      ]
+    },
+    {
+      "id": "d-resource-4",
+      "primary": "resource",
+      "query": "mmlu benchmark scores for open source llms",
+      "acceptable": [
+        "resource"
+      ]
+    },
+    {
+      "id": "d-news-1",
+      "primary": "news",
+      "query": "what caused the 2021 suez canal blockage by the ever given",
+      "acceptable": [
+        "news"
+      ]
+    },
+    {
+      "id": "d-news-2",
+      "primary": "news",
+      "query": "silicon valley bank collapse march 2023 what happened",
+      "acceptable": [
+        "news"
+      ]
+    },
+    {
+      "id": "d-news-3",
+      "primary": "news",
+      "query": "titan submersible implosion investigation findings",
+      "acceptable": [
+        "news",
+        "official"
+      ]
+    },
+    {
+      "id": "d-news-4",
+      "primary": "news",
+      "query": "baltimore key bridge collapse cause dali ship",
+      "acceptable": [
+        "news",
+        "official"
+      ]
+    },
+    {
+      "id": "d-legal-1",
+      "primary": "legal",
+      "query": "gdpr article 17 right to erasure full text",
+      "acceptable": [
+        "legal"
+      ]
+    },
+    {
+      "id": "d-legal-2",
+      "primary": "legal",
+      "query": "miranda v arizona supreme court ruling",
+      "acceptable": [
+        "legal"
+      ]
+    },
+    {
+      "id": "d-legal-3",
+      "primary": "legal",
+      "query": "california at-will employment labor code 2922",
+      "acceptable": [
+        "legal"
+      ]
+    },
+    {
+      "id": "d-legal-4",
+      "primary": "legal",
+      "query": "fair use four factors 17 usc 107",
+      "acceptable": [
+        "legal"
+      ]
+    },
+    {
+      "id": "d-financial-1",
+      "primary": "financial",
+      "query": "apple 10-k fiscal 2023 total net sales",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "d-financial-2",
+      "primary": "financial",
+      "query": "nvidia q4 fiscal 2024 earnings data center revenue",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "d-financial-3",
+      "primary": "financial",
+      "query": "tesla annual free cash flow history",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "d-financial-4",
+      "primary": "financial",
+      "query": "berkshire hathaway 13f holdings",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "d-patent-1",
+      "primary": "patent",
+      "query": "us 6285999 pagerank method for node ranking",
+      "acceptable": [
+        "patent"
+      ]
+    },
+    {
+      "id": "d-patent-2",
+      "primary": "patent",
+      "query": "how to check if a brand name is already registered",
+      "acceptable": [
+        "patent"
+      ]
+    },
+    {
+      "id": "d-patent-3",
+      "primary": "patent",
+      "query": "apple slide to unlock patent number",
+      "acceptable": [
+        "patent"
+      ]
+    },
+    {
+      "id": "d-patent-4",
+      "primary": "patent",
+      "query": "moderna mrna lipid nanoparticle delivery patents",
+      "acceptable": [
+        "patent"
+      ]
+    },
+    {
+      "id": "d-business-1",
+      "primary": "business",
+      "query": "stripe headquarters founders and number of employees",
+      "acceptable": [
+        "business"
+      ]
+    },
+    {
+      "id": "d-business-2",
+      "primary": "business",
+      "query": "largest semiconductor foundries by market share",
+      "acceptable": [
+        "business"
+      ]
+    },
+    {
+      "id": "d-business-3",
+      "primary": "business",
+      "query": "who owns patagonia clothing",
+      "acceptable": [
+        "business"
+      ]
+    },
+    {
+      "id": "d-business-4",
+      "primary": "business",
+      "query": "global coffee market size and top producing countries",
+      "acceptable": [
+        "business",
+        "statistics"
+      ]
+    },
+    {
+      "id": "d-travel-1",
+      "primary": "travel",
+      "query": "cheapest month to fly from new york to tokyo",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "d-travel-2",
+      "primary": "travel",
+      "query": "do us citizens need a visa to visit japan",
+      "acceptable": [
+        "travel",
+        "official"
+      ]
+    },
+    {
+      "id": "d-travel-3",
+      "primary": "travel",
+      "query": "how to get from heathrow to central london",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "d-travel-4",
+      "primary": "travel",
+      "query": "best time to visit iceland to see the northern lights",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "d-media-1",
+      "primary": "media",
+      "query": "voyager pale blue dot original image high resolution",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "d-media-2",
+      "primary": "media",
+      "query": "apollo 11 moon landing original footage",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "d-media-3",
+      "primary": "media",
+      "query": "serial podcast season one episodes",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "d-media-4",
+      "primary": "media",
+      "query": "free to use mountain landscape photos",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "d-books-1",
+      "primary": "books",
+      "query": "who wrote the left hand of darkness and when was it published",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "d-books-2",
+      "primary": "books",
+      "query": "best english translation of the brothers karamazov",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "d-books-3",
+      "primary": "books",
+      "query": "dune 1965 chilton first edition value",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "d-books-4",
+      "primary": "books",
+      "query": "thinking fast and slow hardcover isbn",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "d-education-1",
+      "primary": "education",
+      "query": "gilbert strang linear algebra lectures",
+      "acceptable": [
+        "education",
+        "media"
+      ]
+    },
+    {
+      "id": "d-education-2",
+      "primary": "education",
+      "query": "learn calculus online for free",
+      "acceptable": [
+        "education"
+      ]
+    },
+    {
+      "id": "d-education-3",
+      "primary": "education",
+      "query": "andrew ng machine learning specialization",
+      "acceptable": [
+        "education"
+      ]
+    },
+    {
+      "id": "d-education-4",
+      "primary": "education",
+      "query": "free introductory biology textbook pdf",
+      "acceptable": [
+        "education",
+        "books"
+      ]
+    },
+    {
+      "id": "d-events-1",
+      "primary": "events",
+      "query": "neurips 2025 dates and location",
+      "acceptable": [
+        "events",
+        "academic"
+      ]
+    },
+    {
+      "id": "d-events-2",
+      "primary": "events",
+      "query": "eras tour setlist and tour dates",
+      "acceptable": [
+        "events"
+      ]
+    },
+    {
+      "id": "d-events-3",
+      "primary": "events",
+      "query": "python meetups in san francisco",
+      "acceptable": [
+        "events",
+        "local"
+      ]
+    },
+    {
+      "id": "d-events-4",
+      "primary": "events",
+      "query": "ces las vegas show schedule and hours",
+      "acceptable": [
+        "events"
+      ]
+    },
+    {
+      "id": "d-jobs-1",
+      "primary": "jobs",
+      "query": "software engineer salary in seattle",
+      "acceptable": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "d-jobs-2",
+      "primary": "jobs",
+      "query": "registered nurse job outlook and median pay",
+      "acceptable": [
+        "jobs",
+        "statistics"
+      ]
+    },
+    {
+      "id": "d-jobs-3",
+      "primary": "jobs",
+      "query": "remote entry level data analyst openings",
+      "acceptable": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "d-jobs-4",
+      "primary": "jobs",
+      "query": "how to apply for federal government positions",
+      "acceptable": [
+        "jobs",
+        "official"
+      ]
+    },
+    {
+      "id": "d-statistics-1",
+      "primary": "statistics",
+      "query": "us population by state 2020 census",
+      "acceptable": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "d-statistics-2",
+      "primary": "statistics",
+      "query": "us unemployment rate historical monthly",
+      "acceptable": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "d-statistics-3",
+      "primary": "statistics",
+      "query": "life expectancy by country",
+      "acceptable": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "d-statistics-4",
+      "primary": "statistics",
+      "query": "percentage of adults with a bachelor's degree by state",
+      "acceptable": [
+        "statistics"
+      ]
+    }
+  ]
+}

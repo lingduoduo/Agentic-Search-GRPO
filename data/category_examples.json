@@ -798,5 +798,185 @@
     "id": "statistics-8",
     "category": "statistics",
     "text": "survey results on remote work adoption"
+  },
+  {
+    "id": "books-9",
+    "category": "books",
+    "text": "reading order for the discworld series"
+  },
+  {
+    "id": "books-10",
+    "category": "books",
+    "text": "first edition of the hobbit publication history"
+  },
+  {
+    "id": "books-11",
+    "category": "books",
+    "text": "chimamanda ngozi adichie novels ranked"
+  },
+  {
+    "id": "books-12",
+    "category": "books",
+    "text": "upcoming paperback release of the next louise penny mystery"
+  },
+  {
+    "id": "jobs-9",
+    "category": "jobs",
+    "text": "registered nurse night shift openings in chicago"
+  },
+  {
+    "id": "jobs-10",
+    "category": "jobs",
+    "text": "entry level accounting positions with visa sponsorship"
+  },
+  {
+    "id": "jobs-11",
+    "category": "jobs",
+    "text": "work from home customer support roles hiring now"
+  },
+  {
+    "id": "jobs-12",
+    "category": "jobs",
+    "text": "cybersecurity analyst salary in germany"
+  },
+  {
+    "id": "news-9",
+    "category": "news",
+    "text": "latest reporting on the bridge collapse investigation"
+  },
+  {
+    "id": "news-10",
+    "category": "news",
+    "text": "train derailment coverage what happened yesterday"
+  },
+  {
+    "id": "news-11",
+    "category": "news",
+    "text": "governor statement on flood response released this morning"
+  },
+  {
+    "id": "news-12",
+    "category": "news",
+    "text": "investigative report on nursing home neglect this month"
+  },
+  {
+    "id": "resource-9",
+    "category": "resource",
+    "text": "downloadable benchmark for question answering models"
+  },
+  {
+    "id": "resource-10",
+    "category": "resource",
+    "text": "free wedding budget spreadsheet template"
+  },
+  {
+    "id": "resource-11",
+    "category": "resource",
+    "text": "open dataset of global air quality readings"
+  },
+  {
+    "id": "resource-12",
+    "category": "resource",
+    "text": "curated directory of free developer tools and APIs"
+  },
+  {
+    "id": "business-9",
+    "category": "business",
+    "text": "who founded Shopify and where is it headquartered"
+  },
+  {
+    "id": "business-10",
+    "category": "business",
+    "text": "largest coffee chains worldwide by store count"
+  },
+  {
+    "id": "business-11",
+    "category": "business",
+    "text": "list of subsidiaries owned by Unilever"
+  },
+  {
+    "id": "business-12",
+    "category": "business",
+    "text": "overview of the commercial drone industry"
+  },
+  {
+    "id": "events-9",
+    "category": "events",
+    "text": "jazz festival lineup and dates this july"
+  },
+  {
+    "id": "events-10",
+    "category": "events",
+    "text": "startup pitch meetup next thursday downtown"
+  },
+  {
+    "id": "events-11",
+    "category": "events",
+    "text": "tickets for the coldplay stadium tour in november"
+  },
+  {
+    "id": "events-12",
+    "category": "events",
+    "text": "PyCon 2027 dates and venue"
+  },
+  {
+    "id": "media-9",
+    "category": "media",
+    "text": "watch highlights of the champions league final"
+  },
+  {
+    "id": "media-10",
+    "category": "media",
+    "text": "podcast episodes about the history of rome"
+  },
+  {
+    "id": "media-11",
+    "category": "media",
+    "text": "listen to humpback whale song recordings"
+  },
+  {
+    "id": "media-12",
+    "category": "media",
+    "text": "high resolution photos of the grand canyon at sunset"
+  },
+  {
+    "id": "patent-9",
+    "category": "patent",
+    "text": "USPTO grants for solid state battery electrolytes"
+  },
+  {
+    "id": "patent-10",
+    "category": "patent",
+    "text": "registering a trademark for a clothing line logo"
+  },
+  {
+    "id": "patent-11",
+    "category": "patent",
+    "text": "inventor and assignee of the original insulin pen"
+  },
+  {
+    "id": "patent-12",
+    "category": "patent",
+    "text": "freedom to operate search before launching a kitchen gadget"
+  },
+  {
+    "id": "social_media-9",
+    "category": "social_media",
+    "text": "people complaining about the latest banking app update"
+  },
+  {
+    "id": "social_media-10",
+    "category": "social_media",
+    "text": "community reactions to the four day work week trial"
+  },
+  {
+    "id": "social_media-11",
+    "category": "social_media",
+    "text": "anyone regret buying an electric car share your experience"
+  },
+  {
+    "id": "social_media-12",
+    "category": "social_media",
+    "text": "what artists really think about AI generated art"
   }
 ]
