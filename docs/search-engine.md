@@ -277,8 +277,11 @@ Multi-category relevance is not measured; a labelled evaluation is a follow-up.
 
 A caller can send `domains: ["auto"]` instead of naming categories, and the
 system picks them from the query. It is **opt-in**: a request that does not ask
-for `auto` behaves exactly as before. **It also missed its pre-registered
-accuracy bar** (see below), so treat its picks as a suggestion, not a verdict.
+for `auto` behaves exactly as before. Round one missed its pre-registered
+accuracy bar; v2, which measures every acceptable category and added examples,
+passed its own (see [v2: multi-label result](#v2-multi-label-result)). The test
+set is small and drawn from category prompts, so treat the picks as a strong
+suggestion, not a verdict.
 
 - **Where.** `POST /api/agent` (JSON, SSE and WebSocket), the agent tools
   `web_search`, `search_domain` and `batch_search`, the MCP tools `search_web`,
@@ -297,9 +300,11 @@ accuracy bar** (see below), so treat its picks as a suggestion, not a verdict.
   registry order. The picks then run exactly as if the caller had named them
   ([Multi-category search](#multi-category-search)), so selection makes no
   provider calls and adds no search cost.
-- **Examples.** `data/category_examples.json` holds 8 short example queries per
-  category (160 in all). They were written by a subagent that never saw the
-  evaluation labels. `python -m src.model.pre_training.categories.cli build
+- **Examples.** `data/category_examples.json` holds 196 short example queries:
+  the 160 from round one (8 per category), unchanged, plus 4 more each for
+  books, jobs, news, resource, business, events, media, patent and
+  social_media, added in v2. Both batches were written by subagents that never
+  saw the test labels. `python -m src.model.pre_training.categories.cli build
   --examples data/category_examples.json --output data/category_index` encodes
   them into `data/category_index/index.npz`, which is not tracked in git.
 - **Response.** `domains` echoes the searched categories, even a single one, and
@@ -318,11 +323,22 @@ accuracy bar** (see below), so treat its picks as a suggestion, not a verdict.
   "status": "unavailable"}`; the search still runs. A failed load is cached per
   process and not retried.
 - **Settings.** `AGENTIC_SEARCH_CATEGORY_INDEX_PATH` (the index directory),
-  `AGENTIC_SEARCH_CATEGORY_TOP_K` (default 3) and
-  `AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN` (default 0.0); see
-  [Configuration](configuration.md).
+  `AGENTIC_SEARCH_CATEGORY_TOP_K` (default 2) and
+  `AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN` (default 0.03), both chosen on the v2
+  dev set; see [Configuration](configuration.md). Round one's defaults were 3
+  and 0.0.
+- **Cost.** With the v2 defaults `auto` picks 1.5 categories on average, so
+  multi-category fusion now fires for many `auto` requests. Each extra
+  site-listed category adds 2 provider calls per query
+  ([Multi-category search](#multi-category-search)).
 
-**Measured result: below the bar.** The labels are
+#### Round one: below the bar (superseded defaults)
+
+Round one's defaults (3, 0.0) have been replaced by v2's (below); this result
+stays as measured and CI still reproduces it with those parameters and the
+original 160 examples.
+
+The labels are
 `data/eval/source_category_queries.json` (16 of the 20 categories; `web`,
 `official`, `product` and `local` have none). The first label of each category
 is the dev split (16 queries), used only to tune `top_k ∈ {1, 2, 3, 5}` and
@@ -360,8 +376,79 @@ other 48 queries were scored once with them
   northern lights" (0.956, travel) and "US unemployment rate by month" / "us
   unemployment rate historical monthly" (0.973, statistics). They are
   allowlisted by name, so any new pair fails. Without those two queries test
-  coverage is 0.717 (n=46), so the conclusion does not change. The examples
-  were not edited after the run.
+  coverage is 0.717 (n=46), so the conclusion does not change. The round-one
+  examples were not edited after the run; v2 appended new ones and left the
+  original 160 byte-identical.
+
+#### v2: multi-label result
+
+v2 keeps the method above unchanged and changes how it is measured, plus the
+examples and the defaults.
+
+- **Metric.** Each query lists every acceptable category (1–3, including its
+  primary one), so a correct second pick earns credit. For acceptable set A and
+  picks P: **hit** is 1 when P ∩ A is non-empty; **pooled pick precision** is
+  Σ|P ∩ A| / Σ|P|; **mean picks** is Σ|P| / n. Top-1 (the first pick is in A),
+  per-primary hit and a confusion table are descriptive.
+- **Pre-registered bar.** Hit ≥ 0.85 **and** precision ≥ 0.60 **and** mean
+  picks ≤ 2.0.
+- **Data.** Three separate subagents, each blind to the others' inputs:
+  - **Test set** (`data/eval/category_selection_test_v2.json`): 60 new
+    queries, 3 per category for all 20, written from the category names and
+    descriptions only (38 have one acceptable category, 22 have two).
+  - **Dev set** (`data/eval/category_selection_dev_v2.json`): round one's 64
+    queries relabelled with acceptable sets from the query text and the
+    descriptions only; the round-one label file is unchanged.
+  - **Examples:** 36 appended (4 each to books, jobs, news, resource, business,
+    events, media, patent and social_media), written from the dev confusions
+    only, never the test set.
+
+  The user spot-checked the test and dev labels.
+- **Leakage before measuring.** Before anything was scored, every example and
+  every dev query was compared with every test query (normalized-text equality
+  or e5 cosine > 0.95). That flagged 19 of the 60 test queries; they were
+  rewritten blind (two needed a second rewrite) until nothing was flagged (max
+  cosine 0.946), the user approved the rewrites, and the test file was then
+  committed and frozen. There is no allowlist for v2.
+- **Tuning.** On dev v2 only, over the round-one grid (`top_k ∈ {1, 2, 3, 5}`,
+  `select_margin ∈ {0.00, 0.01, 0.02, 0.03, 0.05}`): keep the points with
+  precision ≥ 0.60 and mean picks ≤ 2.0, then maximize hit. It chose
+  `top_k=2`, `select_margin=0.03`: dev hit 0.984 (63/64), precision 0.611,
+  mean picks 1.69 (`data/eval/category_selection_v2_tuning.json`). These are
+  now the defaults. The hit-first rule bought one dev query: the next feasible
+  points (for example `top_k=2`, `select_margin=0.01`) hit 0.969 with precision
+  0.853 and 1.17 picks.
+- **Test result**, scored once with those defaults
+  (`data/eval/category_selection_v2.json`):
+
+| Metric | Test v2 (n=60) | Pre-registered bar |
+| --- | --- | --- |
+| Hit (an acceptable category among the picks) | 1.000 (60/60) | ≥ 0.85 — met |
+| Pooled pick precision | 0.711 | ≥ 0.60 — met |
+| Mean picks | 1.50 | ≤ 2.0 — met |
+| Top-1 (first pick acceptable) | 0.967 (58/60) | — |
+
+**The bar passed.** Every category hit 3 of 3. The most frequent picks outside
+the acceptable set were: for academic queries, resource, education, events and
+statistics; for media, web, news, official and financial; for official,
+financial, statistics and news; and academic twice for patent queries. `auto`
+stays opt-in; making it the default was out of scope.
+
+- **Caveats.**
+  - Hit 1.000 on 60 queries is a small sample.
+  - The test queries came from category prompts, so they are likely easier than
+    real traffic. 19 of them were rewritten to avoid overlap with the examples
+    and dev queries.
+  - The labels and the examples were drafted by LLM subagents.
+  - Acceptable sets are subjective; the user spot-checked them.
+  - Dev precision (0.611) sat just above the 0.60 limit.
+  - Test precision of about 0.71 means roughly 3 in 10 extra picks are not
+    acceptable.
+- **CI.** The eval-gate workflow re-runs both results into `/tmp`, never the
+  committed reports. Round one is pinned to (3, 0.0) and built from its
+  original 160 examples, so it still reproduces 0.729; v2 uses the current
+  examples and defaults. Each warns if its numbers drift by more than 0.005,
+  neither bar is enforced, and both leakage checks are.
 
 ### Does selecting a domain help? Measured, and the answer is: not detectably
 
