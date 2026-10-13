@@ -333,14 +333,22 @@ def find_leakage_multilabel(
     ]
     right = [q.query for q in load_multilabel_queries(v2_path)]
     left = list(examples)
+    kinds = ["example"] * len(left)
     if dev_path is not None:
-        left += [q.query for q in load_multilabel_queries(dev_path)]
+        dev = [q.query for q in load_multilabel_queries(dev_path)]
+        left += dev
+        kinds += ["dev"] * len(dev)
     sims = (
         np.asarray(encode(left), dtype=np.float32)
         @ np.asarray(encode(right), dtype=np.float32).T
     )
     flagged = [
-        {"example": left[i], "query": right[j], "cosine": float(sims[i, j])}
+        {
+            "source": left[i],
+            "kind": kinds[i],
+            "query": right[j],
+            "cosine": float(sims[i, j]),
+        }
         for i in range(len(left))
         for j in range(len(right))
         if sims[i, j] > LEAKAGE_THRESHOLD or _normalize(left[i]) == _normalize(right[j])
@@ -348,7 +356,7 @@ def find_leakage_multilabel(
     i, j = np.unravel_index(int(np.argmax(sims)), sims.shape)
     return {
         "max_cosine": float(sims[i, j]),
-        "max_pair": {"example": left[i], "query": right[j]},
+        "max_pair": {"source": left[i], "kind": kinds[i], "query": right[j]},
         "allowed": [],
         "flagged": flagged,
     }

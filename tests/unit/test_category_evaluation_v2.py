@@ -228,8 +228,8 @@ def test_leakage_against_has_no_allowlist_and_checks_dev(tmp_path):
     )
     assert find_leakage_multilabel(ex, test, encode=enc)["flagged"] == []
     r = find_leakage_multilabel(ex, test, dev_path=dev, encode=enc)
-    assert [(p["example"], p["query"]) for p in r["flagged"]] == [
-        ("dev near", "test near")
+    assert [(p["source"], p["kind"], p["query"]) for p in r["flagged"]] == [
+        ("dev near", "dev", "test near")
     ]
     # An example near a DEV query (test unrelated) is not flagged.
     ex, test, dev = _leak_files(tmp_path, "dev near", "unrelated", "dev near")
@@ -237,9 +237,14 @@ def test_leakage_against_has_no_allowlist_and_checks_dev(tmp_path):
     assert r["flagged"] == []
     # Normalized equality is flagged even when the encoder says they are far apart.
     ex, test, dev = _leak_files(tmp_path, "Same  Text", "same text", "other")
-    orth = lambda texts: np.eye(8, dtype=np.float32)[[i for i, _ in enumerate(texts)]]  # noqa: E731
-    r = find_leakage_multilabel(ex, test, dev_path=dev, encode=orth)
-    assert len(r["flagged"]) == 1 and r["flagged"][0]["example"] == "Same  Text"
+    keyed = _enc(
+        {"Same  Text": [1.0, 0.0], "same text": [0.0, 1.0], "other": [1.0, 0.0]}
+    )
+    r = find_leakage_multilabel(ex, test, dev_path=dev, encode=keyed)
+    assert len(r["flagged"]) == 1
+    assert r["flagged"][0]["source"] == "Same  Text"
+    assert r["flagged"][0]["kind"] == "example"
+    assert r["flagged"][0]["cosine"] == 0.0
 
 
 def test_loader_rejects_duplicate_ids(tmp_path):
