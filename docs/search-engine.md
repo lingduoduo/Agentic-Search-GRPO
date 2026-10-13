@@ -298,8 +298,11 @@ suggestion, not a verdict.
   examples. The best category is selected, plus every other category scoring at
   least `best − select_margin`, ordered by score and capped at 3; ties go to
   registry order. The picks then run exactly as if the caller had named them
-  ([Multi-category search](#multi-category-search)), so selection makes no
-  provider calls and adds no search cost.
+  ([Multi-category search](#multi-category-search)). Selection itself makes no
+  provider calls, but with about 1.5 picks per query `auto` now adds search
+  cost (see **Cost** below), and with two or more picks hybrid mode runs the
+  expanded variants as plain `web` searches (the
+  [multi-category hybrid rule](#multi-category-search)).
 - **Examples.** `data/category_examples.json` holds 196 short example queries:
   the 160 from round one (8 per category), unchanged, plus 4 more each for
   books, jobs, news, resource, business, events, media, patent and
@@ -307,6 +310,8 @@ suggestion, not a verdict.
   saw the test labels. `python -m src.model.pre_training.categories.cli build
   --examples data/category_examples.json --output data/category_index` encodes
   them into `data/category_index/index.npz`, which is not tracked in git.
+  Rebuild `data/category_index` after upgrading: the defaults (2, 0.03) were
+  tuned for the 196-example index.
 - **Response.** `domains` echoes the searched categories, even a single one, and
   `auto_domains` is `{"selected": [...], "status": "ok"}` (null when `auto` was
   not requested). The streaming `done` event carries both, and the agent and MCP
@@ -392,7 +397,7 @@ examples and the defaults.
   per-primary hit and a confusion table are descriptive.
 - **Pre-registered bar.** Hit ≥ 0.85 **and** precision ≥ 0.60 **and** mean
   picks ≤ 2.0.
-- **Data.** Three separate subagents, each blind to the others' inputs:
+- **Data.** Three separate subagents; none saw another's full file:
   - **Test set** (`data/eval/category_selection_test_v2.json`): 60 new
     queries, 3 per category for all 20, written from the category names and
     descriptions only (38 have one acceptable category, 22 have two).
@@ -406,8 +411,9 @@ examples and the defaults.
   The user spot-checked the test and dev labels.
 - **Leakage before measuring.** Before anything was scored, every example and
   every dev query was compared with every test query (normalized-text equality
-  or e5 cosine > 0.95). That flagged 19 of the 60 test queries; they were
-  rewritten blind (two needed a second rewrite) until nothing was flagged (max
+  or e5 cosine > 0.95). That flagged 19 of the 60 test queries. The test-set
+  author rewrote them, shown only each flagged query and the text it matched
+  (two needed a second rewrite), until nothing was flagged (max
   cosine 0.946), the user approved the rewrites, and the test file was then
   committed and frozen. There is no allowlist for v2.
 - **Tuning.** On dev v2 only, over the round-one grid (`top_k ∈ {1, 2, 3, 5}`,
@@ -435,7 +441,10 @@ financial, statistics and news; and academic twice for patent queries. `auto`
 stays opt-in; making it the default was out of scope.
 
 - **Caveats.**
-  - Hit 1.000 on 60 queries is a small sample.
+  - Hit 1.000 on 60 queries is a small sample, and the test set is easy: a
+    single pick already lands an acceptable category on 58/60 (top-1 0.967),
+    and hit counting only the primary category is also 60/60. The 0.03 margin
+    added 2 hits at 1.5× the picks and 0.711 precision.
   - The test queries came from category prompts, so they are likely easier than
     real traffic. 19 of them were rewritten to avoid overlap with the examples
     and dev queries.
