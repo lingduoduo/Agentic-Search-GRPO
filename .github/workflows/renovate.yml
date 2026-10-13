@@ -46,12 +46,16 @@ jobs:
           LOG_LEVEL: info
           # The action mounts /tmp into the container, so the next step can read this.
           RENOVATE_LOG_FILE: /tmp/renovate/log.ndjson
-          RENOVATE_LOG_FILE_LEVEL: warn
+          RENOVATE_LOG_FILE_LEVEL: info
 
-      # Renovate exits 0 when it cannot push a branch (it logs a WARN per
-      # branch), so a token without Contents write produced a green run that
-      # opened nothing. Fail on those and on any ERROR; other WARNs are only
-      # surfaced, since lookups warn on transient registry trouble.
+      # Renovate exits 0 when a run goes wrong in ways that matter here:
+      # - it cannot push a branch: one WARN per branch. A token without
+      #   Contents write produced a green run that opened nothing;
+      # - it aborts the repository: an INFO "Repository finished" whose result
+      #   is not "done". A failed commit-status POST aborted every run after its
+      #   first branch push, as "repository-changed".
+      # Fail on those and on any ERROR. Other WARNs are only surfaced, since
+      # lookups warn on transient registry trouble.
       - name: Fail on branch or repository errors
         if: ${{ !cancelled() }}
         run: |
@@ -66,14 +70,22 @@ jobs:
               sys.exit(1)
 
           failures = 0
+          results = []
           for line in lines:
               rec = json.loads(line)
+              msg = rec.get("msg", "")
+              if msg == "Repository finished":
+                  results.append(rec.get("result"))
               where = rec.get("branch") or rec.get("repository") or ""
-              text = f"{rec.get('msg', '')} {where}".strip()
-              if rec.get("level", 0) >= 50 or rec.get("msg") in FATAL_WARNINGS:
+              text = f"{msg} {where}".strip()
+              if rec.get("level", 0) >= 50 or msg in FATAL_WARNINGS:
                   failures += 1
                   print(f"::error::{text}")
-              else:
+              elif rec.get("level", 0) >= 40:
                   print(f"::warning::{text}")
+
+          if results != ["done"]:
+              failures += 1
+              print(f"::error::Renovate did not finish the repository: result {results or 'missing'}")
           sys.exit(1 if failures else 0)
           EOF
