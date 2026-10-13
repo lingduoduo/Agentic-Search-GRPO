@@ -41,18 +41,19 @@ requirements file. To lift a protection, delete the rule in the same PR that
 fixes the reason it existed.
 
 `renovate.json` is validated in CI by the **Renovate config** job
-(`renovate-config-validator --strict`). To check it locally (Renovate 44 needs
-Node 24):
+(`renovate-config-validator --strict`), using the `renovate-version` that
+`renovate.yml` runs. To check it locally (Renovate 44 needs Node 24; substitute
+that version for `44.155.1` if it has moved):
 
 ```bash
-npx --yes -p renovate@44.117.0 renovate-config-validator --strict renovate.json
+npx --yes -p node@24 -p renovate@44.155.1 renovate-config-validator --strict renovate.json
 ```
 
 To preview what Renovate would propose without opening anything:
 
 ```bash
 LOG_LEVEL=debug RENOVATE_GITHUB_COM_TOKEN=$(gh auth token) \
-  npx --yes -p node@24 -p renovate@44.117.0 \
+  npx --yes -p node@24 -p renovate@44.155.1 \
   renovate --platform=local --dry-run=lookup --onboarding=false
 ```
 
