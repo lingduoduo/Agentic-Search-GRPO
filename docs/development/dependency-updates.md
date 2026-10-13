@@ -15,7 +15,7 @@ from the Renovate GitHub App. The policy lives in
   - GitHub Actions
   - pre-commit hooks
 - Majors are never opened automatically. They appear on the **Dependency Dashboard** issue, and ticking one there opens its PR on the next run.
-- A minor or major bump of the `python`/`node` base images, in the Dockerfiles or compose, also waits for dashboard approval. CI tests Python 3.10 and 3.12 only.
+- A minor or major bump of a `python`/`node` runtime version also waits for dashboard approval, in its own "runtime versions" group. That covers base images in the Dockerfiles and compose, and `python-version`/`node-version` in workflows. CI tests Python 3.10 and 3.12 only.
 - GitHub Actions are pinned to commit digests, with the version in a comment.
 - At most 5 open Renovate PRs, and at most 2 created per hour.
 - Every PR is labelled `dependencies` and titled `chore(deps): …`.

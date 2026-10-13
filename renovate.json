@@ -87,12 +87,13 @@
       "groupName": "pre-commit hooks"
     },
     {
-      "description": "Base-image runtime versions (python, node) need explicit approval: CI tests Python 3.10 and 3.12 only, and a runtime bump is never a routine update.",
+      "description": "Runtime versions (python, node) need explicit approval, whether a base image (Dockerfile, compose) or a setup-python/setup-node version in a workflow: CI tests Python 3.10 and 3.12 only, and a runtime bump is never a routine update. Their own group keeps them out of the routine github-actions PR.",
       "matchManagers": [
         "dockerfile",
-        "docker-compose"
+        "docker-compose",
+        "github-actions"
       ],
-      "matchPackageNames": [
+      "matchDepNames": [
         "python",
         "node"
       ],
@@ -100,6 +101,7 @@
         "major",
         "minor"
       ],
+      "groupName": "runtime versions",
       "dependencyDashboardApproval": true
     },
     {
