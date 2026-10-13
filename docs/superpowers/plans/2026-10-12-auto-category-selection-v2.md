@@ -1,6 +1,6 @@
 # Automatic Category Selection v2 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Re-measure opt-in auto category selection with multi-category ("acceptable") labels. Strengthen the weak categories' examples, re-tune on the old 64 queries as a dev set, and score a fresh, blind, 60-query test set exactly once against a pre-registered bar.
 
@@ -95,7 +95,7 @@ CLI subcommands:
 - `evaluate-v2 --index DIR --labels TEST --report OUT [--top-k --select-margin]`, whose report adds `split: "test_v2"`, `bar`, `passed` and the parameters
 - `leakage ... --against V2FILE`, which checks examples and an optional `--dev V2DEV` against the queries in `V2FILE`, with no allowlist
 
-- [ ] **Step 1: Write the failing tests** in `tests/unit/test_category_evaluation_v2.py`:
+- [x] **Step 1: Write the failing tests** in `tests/unit/test_category_evaluation_v2.py`:
 
 ```python
 """v2: multi-label loader, hit/precision metrics, constrained tuning."""
@@ -235,8 +235,8 @@ def test_bar_constants():
 
 The expected values in the two tuning tests are worked out in their comments. Re-derive them if you change a fixture.
 
-- [ ] **Step 2: Run to verify they fail.** Run `pytest tests/unit/test_category_evaluation_v2.py -q`. Expect an ImportError.
-- [ ] **Step 3: Implement.** In `evaluation.py`:
+- [x] **Step 2: Run to verify they fail.** Run `pytest tests/unit/test_category_evaluation_v2.py -q`. Expect an ImportError.
+- [x] **Step 3: Implement.** In `evaluation.py`:
   - **`load_multilabel_queries`:** validates the marker (message contains "taxonomy"); that `primary` is in `DOMAIN_REGISTRY` and in `acceptable` ("primary"); that `acceptable` has 1–3 entries, each a registry name ("acceptable"); and that normalized queries are unique ("query").
   - **`evaluate_multilabel`:** encodes once, then calls `index.select` per query.
   - **`_feasible(row)`:** `row["precision"] >= V2_BAR_PRECISION and row["mean_picks"] <= V2_BAR_MEAN_PICKS`.
@@ -246,21 +246,21 @@ The expected values in the two tuning tests are worked out in their comments. Re
     - If any point is feasible, it picks with the key `(-hit, -precision, mean_picks, top_k, select_margin)` among the feasible points.
     - Otherwise it uses `(-hit, mean_picks, top_k, select_margin)`.
   - **`cli.py`:** adds `tune-v2`, `evaluate-v2`, and `leakage --against [--dev]`, with no allowlist when `--against` is given. The round-one `leakage` behaviour without `--against` is unchanged.
-- [ ] **Step 4: Run.** Run the new file plus `tests/unit/test_category_evaluation.py` and `tests/unit/test_category_index.py`. Expect PASS, with the round-one tests unmodified.
-- [ ] **Step 5: Mutation-check:**
+- [x] **Step 4: Run.** Run the new file plus `tests/unit/test_category_evaluation.py` and `tests/unit/test_category_index.py`. Expect PASS, with the round-one tests unmodified.
+- [x] **Step 5: Mutation-check:**
   - (a) make `_feasible` strict (`>`);
   - (b) drop the feasibility filter in `_choose_tuning` (`test_choice_filters_infeasible_points_before_maximizing_hit` must fail);
   - (c) let `acceptable` omit `primary`;
   - (d) let `leakage --against` apply the round-one allowlist.
 
   Each must turn red. Restore.
-- [ ] **Step 6: Commit.** Message: `feat: multi-label category selection metrics and tuning (v2)`.
+- [x] **Step 6: Commit.** Message: `feat: multi-label category selection metrics and tuning (v2)`.
 
 ### Task 2: Blind data, spot-check gates and leakage
 
 This task is run by the controller, which dispatches three separate fresh subagents.
 
-- [ ] **Step 1: Write the test set.** Dispatch the **test-set author**. It may read only the category names and descriptions from `DOMAIN_REGISTRY`, which the controller pastes into the prompt. It must not open `data/`, `docs/superpowers/` or `.superpowers/`.
+- [x] **Step 1: Write the test set.** Dispatch the **test-set author**. It may read only the category names and descriptions from `DOMAIN_REGISTRY`, which the controller pastes into the prompt. It must not open `data/`, `docs/superpowers/` or `.superpowers/`.
 
   > Write `data/eval/category_selection_test_v2.json` in /Users/linghuang/Git/Agentic-Search. Use the format `{"taxonomy": "category_selection_v2", "queries": [{"id": "t<category>-<n>", "primary": "<category>", "query": "...", "acceptable": ["<primary>", ...]}]}`.
   >
@@ -273,12 +273,12 @@ This task is run by the controller, which dispatches three separate fresh subage
   > Categories: <name: description, for all 20, pasted by the controller>
 
   Validate with `load_multilabel_queries` (60 queries, exactly 3 per primary). **Do not commit yet.**
-- [ ] **Step 2: Relabel the dev set.** Dispatch the **dev relabeller** with the round-one 64 queries and their round-one category (taken from `data/eval/source_category_queries.json`), plus the category descriptions. It writes `data/eval/category_selection_dev_v2.json` with `primary` = the round-one category and an `acceptable` list (1–3 entries, primary first). It must not open the v2 test file or the examples. Validate with the loader.
-- [ ] **Step 3: USER GATE, spot-check.** Show the user both files' paths, the distribution of `acceptable` sizes, and 5 random entries from each. Wait for approval, and apply only the user's corrections.
-- [ ] **Step 4: Gather dev confusions.** Build the index from the current examples and run `evaluate_multilabel` on **dev v2** with the round-one defaults (3, 0.0). Save the confusion table to the scratch workspace, not to the repo. This is a dev-only run.
-- [ ] **Step 5: Top up the examples.** Dispatch the **example author** with the dev confusion table and the category descriptions. It must not open the v2 test file. It appends about 4 examples to each of books, jobs, news, resource, business, events, media, patent and social_media in `data/category_examples.json`, with the same record format and continuing ids. It must not edit any existing record. Validate with `load_category_examples`, and add a test, `test_round_one_examples_are_unchanged`, asserting that the first 160 records equal the committed `041ca0c0` version (load it with `git show 041ca0c0:data/category_examples.json`).
-- [ ] **Step 6: Leakage before measuring.** Run `leakage --examples data/category_examples.json --dev data/eval/category_selection_dev_v2.json --against data/eval/category_selection_test_v2.json`. For each flagged test query, send the test-set author a rewrite request (the flagged query and its offending match only), then re-validate and re-run until there are 0 flags.
-- [ ] **Step 7: Freeze.** Commit, with `git add -f` where needed:
+- [x] **Step 2: Relabel the dev set.** Dispatch the **dev relabeller** with the round-one 64 queries and their round-one category (taken from `data/eval/source_category_queries.json`), plus the category descriptions. It writes `data/eval/category_selection_dev_v2.json` with `primary` = the round-one category and an `acceptable` list (1–3 entries, primary first). It must not open the v2 test file or the examples. Validate with the loader.
+- [x] **Step 3: USER GATE, spot-check.** Show the user both files' paths, the distribution of `acceptable` sizes, and 5 random entries from each. Wait for approval, and apply only the user's corrections.
+- [x] **Step 4: Gather dev confusions.** Build the index from the current examples and run `evaluate_multilabel` on **dev v2** with the round-one defaults (3, 0.0). Save the confusion table to the scratch workspace, not to the repo. This is a dev-only run.
+- [x] **Step 5: Top up the examples.** Dispatch the **example author** with the dev confusion table and the category descriptions. It must not open the v2 test file. It appends about 4 examples to each of books, jobs, news, resource, business, events, media, patent and social_media in `data/category_examples.json`, with the same record format and continuing ids. It must not edit any existing record. Validate with `load_category_examples`, and add a test, `test_round_one_examples_are_unchanged`, asserting that the first 160 records equal the committed `041ca0c0` version (load it with `git show 041ca0c0:data/category_examples.json`).
+- [x] **Step 6: Leakage before measuring.** Run `leakage --examples data/category_examples.json --dev data/eval/category_selection_dev_v2.json --against data/eval/category_selection_test_v2.json`. For each flagged test query, send the test-set author a rewrite request (the flagged query and its offending match only), then re-validate and re-run until there are 0 flags.
+- [x] **Step 7: Freeze.** Commit, with `git add -f` where needed:
   - `data/eval/category_selection_test_v2.json`, message `data: v2 held-out category selection test set (frozen)`;
   - `data/eval/category_selection_dev_v2.json`;
   - the topped-up examples and the unchanged-examples test, message `data: v2 dev relabel and example top-up`.
@@ -287,28 +287,41 @@ This task is run by the controller, which dispatches three separate fresh subage
 
 ### Task 3: Tune on dev, then score the test set once
 
-- [ ] **Step 1:** Rebuild `data/category_index` from the topped-up examples, then run `tune-v2 --labels data/eval/category_selection_dev_v2.json --report data/eval/category_selection_v2_tuning.json`.
-- [ ] **Step 2:** Set `DEFAULT_CATEGORY_TOP_K` and `DEFAULT_CATEGORY_SELECT_MARGIN` in `src/shared_configs/intent.py` to the winner. Update any test that pins the defaults.
-- [ ] **Step 3:** Run `evaluate-v2 --labels data/eval/category_selection_test_v2.json --report data/eval/category_selection_v2.json` **exactly once**. Commit the tuning report, the defaults and the v2 report (`git add -f`) with the message `data: v2 tuning (dev) and pre-registered test result`. Do not change examples, the grid, the defaults or the labels afterwards, whatever the result.
-- [ ] **Step 4:** Confirm the round-one result still reproduces: rebuilding with the **original 160 examples** (from `041ca0c0`) and the round-one `evaluate` gives 0.729 / 1.00. This is a sanity check, not committed. It shows round one is untouched.
+- [x] **Step 1:** Rebuild `data/category_index` from the topped-up examples, then run `tune-v2 --labels data/eval/category_selection_dev_v2.json --report data/eval/category_selection_v2_tuning.json`.
+- [x] **Step 2:** Set `DEFAULT_CATEGORY_TOP_K` and `DEFAULT_CATEGORY_SELECT_MARGIN` in `src/shared_configs/intent.py` to the winner. Update any test that pins the defaults.
+- [x] **Step 3:** Run `evaluate-v2 --labels data/eval/category_selection_test_v2.json --report data/eval/category_selection_v2.json` **exactly once**. Commit the tuning report, the defaults and the v2 report (`git add -f`) with the message `data: v2 tuning (dev) and pre-registered test result`. Do not change examples, the grid, the defaults or the labels afterwards, whatever the result.
+- [x] **Step 4:** Confirm the round-one result still reproduces: rebuilding with the **original 160 examples** (from `041ca0c0`) and the round-one `evaluate` gives 0.729 / 1.00. This is a sanity check, not committed. It shows round one is untouched.
 
 ### Task 4: CI, docs, review and PR
 
-- [ ] **Step 1: CI.** In `.github/workflows/eval-gate.yml`'s category step:
+- [x] **Step 1: CI.** In `.github/workflows/eval-gate.yml`'s category step:
   - also run `evaluate-v2` into `/tmp`;
   - warn (`::warning::`) if hit, precision or mean picks drift by more than 0.005 from the committed `data/eval/category_selection_v2.json`;
   - enforce `leakage --against data/eval/category_selection_test_v2.json --dev data/eval/category_selection_dev_v2.json` (no allowlist);
   - leave the bar unenforced and never write to the committed report.
 
   Keep the YAML valid.
-- [ ] **Step 2: Docs.**
+- [x] **Step 2: Docs.**
   - **`docs/search-engine.md`:** a v2 section beside v1 covering the hit rate, pooled precision, mean picks, top-1, the bar and pass/fail, the chosen defaults, how the labels and examples were made (three blind subagents, user spot-checks, leakage before measuring), and the spec's caveats.
   - **`docs/configuration.md`:** the new defaults.
   - **README:** update the clause about auto selection to match the v2 outcome.
-- [ ] **Step 3: Verify:** `pytest -q`, Ruff, `git diff --check`, the docs link check and a YAML parse.
-- [ ] **Step 4: Review.** One fresh whole-branch reviewer, on the most capable model, against `origin/main`, the spec and the Review Focus. Integrity of the history is part of the review: confirm the test file was frozen before `tune-v2`, and that no examples, defaults or labels changed after the v2 report commit. Fix findings RED→GREEN and record rulings.
+- [x] **Step 3: Verify:** `pytest -q`, Ruff, `git diff --check`, the docs link check and a YAML parse.
+- [x] **Step 4: Review.** One fresh whole-branch reviewer, on the most capable model, against `origin/main`, the spec and the Review Focus. Integrity of the history is part of the review: confirm the test file was frozen before `tune-v2`, and that no examples, defaults or labels changed after the v2 report commit. Fix findings RED→GREEN and record rulings.
 - [ ] **Step 5: PR.** Check the branch and `origin/main`, push, and open the PR with the v2 result table and the history-integrity statement. Watch CI on the final commit, mark it ready, and report. Do not merge.
 
 ## Validation record
 
-Spec approved by the user on 2026-10-12. Plan awaiting review. Implementation is blocked until #689 merges (see Prerequisite).
+Spec and plan approved by the user on 2026-10-12. Implementation started after #689 merged (`ebd01873`), with the branch rebased onto it. Executed subagent-driven.
+
+- **Data and order:**
+  - The test set was written blind; the dev set was relabelled blind. The user spot-checked both.
+  - 36 examples were appended for the weak categories (the 160 round-one examples are byte-identical, guarded by a fingerprint).
+  - The leakage check **before** measuring flagged 19 of 60 test queries. The test-set author rewrote them, shown only each flagged query and its match. After two rounds there were 0 flags (max 0.946), and the user approved the rewrites.
+  - The test set was frozen in `34e10302`, before the dev/examples commit `66f34c61` and before the tuning/result commit `4fca4081`.
+- **Tuning (dev v2):** `top_k=2`, `select_margin=0.03`: hit 0.984, precision 0.611, mean picks 1.69.
+- **Test v2 (60 queries, scored once):** hit **1.000**, precision **0.711**, mean picks **1.50**, top-1 0.967, so the **pre-registered bar is passed**.
+- **Caveat:** the test set is easy. A single pick already hits 58/60, and hit counting only the primary category is also 60/60.
+- **Round one still reproduces:** 0.729 / 1.00 with its original examples and (3, 0.0).
+- **Fix rounds:** Task 1 needed two. The leakage gate compared dev queries against the examples instead of the test set; top-1 and per-primary rates were wrong; and the normalized-equality test passed for the wrong reason.
+- **Final review:** 0 critical, 2 important. The fix wave (`1da12906`, `52d26a28`) added a `tune-v2` guard against the test set, an offline normalized-equality test, CLI tests, loader hardening, and more precise docs. The re-review was clean.
+- **Local checks:** `pytest` 5559 passed, 1 skipped; vitest 265 passed; Ruff, `git diff --check`, the YAML parse and the docs link check all clean.
