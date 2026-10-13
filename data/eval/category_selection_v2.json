@@ -1,0 +1,149 @@
+{
+  "n": 60,
+  "hit": 1.0,
+  "precision": 0.7111111111111111,
+  "mean_picks": 1.5,
+  "top1": 0.9666666666666667,
+  "per_primary": {
+    "academic": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "books": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "business": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "code": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "education": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "events": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "financial": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "jobs": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "legal": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "local": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "media": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "news": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "official": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "patent": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "product": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "resource": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "social_media": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "statistics": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "travel": {
+      "n": 3,
+      "hit": 1.0
+    },
+    "web": {
+      "n": 3,
+      "hit": 1.0
+    }
+  },
+  "confusion": {
+    "academic": {
+      "resource": 1,
+      "education": 1,
+      "events": 1,
+      "statistics": 1
+    },
+    "books": {
+      "media": 1,
+      "academic": 1
+    },
+    "code": {
+      "resource": 1
+    },
+    "financial": {
+      "business": 1,
+      "statistics": 1
+    },
+    "jobs": {
+      "local": 1,
+      "news": 1
+    },
+    "legal": {
+      "news": 1
+    },
+    "local": {
+      "travel": 1,
+      "product": 1
+    },
+    "media": {
+      "web": 1,
+      "news": 1,
+      "official": 1,
+      "financial": 1
+    },
+    "official": {
+      "financial": 1,
+      "statistics": 1,
+      "news": 1
+    },
+    "patent": {
+      "academic": 2
+    },
+    "social_media": {
+      "news": 1,
+      "web": 1
+    },
+    "statistics": {
+      "resource": 1
+    }
+  },
+  "split": "test_v2",
+  "top_k": 2,
+  "select_margin": 0.03,
+  "bar": {
+    "hit": 0.85,
+    "precision": 0.6,
+    "mean_picks": 2.0
+  },
+  "passed": true
+}

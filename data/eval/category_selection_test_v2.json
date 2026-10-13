@@ -1,0 +1,507 @@
+{
+  "taxonomy": "category_selection_v2",
+  "queries": [
+    {
+      "id": "t-web-1",
+      "primary": "web",
+      "query": "how does a heat pump work in cold climates",
+      "acceptable": [
+        "web"
+      ]
+    },
+    {
+      "id": "t-web-2",
+      "primary": "web",
+      "query": "why is the sky blue at noon but red at sunset",
+      "acceptable": [
+        "web",
+        "education"
+      ]
+    },
+    {
+      "id": "t-web-3",
+      "primary": "web",
+      "query": "what is the difference between a crocodile and an alligator",
+      "acceptable": [
+        "web"
+      ]
+    },
+    {
+      "id": "t-academic-1",
+      "primary": "academic",
+      "query": "seminal paper on the PageRank algorithm by Brin and Page",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "t-academic-2",
+      "primary": "academic",
+      "query": "meta-analysis of microplastics effects on the human gut microbiome",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "t-academic-3",
+      "primary": "academic",
+      "query": "NeurIPS 2025 accepted papers on diffusion models",
+      "acceptable": [
+        "academic"
+      ]
+    },
+    {
+      "id": "t-code-1",
+      "primary": "code",
+      "query": "golang context timeout http client example",
+      "acceptable": [
+        "code"
+      ]
+    },
+    {
+      "id": "t-code-2",
+      "primary": "code",
+      "query": "react useEffect cleanup function memory leak github issue",
+      "acceptable": [
+        "code"
+      ]
+    },
+    {
+      "id": "t-code-3",
+      "primary": "code",
+      "query": "rust library for parsing TOML files",
+      "acceptable": [
+        "code"
+      ]
+    },
+    {
+      "id": "t-social_media-1",
+      "primary": "social_media",
+      "query": "what do people think of the new iPhone battery life after a week",
+      "acceptable": [
+        "social_media",
+        "product"
+      ]
+    },
+    {
+      "id": "t-social_media-2",
+      "primary": "social_media",
+      "query": "anyone regret switching from windows to linux for gaming",
+      "acceptable": [
+        "social_media"
+      ]
+    },
+    {
+      "id": "t-social_media-3",
+      "primary": "social_media",
+      "query": "trending memes this week",
+      "acceptable": [
+        "social_media",
+        "media"
+      ]
+    },
+    {
+      "id": "t-resource-1",
+      "primary": "resource",
+      "query": "free dataset of labeled street images for object detection",
+      "acceptable": [
+        "resource",
+        "academic"
+      ]
+    },
+    {
+      "id": "t-resource-2",
+      "primary": "resource",
+      "query": "benchmark leaderboard for text embedding models",
+      "acceptable": [
+        "resource",
+        "academic"
+      ]
+    },
+    {
+      "id": "t-resource-3",
+      "primary": "resource",
+      "query": "directory of open source alternatives to popular design apps",
+      "acceptable": [
+        "resource"
+      ]
+    },
+    {
+      "id": "t-news-1",
+      "primary": "news",
+      "query": "latest updates on the wildfire evacuation in california today",
+      "acceptable": [
+        "news",
+        "official"
+      ]
+    },
+    {
+      "id": "t-news-2",
+      "primary": "news",
+      "query": "investigation into airline safety inspection failures",
+      "acceptable": [
+        "news"
+      ]
+    },
+    {
+      "id": "t-news-3",
+      "primary": "news",
+      "query": "who won the election in japan yesterday",
+      "acceptable": [
+        "news"
+      ]
+    },
+    {
+      "id": "t-official-1",
+      "primary": "official",
+      "query": "IRS announcement on 2027 tax bracket inflation adjustments",
+      "acceptable": [
+        "official"
+      ]
+    },
+    {
+      "id": "t-official-2",
+      "primary": "official",
+      "query": "CDC guidance on measles vaccination for adults",
+      "acceptable": [
+        "official"
+      ]
+    },
+    {
+      "id": "t-official-3",
+      "primary": "official",
+      "query": "node.js 22 LTS changelog breaking changes",
+      "acceptable": [
+        "official",
+        "code"
+      ]
+    },
+    {
+      "id": "t-legal-1",
+      "primary": "legal",
+      "query": "full text of the Americans with Disabilities Act title III",
+      "acceptable": [
+        "legal",
+        "official"
+      ]
+    },
+    {
+      "id": "t-legal-2",
+      "primary": "legal",
+      "query": "supreme court ruling on fair use in Warhol v Goldsmith",
+      "acceptable": [
+        "legal"
+      ]
+    },
+    {
+      "id": "t-legal-3",
+      "primary": "legal",
+      "query": "can you record a phone call without the other person knowing in california",
+      "acceptable": [
+        "legal",
+        "web"
+      ]
+    },
+    {
+      "id": "t-financial-1",
+      "primary": "financial",
+      "query": "Nvidia fiscal Q2 gross margin and guidance",
+      "acceptable": [
+        "financial",
+        "news"
+      ]
+    },
+    {
+      "id": "t-financial-2",
+      "primary": "financial",
+      "query": "Costco 10-Q cash flow statement",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "t-financial-3",
+      "primary": "financial",
+      "query": "current yield on the 10-year treasury note",
+      "acceptable": [
+        "financial"
+      ]
+    },
+    {
+      "id": "t-patent-1",
+      "primary": "patent",
+      "query": "who holds the CRISPR gene editing intellectual property rights",
+      "acceptable": [
+        "patent",
+        "legal"
+      ]
+    },
+    {
+      "id": "t-patent-2",
+      "primary": "patent",
+      "query": "prior art for a self-cleaning litter box mechanism",
+      "acceptable": [
+        "patent"
+      ]
+    },
+    {
+      "id": "t-patent-3",
+      "primary": "patent",
+      "query": "trademark registration status for the word mark Kleenex",
+      "acceptable": [
+        "patent",
+        "legal"
+      ]
+    },
+    {
+      "id": "t-product-1",
+      "primary": "product",
+      "query": "Sony WH-1000XM6 specs and price",
+      "acceptable": [
+        "product"
+      ]
+    },
+    {
+      "id": "t-product-2",
+      "primary": "product",
+      "query": "best robot vacuum under 300 dollars reviews",
+      "acceptable": [
+        "product",
+        "social_media"
+      ]
+    },
+    {
+      "id": "t-product-3",
+      "primary": "product",
+      "query": "MacBook Air M4 vs Dell XPS 13 battery life comparison",
+      "acceptable": [
+        "product"
+      ]
+    },
+    {
+      "id": "t-business-1",
+      "primary": "business",
+      "query": "who is the CEO of Patagonia and how many employees does it have",
+      "acceptable": [
+        "business"
+      ]
+    },
+    {
+      "id": "t-business-2",
+      "primary": "business",
+      "query": "biggest container shipping companies by fleet size",
+      "acceptable": [
+        "business",
+        "statistics"
+      ]
+    },
+    {
+      "id": "t-business-3",
+      "primary": "business",
+      "query": "headquarters and founding history of IKEA",
+      "acceptable": [
+        "business",
+        "web"
+      ]
+    },
+    {
+      "id": "t-local-1",
+      "primary": "local",
+      "query": "pharmacy open now near me",
+      "acceptable": [
+        "local"
+      ]
+    },
+    {
+      "id": "t-local-2",
+      "primary": "local",
+      "query": "best ramen restaurants in downtown Seattle",
+      "acceptable": [
+        "local",
+        "social_media"
+      ]
+    },
+    {
+      "id": "t-local-3",
+      "primary": "local",
+      "query": "dmv office hours in Austin Texas",
+      "acceptable": [
+        "local",
+        "official"
+      ]
+    },
+    {
+      "id": "t-travel-1",
+      "primary": "travel",
+      "query": "cheap flights from new york to lisbon in march",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "t-travel-2",
+      "primary": "travel",
+      "query": "hotels near the colosseum rome with free cancellation",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "t-travel-3",
+      "primary": "travel",
+      "query": "how to get from narita airport to shinjuku by train",
+      "acceptable": [
+        "travel"
+      ]
+    },
+    {
+      "id": "t-media-1",
+      "primary": "media",
+      "query": "time lapse footage of a thunderstorm forming",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "t-media-2",
+      "primary": "media",
+      "query": "podcasts interviewing famous chefs",
+      "acceptable": [
+        "media"
+      ]
+    },
+    {
+      "id": "t-media-3",
+      "primary": "media",
+      "query": "video of the starship launch",
+      "acceptable": [
+        "media",
+        "news"
+      ]
+    },
+    {
+      "id": "t-books-1",
+      "primary": "books",
+      "query": "novels by Kazuo Ishiguro in order of publication",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "t-books-2",
+      "primary": "books",
+      "query": "first edition of The Hobbit value",
+      "acceptable": [
+        "books"
+      ]
+    },
+    {
+      "id": "t-books-3",
+      "primary": "books",
+      "query": "summary of sapiens by yuval noah harari",
+      "acceptable": [
+        "books",
+        "web"
+      ]
+    },
+    {
+      "id": "t-education-1",
+      "primary": "education",
+      "query": "free online course in linear algebra for beginners",
+      "acceptable": [
+        "education"
+      ]
+    },
+    {
+      "id": "t-education-2",
+      "primary": "education",
+      "query": "step by step tutorial to learn spanish verb conjugation",
+      "acceptable": [
+        "education"
+      ]
+    },
+    {
+      "id": "t-education-3",
+      "primary": "education",
+      "query": "accredited nursing degree programs online",
+      "acceptable": [
+        "education"
+      ]
+    },
+    {
+      "id": "t-events-1",
+      "primary": "events",
+      "query": "coldplay tour schedule europe next summer",
+      "acceptable": [
+        "events"
+      ]
+    },
+    {
+      "id": "t-events-2",
+      "primary": "events",
+      "query": "tech meetups in Berlin this month",
+      "acceptable": [
+        "events",
+        "local"
+      ]
+    },
+    {
+      "id": "t-events-3",
+      "primary": "events",
+      "query": "when does the chelsea flower show take place this year",
+      "acceptable": [
+        "events"
+      ]
+    },
+    {
+      "id": "t-jobs-1",
+      "primary": "jobs",
+      "query": "openings for licensed electricians in phoenix",
+      "acceptable": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "t-jobs-2",
+      "primary": "jobs",
+      "query": "how much do airline pilots earn in canada",
+      "acceptable": [
+        "jobs",
+        "statistics"
+      ]
+    },
+    {
+      "id": "t-jobs-3",
+      "primary": "jobs",
+      "query": "entry level marketing positions in chicago hiring now",
+      "acceptable": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "t-statistics-1",
+      "primary": "statistics",
+      "query": "birth rate trend in south korea over the last decade",
+      "acceptable": [
+        "statistics",
+        "official"
+      ]
+    },
+    {
+      "id": "t-statistics-2",
+      "primary": "statistics",
+      "query": "population of Nigeria census",
+      "acceptable": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "t-statistics-3",
+      "primary": "statistics",
+      "query": "childhood obesity rates across europe",
+      "acceptable": [
+        "statistics"
+      ]
+    }
+  ]
+}
