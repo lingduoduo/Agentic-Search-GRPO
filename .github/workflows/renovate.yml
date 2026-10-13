@@ -44,3 +44,36 @@ jobs:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_ONBOARDING: "false"
           LOG_LEVEL: info
+          # The action mounts /tmp into the container, so the next step can read this.
+          RENOVATE_LOG_FILE: /tmp/renovate/log.ndjson
+          RENOVATE_LOG_FILE_LEVEL: warn
+
+      # Renovate exits 0 when it cannot push a branch (it logs a WARN per
+      # branch), so a token without Contents write produced a green run that
+      # opened nothing. Fail on those and on any ERROR; other WARNs are only
+      # surfaced, since lookups warn on transient registry trouble.
+      - name: Fail on branch or repository errors
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - /tmp/renovate/log.ndjson <<'EOF'
+          import json, sys
+
+          FATAL_WARNINGS = {"Error updating branch"}
+          try:
+              lines = open(sys.argv[1]).read().splitlines()
+          except FileNotFoundError:
+              print("::error::Renovate wrote no log file; cannot tell whether the run worked.")
+              sys.exit(1)
+
+          failures = 0
+          for line in lines:
+              rec = json.loads(line)
+              where = rec.get("branch") or rec.get("repository") or ""
+              text = f"{rec.get('msg', '')} {where}".strip()
+              if rec.get("level", 0) >= 50 or rec.get("msg") in FATAL_WARNINGS:
+                  failures += 1
+                  print(f"::error::{text}")
+              else:
+                  print(f"::warning::{text}")
+          sys.exit(1 if failures else 0)
+          EOF
