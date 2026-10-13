@@ -68,7 +68,8 @@ The JSON body uses `AgentExperienceRequest`:
 | `source_provider` | `auto` | Source policy: `auto`, `retrieval`, `serpapi`, `google`, `browser`, or `all`. |
 | `route` | omitted | User-selected `chat`, `search`, or `tool` route; bypasses recognition in auto mode. |
 | `mode` | omitted | Explicit dispatch override: `search_tool`, `hybrid_search`, `chat_once`, `chat_loop`, `search_agent`, or `tool_agent`. |
-| `domain` | `web` | Search-source hint appended to web-provider queries only; legacy topic identifiers are accepted as aliases. An unknown value, or a non-`web` value with a `mode` other than `search_tool`/`hybrid_search`, returns `400`. See [Search engine](search-engine.md#domains-over-http-and-in-the-web-ui). |
+| `domain` | `web` | Search-source category hint for web-provider queries; the 20 identifiers in `DOMAIN_REGISTRY`, with legacy topic identifiers accepted as aliases. For a category with source sites it also restricts the web query to those hosts (`AGENTIC_SEARCH_CATEGORY_SITES`, on by default). An unknown value, or a non-`web` value with a `mode` other than `search_tool`/`hybrid_search`, returns `400`. See [Search engine](search-engine.md#domains-over-http-and-in-the-web-ui). |
+| `domains` | omitted | Up to three categories searched in parallel and fused by URL with RRF; the response echoes `domains`. Mutually exclusive with a non-`web` `domain` (`400`), and subject to the same mode rule. `["auto"]` (opt-in) lets the server pick categories from the query by nearest examples; it must be the only entry, the response echoes the picks even when there is one, and `auto_domains` reports `{selected, status}`. Without a category index, `auto` searches `web` with status `unavailable`. `auto` with an explicit `mode` other than `search_tool`/`hybrid_search` is rejected with `400` before the query is encoded. |
 
 The backend, not the browser client, normally owns service URLs. In production, keep client retrieval URL overrides disabled.
 
@@ -81,7 +82,7 @@ Setting `mode` bypasses the three-way intent router.
 | `search_tool` | One direct retrieval/search call; deterministic result rendering | `search` | Selected source service |
 | `hybrid_search` | Query expansion when an LLM exists, provider search, merge/rerank, deterministic rendering | `search` | Selected source services; LLM is optional |
 | `chat_once` | One retrieval-grounded answer call | `chat` | LLM client for synthesis |
-| `chat_loop` | `AgenticRAGLoop`: decomposition, HyDE, iterative retrieval, synthesis | `chat` | LLM client |
+| `chat_loop` | `AgenticRAGLoop`: decomposition, HyDE, iterative retrieval, synthesis; the original query is always searched first | `chat` | LLM client |
 | `search_agent` | Local policy-model `SearchAgentLoop` | normally `search` | `SEARCH_AGENT_MODEL` or remote model server and tokenizer |
 | `tool_agent` | Local policy-model `ToolAgentLoop` with registered tools | varies by tool result | Local or remote policy model and tokenizer |
 
@@ -100,7 +101,7 @@ When `mode` is omitted and no user-selected `route` is supplied, `recognize_inte
    - conversational or generative starts normally → `chat`. A current-information cue such as “latest” defers a chat-form question to the next step.
 3. If an index is configured, canonical-example similarity selects the highest-scoring route when its gap over the runner-up reaches `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`). Each route scores as its top-8 mean cosine similarity. Margin is the only abstention gate; absolute confidence is diagnostic. See [Training and evaluation](training-and-evaluation.md#intent-routing-by-nearest-canonical-example).
 4. An available LLM classifies at temperature 0, off the event loop and bounded by `[llm] route_classifier_timeout_seconds` (default 3 s; a timeout falls through to step 5). A completion must contain exactly one distinct supported whole-word label. A single-label explanation is accepted, but conflicting labels such as “not chat; search” are rejected as `unexpected`.
-5. If no LLM is available or its call raises, the last-resort heuristic checks tool, search, and bare-lookup cues. No signal defaults to chat with clarification. An empty or unusable classifier completion also requests clarification. Set `AGENTIC_SEARCH_ROUTE_CLARIFICATION=false` to return the chat default without the question.
+5. If no LLM is available or its call raises, the last-resort heuristic reads the request's leading intent first — a leading lookup verb (“find”, “list”, “show me”) → `search`, a leading question or generative word (“what”, “explain”, “write”) → `chat` (or no signal when a current-information cue such as “latest” is present) — and only then looks for tool, search, and bare-lookup cues anywhere in the text, so a verb inside the subject (“explain how to send email”) does not outvote the leading intent. No signal defaults to chat with clarification. An empty or unusable classifier completion also requests clarification. Set `AGENTIC_SEARCH_ROUTE_CLARIFICATION=false` to return the chat default without the question.
 
 Explicit modes, user-selected routes, explicit providers, and deterministic rules take precedence over similarity. A served similarity prediction skips the LLM; an abstention defers to it. The model chooses an execution family, not a specific tool, and cannot bypass authorization. Module labels and the composite-request flag are diagnostics only; no multi-step planner acts on them.
 
@@ -242,6 +243,8 @@ Both endpoints ultimately produce `AgentExperienceResponse` data:
 | `hook_metadata` | Mode, selected route, degradation reason, search mode, provider, and hook data when applicable. |
 | `tool_calls` | Structured tool execution records. |
 | `control_flow_trace` | Ordered component/action/status events for agent loops. |
+| `domains` | Categories searched when the request sent `domains`; null for a single `domain`. |
+| `auto_domains` | `{selected, status}` (`ok` or `unavailable`), set only when the request asked for `domains: ["auto"]`. |
 
 Common routing metadata in `hook_metadata`:
 
@@ -291,6 +294,7 @@ This is serving-time routing and inference. It is unrelated to GRPO training, ev
 - Provider-backed chat and classification: `GEN_AI_MODEL_PROVIDER`, `GEN_AI_MODEL_VERSION`, and provider credentials.
 - Optional similarity route: `AGENTIC_SEARCH_INTENT_INDEX_PATH`, `AGENTIC_SEARCH_INTENT_MIN_ROUTE_MARGIN` (default `0.010`), `AGENTIC_SEARCH_INTENT_MIN_MODULE_SCORE` (default `0.8215`, diagnostics only), and `AGENTIC_SEARCH_INTENT_TOP_K` (default `8`).
 - Sufficiency threshold: `AGENTIC_SEARCH_SEARCH_DIRECT_COS_MIN`.
+- Search-source categories: `AGENTIC_SEARCH_CATEGORY_SITES` (default on), and for `domains: ["auto"]` `AGENTIC_SEARCH_CATEGORY_INDEX_PATH`, `AGENTIC_SEARCH_CATEGORY_TOP_K` (default `2`), `AGENTIC_SEARCH_CATEGORY_SELECT_MARGIN` (default `0.03`).
 - Routing classifier bound: `[llm] route_classifier_timeout_seconds` in `timeouts.toml` (default `3.0`; see [Timeouts](configuration/timeouts.md)).
 - Stale-on-error serving: `AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS` (default `3600`).
 - Follow-up resolution for retrieval: `AGENTIC_SEARCH_FOLLOW_UP_RESOLUTION` (default off) and `AGENTIC_SEARCH_FOLLOW_UP_COS_MIN`.

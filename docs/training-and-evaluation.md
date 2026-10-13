@@ -577,7 +577,13 @@ demo corpus carries.
 
 Each measures a serving behaviour on a fixed workload and reports what it
 measured; none changes a default. The domain-relevance eval is documented in
-[Search engine](search-engine.md#does-selecting-a-domain-help-measured-and-the-answer-is-not-detectably).
+[Search engine](search-engine.md#does-selecting-a-domain-help-measured-and-the-answer-is-not-detectably);
+the source-category eval (`python -m examples.run_source_category_eval`, flags
+`--per-category`, `--skip-per-category`, `--no-plain`) and the category-selection
+eval (`python -m src.model.pre_training.categories.cli` with `build`, `tune`,
+`evaluate`, `tune-v2`, `evaluate-v2`, `leakage`) are documented under
+[Does restricting to source sites help?](search-engine.md#does-restricting-to-source-sites-help)
+and [Automatic category selection](search-engine.md#automatic-category-selection).
 
 | Command | Measures | Result |
 |---------|----------|--------|
@@ -881,7 +887,7 @@ Each run writes `data/<dataset>_train/train.parquet` and `data/<dataset>_train/t
 
 ### Activating the eval gates
 
-The `Eval Gate` CI workflow (`.github/workflows/eval-gate.yml`) has three jobs. The **Intent Routing Gate** is active already — it needs no baseline and no secret, because the canonical set, the evaluation queries and the out-of-scope probes are all committed and the index is regenerable from them, so it rebuilds and runs the pinned routing bars on every pull request (and fails if any of them skips). The other two — retrieval and RAGAS — are **inactive placeholders** until real baselines are committed:
+The `Eval Gate` CI workflow (`.github/workflows/eval-gate.yml`) has three jobs. The **Intent Routing Gate** is active already — it needs no baseline and no secret, because the canonical set, the evaluation queries and the out-of-scope probes are all committed and the index is regenerable from them, so it rebuilds and runs the pinned routing bars on every pull request (and fails if any of them skips). The same job also rebuilds the category index, re-runs the category-selection evaluations (round one and v2; the bars are reported, drift over 0.005 only warns) and enforces both example-leakage checks. The other two — retrieval and RAGAS — are **inactive placeholders** until real baselines are committed:
 
 - The retrieval gate reads `data/eval/baseline_metrics.json`, which ships as a zero placeholder, so no regression can trip it. CI emits an `INACTIVE` warning until a real baseline lands.
 - The RAGAS gate needs `data/eval/ragas_baseline.json`, which is not committed, so it reports `INACTIVE` and runs nothing.

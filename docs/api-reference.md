@@ -287,7 +287,7 @@ The request's optional `domain` (default `web`) adds a search-source hint to web
 provider queries; `GET /api/search-domains` lists the 20 accepted categories with
 their `description` and `typical_sources`. Legacy topic identifiers are accepted
 as aliases. Instead of `domain`, `domains` takes up to three categories searched
-in parallel and fused (RRF); the response and the streaming `done` event echo
+in parallel and fused (RRF), and returns 400 when sent with a `domain` other than `web`; the response and the streaming `done` event echo
 `domains` (null for a single category). `domains: ["auto"]` (opt-in) lets the
 server pick the categories; then `domains` echoes the picks, even a single one,
 and `auto_domains` reports `{"selected": [...], "status": "ok" | "unavailable"}`

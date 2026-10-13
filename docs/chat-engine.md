@@ -11,11 +11,19 @@ and [Frontend development](frontend.md).
 - **Grounded conversation** — retrieval-grounded synthesis with citations, over
   either a single answer call (`chat_once`) or the iterative `AgenticRAGLoop`
   (`chat_loop`: query decomposition, HyDE, iterative retrieval, then synthesis).
+  The loop always searches the original query first; blank and
+  normalized-duplicate enhancement variants are dropped. The sufficiency check
+  sees a bounded evidence preview shared across the retrieved documents
+  (`AgenticRAGConfig.evidence_preview_chars`, default 3000; a code-level setting,
+  not an environment variable), and follow-up queries beyond the per-round cap
+  stay eligible for later rounds.
 - **Multi-turn memory** — each turn carries the newest session messages that
   fit an estimated-token budget (`AGENTIC_SEARCH_MEMORY_HISTORY_TOKENS`, default
   `2500`, still capped at 40 messages). Turns that fall off that tail are
   summarized in the background by the configured LLM client and prepended to
-  the next turn as one system message. Summarization is on by default for
+  the next turn as one system message. The summary and the recent messages
+  share the one budget: the newest message is reserved first, even when it
+  alone exceeds the budget, and the summary is trimmed to what remains. Summarization is on by default for
   `/api/agent` only; `/chat` and `/tool` answer with the local model and need
   `AGENTIC_SEARCH_MEMORY_COMPRESSION=1`. Deleting a chat session also drops its
   summary. See [Configuration](configuration.md#application-and-authentication).

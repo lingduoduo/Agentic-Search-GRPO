@@ -77,9 +77,10 @@ Multi-query tool arguments:
 {"queries": ["battery recycling", "lithium recovery"], "domain": "academic"}
 ```
 
-The selected category applies to every query in that call. To search different
-categories, issue separate calls; nothing fans a query out across several
-categories or fuses their results automatically. Omission or `web` preserves
+The selected category applies to every query in that call. To search up to three
+categories at once, send `domains` instead
+([Multi-category search](#multi-category-search)); `domain` names exactly one.
+Omission or `web` preserves
 existing query behavior. Names accept case, surrounding whitespace, spaces, and
 hyphens: `Social Media` and `social-media` normalize to `social_media`. Empty
 names, unknown names, and explicit null values are rejected before searching.
@@ -272,6 +273,8 @@ on `POST /api/agent` instead of `domain`; the agent tools `web_search`,
   provider gets one plain-query call. With one category hybrid is unchanged.
 
 Multi-category relevance is not measured; a labelled evaluation is a follow-up.
+The category-restriction measurement
+([below](#does-restricting-to-source-sites-help)) covers single categories only.
 
 ### Automatic category selection
 
@@ -689,21 +692,24 @@ used 102 SerpAPI searches.
 
 ### Domains over HTTP and in the web UI
 
-`POST /api/agent` accepts an optional `domain` alongside `query`. It defaults to
-`web`, which leaves the query unchanged and keeps behavior identical to
-requests that omit the field. Legacy identifiers are normalized first, so
-`"finance"` arrives as `financial` and `"health"` as `web`.
+`POST /api/agent` accepts an optional `domain` alongside `query`, or `domains`
+(up to three categories, or `["auto"]`; see
+[Multi-category search](#multi-category-search) and
+[Automatic category selection](#automatic-category-selection)). `domain`
+defaults to `web`, which leaves the query unchanged and keeps behavior
+identical to requests that omit the field. Legacy identifiers are normalized
+first, so `"finance"` arrives as `financial` and `"health"` as `web`.
 
 ```json
 {"query": "etf fees", "domain": "financial"}
 ```
 
 `GET /api/search-domains` returns each category's `name`, `description` (its
-primary topics), and `typical_sources` array in registry order. The Assist page
-uses it to populate the "Search source" selector next to the question box, so
-the 20 categories are not copied into the frontend bundle; an option's tooltip
-shows its topics and typical sources. If discovery fails, the selector keeps a
-single `web` option. The selector is always visible, unlike the Source and retrieval-URL fields,
+primary topics), `typical_sources` and `source_sites` arrays in registry order.
+The Assist page uses it to populate the "Search source" checkbox group next to
+the question box (plus an **Auto** checkbox), so the 20 categories are not
+copied into the frontend bundle; an option's tooltip shows its topics and
+typical sources. If discovery fails, the group keeps a single `web` option. The selector is always visible, unlike the Source and retrieval-URL fields,
 which appear only under `?dev=1`.
 
 Three modes honor the field, because in each one a single caller-supplied query
@@ -724,8 +730,9 @@ only the provider call and its cache key carry the hint. Selecting two
 different domains for one query therefore produces two cache entries.
 
 MCP indexed-document search and the vector/web search-agent component still do
-not expose a domain selector. No relevance improvement is claimed: the
-evaluation above ran the comparison and did not detect one.
+not expose a domain selector. The old topic hints showed no detectable
+improvement; site restriction measured a gain in source alignment
+([above](#does-restricting-to-source-sites-help)), which is not an answer-quality claim.
 
 The corpus-backed `/search/send-search-message` endpoint deliberately has no
 domain field. It queries the local index only, where topic hints do not apply.

@@ -399,7 +399,7 @@ the typed message for retrieval on the direct gate, the web fallback,
 default: the resolver met one of its four success criteria (`criteria` in
 `data/eval/multi_turn_continuity.json`).
 
-These stages are internal adapters. Existing `/retrieve`, `/search`, and `/rerank` endpoints remain available with their current payloads, and no new retrieval API was added. Backend RRF inside `RetrievalService` remains distinct from web-layer candidate ranking: RRF fuses backend result lists; the web ranking stage normalizes, deduplicates, optionally reranks, and diversifies the resulting evidence.
+These stages are internal adapters. Existing `/retrieve`, `/search`, and `/rerank` endpoints remain available with their current payloads, and no new retrieval API was added. RRF counts a document once per source list (a repeated document keeps its first rank there) while still summing its contributions across sources. Backend RRF inside `RetrievalService` remains distinct from web-layer candidate ranking: RRF fuses backend result lists; the web ranking stage normalizes, deduplicates, optionally reranks, and diversifies the resulting evidence.
 
 ### The direct-first sufficiency gate
 
@@ -525,6 +525,11 @@ RERANKER_PROVIDER=local RERANKER_TWO_STAGE=true \
   PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
+The fast stage keeps `max(RERANKER_PRE_FILTER_TOP_N, top_k)` candidates, so a
+`top_k` larger than the pre-filter still reaches the heavy scorer in full;
+`RERANKER_PRE_FILTER_TOP_N` must be positive. On the async path, a stage with
+no async method runs in a worker thread rather than on the event loop.
+
 **Evaluate reranker quality and latency:**
 ```bash
 # Baseline vs reranked NDCG/MRR + per-query latency
@@ -573,6 +578,11 @@ curl -s -X POST http://localhost:8001/internal/optimize/fusion-weights \
   -H "Authorization: Bearer $TOKEN"
 # → {"w_sparse": 0.38, "w_dense": 0.62}
 ```
+
+Each grid candidate is scored on its own `RetrievalService`: the BM25 `k1`/`b`
+candidate is built into the backend, and the fusion candidate's weights drive
+the sparse/dense RRF merge (unequal weights change the order). Candidate
+services bypass the result cache, so a cached result never masks a candidate.
 
 Both tuning endpoints score against labelled QA pairs (never user feedback)
 and **return** the tuned values; nothing persists them and nothing loads them
