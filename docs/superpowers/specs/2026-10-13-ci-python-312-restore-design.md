@@ -19,7 +19,16 @@ CI validator kept a copied 44.117.0 pin.
   pinning its own copy, so a Renovate self-bump cannot desynchronise them.
 - Docs show 44.155.1 and point at `renovate.yml` as the source of truth.
 
+- `minimumReleaseAge: "3 days"`. Renovate proposed a day-old Renovate
+  release (44.155.1) and a days-old Python 3.15.0. Renovate 44 defaults to
+  `minimumReleaseAgeBehaviour: timestamp-required`, and Docker tags carry no
+  timestamp, so the docker datasource gets `timestamp-optional`. Otherwise every
+  Docker update would stay pending forever, even after approval.
+
 ## Verification
+- Dry run with the age rule: python 3.15.0, numpy 2.5.4, vitest 5.0.4 and
+  lucide-react 1.55.0 are held, and the newest old-enough version is proposed.
+  Docker updates (postgres, redis, node, python images) are not held.
 - `git grep 'python-version: "3'` shows only "3.12".
 - The validator step's version extraction, run locally, yields 44.155.1 and
   the strict validator passes.

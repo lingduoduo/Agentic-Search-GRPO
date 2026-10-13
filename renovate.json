@@ -12,6 +12,7 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "automerge": false,
+  "minimumReleaseAge": "3 days",
   "pre-commit": {
     "enabled": true
   },
@@ -103,6 +104,13 @@
       ],
       "groupName": "runtime versions",
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Docker tags carry no release timestamp, and under minimumReleaseAge's default (timestamp-required) every Docker update would stay pending forever, even after dashboard approval. Let them through without the age check.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
       "description": "PROTECTED: fastapi 0.137.x+ regresses app.include_router (silently mounts no routes) - see requirements.txt.",

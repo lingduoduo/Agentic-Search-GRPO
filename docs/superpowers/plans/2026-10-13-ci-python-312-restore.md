@@ -7,4 +7,6 @@
 2. CI validator reads `renovate-version` from `renovate.yml` → verify: the step's
    commands, run locally, validate with 44.155.1.
 3. Update the version shown in `docs/development/dependency-updates.md`.
-4. PR CI → verify: all checks green, including the Intent Routing Gate.
+4. `minimumReleaseAge: "3 days"` plus `timestamp-optional` for docker → verify:
+   strict validator; dry run shows young releases held and Docker updates not held.
+5. PR CI → verify: all checks green, including the Intent Routing Gate.
