@@ -13,6 +13,9 @@
   "prHourlyLimit": 2,
   "automerge": false,
   "minimumReleaseAge": "3 days",
+  "statusCheckNames": {
+    "minimumReleaseAge": null
+  },
   "pre-commit": {
     "enabled": true
   },

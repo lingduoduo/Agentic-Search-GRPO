@@ -16,7 +16,7 @@ from the Renovate GitHub App. The policy lives in
   - pre-commit hooks
 - Majors are never opened automatically. They appear on the **Dependency Dashboard** issue, and ticking one there opens its PR on the next run.
 - A minor or major bump of a `python`/`node` runtime version also waits for dashboard approval, in its own "runtime versions" group. That covers base images in the Dockerfiles and compose, and `python-version`/`node-version` in workflows. CI tests Python 3.10 and 3.12 only.
-- A release must be at least **3 days old** (`minimumReleaseAge`) before Renovate proposes it; until then it proposes the newest release that is old enough. Docker tags carry no release timestamp, so Docker updates skip this check (otherwise they would wait forever).
+- A release must be at least **3 days old** (`minimumReleaseAge`) before Renovate proposes it; until then it proposes the newest release that is old enough. Docker tags carry no release timestamp, so Docker updates skip this check (otherwise they would wait forever). Renovate does not post its `renovate/stability-days` commit status (`statusCheckNames.minimumReleaseAge: null`). The token has no Commit statuses permission, and Renovate turns a failed status POST into a `repository-changed` abort.
 - GitHub Actions are pinned to commit digests, with the version in a comment.
 - At most 5 open Renovate PRs, and at most 2 created per hour.
 - Every PR is labelled `dependencies` and titled `chore(deps): …`.
@@ -78,10 +78,13 @@ fall back.
 4. Repository → **Settings → Secrets and variables → Actions → New repository secret**, name `RENOVATE_TOKEN`.
 5. Run the workflow once from the Actions tab. That creates the Dependency Dashboard issue.
 
-Renovate itself exits successfully when it cannot push a branch. The workflow's
-**Fail on branch or repository errors** step reads Renovate's log and fails the
-run on any `Error updating branch` warning or any ERROR, so a missing permission
-shows up as a red run. Other warnings appear as annotations only.
+Renovate itself exits successfully when it cannot push a branch, and when it
+aborts the repository part-way through. The workflow's **Fail on branch or
+repository errors** step reads Renovate's log. It fails the run on any
+`Error updating branch` warning, on any ERROR, and when the `Repository
+finished` result is anything but `done` (for example `repository-changed`), so
+a missing permission shows up as a red run. Other warnings appear as
+annotations only.
 
 The token expires according to the lifetime you chose. An expired token is
 still a non-empty secret, so the first step passes and the run fails when
