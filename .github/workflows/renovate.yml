@@ -36,7 +36,7 @@ jobs:
         uses: renovatebot/github-action@f0f41e5f2e706165f6814b1d0f0d0e319de7d1d9 # v46.3.8
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}
-          renovate-version: 44.155.1
+          renovate-version: 44.157.0
         # No configurationFile: Renovate reads renovate.json from the default
         # branch as the repository config, so a policy change takes effect on
         # the first run after it merges.
