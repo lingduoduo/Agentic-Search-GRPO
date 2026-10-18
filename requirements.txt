@@ -21,7 +21,7 @@ uvicorn>=0.31.1
 python-multipart>=0.0.9
 
 # Core client / utility dependencies.
-requests==2.32.3
+requests==2.34.2
 urllib3>=2.0
 chardet>=3.0
 # Declared because src/ imports it directly (MCP client, rerank stage, billing);
@@ -31,8 +31,8 @@ httpx>=0.28.1,<1.0
 # /metrics exposition (src/internal/observability/prometheus.py). Pure Python.
 prometheus-client>=0.20,<1
 aiohttp==3.9.3
-beautifulsoup4==4.13.4
-numpy==1.26.4
+beautifulsoup4==4.15.0
+numpy==2.5.4
 redis>=6.2.0
 
 # Local model inference stack used by `python -m src.run_agentic_search --local`.
@@ -44,9 +44,9 @@ accelerate
 # Retrieval / data utilities used on the serving path.
 # scikit-learn backs the demo TF-IDF server; sentence-transformers backs the
 # hybrid server's dense leg, the reranker, and the memory encoder.
-scikit-learn==1.4.2
+scikit-learn==1.9.1
 joblib>=1.3
-tqdm==4.66.4
+tqdm==4.70.1
 sentence-transformers>=3.0.0
 python-dotenv
 google-api-python-client

@@ -32,12 +32,12 @@ pytest tests/unit/test_reward.py tests/unit/test_grpo.py tests/unit/test_llm_age
 | Job | What it runs |
 |-----|--------------|
 | Python Lint | `ruff format --check .` and `ruff check .` |
-| Python Unit Tests | `pytest tests/unit/` on Python 3.10 (the `requires-python` floor) and 3.12 |
+| Python Unit Tests | `pytest tests/unit/` on Python 3.12 (the `requires-python` floor; NumPy 2.5 requires 3.12+) |
 | Prometheus alert rules | `promtool check rules` and `promtool test rules` over `deploy/prometheus/` |
 | Docker build context | builds `docker/Dockerfile.contract` (corpus in the build context, package registered) |
 | Docker image (full build) | builds the image, imports the ASGI app inside it, asserts no CUDA wheels and a non-root user |
 | Docker compose stack | `docker compose up --wait`, probes `/health` on 7860 and 8000, retrieves from the corpus |
-| Frontend | `npm run typecheck` and `npm run test:unit` |
+| Frontend | `npm run typecheck`, `npm run build`, and `npm run test:unit` |
 
 The unit job installs `pip install -e .` plus `requirements-unit-test.txt`,
 which leaves out torch, transformers, faiss and pyserini; tests that need them

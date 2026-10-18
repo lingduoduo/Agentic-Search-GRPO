@@ -231,10 +231,14 @@ class ToolAgentLoopConfig(AgentLoopConfig):
     tool_response_truncate_side: str = "left"
     tool_parser_format: str = "json"
     approval_timeout_seconds: float = field(
-        default_factory=lambda: get_timeout_policies().tool_loop.approval_timeout_seconds
+        default_factory=lambda: (
+            get_timeout_policies().tool_loop.approval_timeout_seconds
+        )
     )
     escalation_timeout_seconds: float = field(
-        default_factory=lambda: get_timeout_policies().tool_loop.escalation_timeout_seconds
+        default_factory=lambda: (
+            get_timeout_policies().tool_loop.escalation_timeout_seconds
+        )
     )
     max_escalations: int = field(
         default_factory=lambda: get_timeout_policies().tool_loop.max_escalations

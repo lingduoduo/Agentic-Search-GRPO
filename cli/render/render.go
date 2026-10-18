@@ -10,8 +10,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/styles"
+	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/styles"
 	"github.com/lingduoduo/Agentic-Search/cli/models"
 )
 

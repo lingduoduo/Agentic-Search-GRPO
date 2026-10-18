@@ -1,10 +1,7 @@
 """Don't use names the minimum supported Python does not have.
 
-``pyproject.toml`` declares ``requires-python = ">=3.10"``, but every CI
-workflow pins 3.12. So a 3.11-only name imports cleanly for everyone who runs
-CI and breaks at import time for anyone on the declared floor -- which is how
-``from datetime import UTC`` (3.11+) reached main and took out collection of
-187 test modules on a 3.10 interpreter.
+The dependency baseline requires Python 3.12 (NumPy 2.5+). Keep source imports
+compatible with the declared floor as newer interpreters add standard names.
 
 This enforces the floor the package advertises. Raise ``requires-python`` and
 the check relaxes on its own; the point is that the two agree.
@@ -61,8 +58,8 @@ def _imported_names() -> list[tuple[str, int, str]]:
 
 
 def test_requires_python_still_declares_the_floor_this_guards():
-    """Guard the guard: if the floor moves to 3.11 this check stops mattering."""
-    assert _python_floor() == (3, 10)
+    """Keep the declared floor aligned with the NumPy dependency baseline."""
+    assert _python_floor() == (3, 12)
 
 
 def test_no_module_imports_a_name_newer_than_the_supported_floor():

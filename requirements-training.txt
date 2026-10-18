@@ -5,5 +5,5 @@
 # than because anything imports it.
 #
 #   pip install -r requirements.txt -r requirements-training.txt
-datasets==5.0.0
-pyarrow>=14
+datasets==5.1.0
+pyarrow>=24

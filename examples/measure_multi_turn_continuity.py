@@ -274,9 +274,9 @@ def _slices(corpora: Sequence[str]) -> dict[str, Callable[[dict], bool]]:
     for relation in RELATIONS:
         for corpus in corpora:
             slices[f"{relation}/{corpus}"] = (
-                lambda row, relation=relation, corpus=corpus: row["relation"]
-                == relation
-                and row.get("corpus") == corpus
+                lambda row, relation=relation, corpus=corpus: (
+                    row["relation"] == relation and row.get("corpus") == corpus
+                )
             )
     return slices
 

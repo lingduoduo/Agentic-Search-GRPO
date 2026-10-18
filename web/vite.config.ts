@@ -6,11 +6,13 @@ export default defineConfig({
   build: {
     cssCodeSplit: true,
     sourcemap: false,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          react: ["react", "react-dom"],
-          icons: ["lucide-react"],
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /node_modules\/(react|react-dom)\// },
+            { name: "icons", test: /node_modules\/lucide-react\// },
+          ],
         },
       },
     },
