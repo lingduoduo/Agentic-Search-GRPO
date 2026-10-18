@@ -156,8 +156,8 @@ stateDiagram-v2
 
 ## Prerequisites
 
-- Python 3.10+
-- Node.js and npm
+- Python 3.12+
+- Node.js 24 and npm
 - An LLM provider API key for agent loops
 - Java only when using BM25/pyserini
 - Docker only for the containerised stack

@@ -540,9 +540,9 @@ def test_summarize_reports_resolver_conditions_and_corpus_slices():
         [conv],
         {"rules": lambda q: "search"},
         {
-            "tfidf": lambda corpus, q: ["d2"]
-            if "FAISS" in q and "variants" in q
-            else ["d1"]
+            "tfidf": lambda corpus, q: (
+                ["d2"] if "FAISS" in q and "variants" in q else ["d1"]
+            )
         },
         _resolvers(),
     )

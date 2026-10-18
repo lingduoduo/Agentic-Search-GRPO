@@ -58,14 +58,15 @@ services:
   # ---------------------------------------------------------------------------
 
   postgres:
-    image: postgres:16-alpine
+    # Existing v16 volumes need dump/restore; see docs/deploy.md.
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: agentic_search
       POSTGRES_USER: agentic
       POSTGRES_PASSWORD: agentic_pass
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     ports:
       - "5432:5432"
     healthcheck:
@@ -77,7 +78,7 @@ services:
       - agentic_search_default
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: redis-server --save 60 1 --loglevel warning
     volumes:

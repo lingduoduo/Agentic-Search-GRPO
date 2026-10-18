@@ -5,7 +5,7 @@
 fastapi>=0.136.1,<0.137
 uvicorn>=0.31.1
 python-multipart>=0.0.9
-requests==2.32.3
+requests==2.34.2
 urllib3>=2.0
 chardet>=3.0
 # Declared because src/ imports it directly (MCP client, rerank stage, billing);
@@ -14,11 +14,11 @@ chardet>=3.0
 httpx>=0.28.1,<1.0
 prometheus-client>=0.20,<1
 aiohttp==3.9.3
-beautifulsoup4==4.13.4
-numpy==1.26.4
+beautifulsoup4==4.15.0
+numpy==2.5.4
 # scikit-learn powers the lightweight demo/TF-IDF retrieval (servers/retrieval/demo.py)
 # exercised by unit tests — light enough for CI (not one of the mocked heavy ML deps).
-scikit-learn==1.4.2
+scikit-learn==1.9.1
 redis>=6.2.0
 python-dotenv
 # mcp 2.x removed mcp.client.streamable_http.streamablehttp_client, which
@@ -40,8 +40,8 @@ tomli>=2.0.0
 # docker/docker-compose.yml directly. It previously arrived only as a transitive
 # of starlette/pydantic-settings/pyserini, which is how httpx went undeclared.
 PyYAML>=6.0
-pyarrow>=14
-tqdm==4.66.4
+pyarrow>=24
+tqdm==4.70.1
 google-api-python-client
 python-dateutil
 # Capped below 3.0.0: that release vendors httpx_aiohttp, whose transport names

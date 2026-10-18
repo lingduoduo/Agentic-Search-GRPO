@@ -18,7 +18,7 @@ def test_slow_transform_times_out_and_degrades():
         QueryTransformConfig(step_back=True), _fake_llm("broad")
     )
     # Make step_back sleep past the timeout.
-    leaf._enhancer.step_back = lambda q: (time.sleep(0.5) or "broad")  # type: ignore
+    leaf._enhancer.step_back = lambda q: time.sleep(0.5) or "broad"  # type: ignore
     pipe = AsyncQueryTransformPipeline(leaf, timeout_ms=50, max_workers=2)
     bundle = pipe.transform("q")
     assert bundle.step_back is None  # degraded, no raise

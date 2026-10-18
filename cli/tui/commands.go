@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/lingduoduo/Agentic-Search/cli/api"
 	"github.com/lingduoduo/Agentic-Search/cli/browser"
 	"github.com/lingduoduo/Agentic-Search/cli/config"

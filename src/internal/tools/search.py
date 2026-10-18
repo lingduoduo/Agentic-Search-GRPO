@@ -1333,7 +1333,9 @@ async def search_for_detail(
     content_iter = iter(contents)
     return _render_sections(
         pages,
-        lambda page: f"Title: {page.title}\nURL: {page.url}\nContent: {next(content_iter, '')}",
+        lambda page: (
+            f"Title: {page.title}\nURL: {page.url}\nContent: {next(content_iter, '')}"
+        ),
     )
 
 

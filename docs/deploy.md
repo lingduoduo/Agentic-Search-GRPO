@@ -100,3 +100,52 @@ docker run --rm -v docker_app_data:/data -v "$PWD":/backup alpine \
 - Deploying to a specific environment.
 - Image signing and provenance attestation.
 - Platforms beyond `linux/amd64` and `linux/arm64`.
+
+## PostgreSQL 16 to 18
+
+The Compose stack now uses PostgreSQL 18 and Redis 8. PostgreSQL 18 stores
+its cluster in `/var/lib/postgresql/18/docker`, with the named volume mounted
+at `/var/lib/postgresql`, as described in the
+[official image documentation](https://hub.docker.com/_/postgres#pgdata).
+A PostgreSQL 16 data volume cannot be opened by PostgreSQL 18. Back up and
+migrate before starting the updated stack against existing data. Do not use
+`down -v` during this migration.
+
+One dump/restore approach, run from the repository root:
+
+1. With the old PostgreSQL 16 stack still running, stop application writes and
+   create a logical backup:
+
+   ```bash
+   docker compose -f docker/docker-compose.yml stop web retrieval
+   docker compose -f docker/docker-compose.yml exec -T postgres \
+     pg_dump -U agentic -d agentic_search -Fc > postgres16.dump
+   docker compose -f docker/docker-compose.yml down
+   ```
+
+2. Update the checkout, then select a **new** volume for PostgreSQL 18, leaving
+   the original volume intact for rollback. Save this persistent override as
+   `docker/docker-compose.override.yml` (choose a unique volume name per deployment):
+
+   ```yaml
+   volumes:
+     postgres_data:
+       name: agentic-search-postgres18
+   ```
+
+3. Start PostgreSQL with that override and restore the dump:
+
+   ```bash
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml \
+     up -d --wait postgres
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml \
+     exec -T postgres pg_restore -U agentic -d agentic_search \
+     --exit-on-error --no-owner < postgres16.dump
+   ```
+
+4. Start the remaining services with both Compose files and verify readiness.
+   Continue supplying the override for every later deploy and rollback. Keep
+   the old volume and dump until the restored data has been verified.
+
+Redis retains its `/data` mount. Back up any persisted Redis data before the
+major-version upgrade; older Redis binaries may not read snapshots written by Redis 8.

@@ -109,7 +109,7 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "Docker tags carry no release timestamp, and under minimumReleaseAge's default (timestamp-required) every Docker update would stay pending forever, even after dashboard approval. Let them through without the age check.",
+      "description": "Docker registries may omit release timestamps (for example GHCR). Permit those updates without blocking forever; still apply the 3-day age check when a timestamp is available.",
       "matchDatasources": [
         "docker"
       ],
@@ -149,6 +149,24 @@
         "fastmcp"
       ],
       "allowedVersions": "<4"
+    },
+    {
+      "description": "PROTECTED: Python 3.15 has no PyTorch/FAISS wheels; aiohttp 3.9.3 has wheels only through 3.12. Keep serving and workflow runtimes on 3.12 until the inference stack and protected aiohttp/openai pins can migrate together.",
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose",
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13"
+    }
+  ],
+  "logLevelRemap": [
+    {
+      "matchMessage": "/^Some (release|upgrade)\\(s\\) did not have a releaseTimestamp, but as we're running with minimumReleaseAgeBehaviour=timestamp-optional, proceeding\\. See debug logs for more information$/",
+      "newLogLevel": "info"
     }
   ]
 }

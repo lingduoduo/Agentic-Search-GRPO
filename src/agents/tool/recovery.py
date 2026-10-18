@@ -34,13 +34,19 @@ class RecoveryPolicy:
         default_factory=lambda: get_timeout_policies().tool_loop.recovery.max_retries
     )
     backoff: tuple[float, ...] = field(
-        default_factory=lambda: get_timeout_policies().tool_loop.recovery.backoff_seconds
+        default_factory=lambda: (
+            get_timeout_policies().tool_loop.recovery.backoff_seconds
+        )
     )
     retry_after_cap: float = field(
-        default_factory=lambda: get_timeout_policies().tool_loop.recovery.retry_after_cap_seconds
+        default_factory=lambda: (
+            get_timeout_policies().tool_loop.recovery.retry_after_cap_seconds
+        )
     )
     retry_budget: float = field(
-        default_factory=lambda: get_timeout_policies().tool_loop.recovery.retry_budget_seconds
+        default_factory=lambda: (
+            get_timeout_policies().tool_loop.recovery.retry_budget_seconds
+        )
     )
 
     def decide(

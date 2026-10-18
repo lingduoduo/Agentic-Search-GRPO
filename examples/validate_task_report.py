@@ -468,9 +468,11 @@ def _strip_markdown_links(text: str) -> str:
 
     without_links = REFERENCE_LINK_RE.sub(strip_full_reference, without_links)
     return SHORTCUT_REFERENCE_RE.sub(
-        lambda match: ""
-        if _normalize_reference_label(match.group(1)) in definitions
-        else match.group(0),
+        lambda match: (
+            ""
+            if _normalize_reference_label(match.group(1)) in definitions
+            else match.group(0)
+        ),
         without_links,
     )
 
