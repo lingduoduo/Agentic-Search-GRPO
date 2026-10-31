@@ -294,3 +294,36 @@ def test_inputs_not_mutated():
         candidates,
     )
     assert (leaves, vectors, assignments, candidates) == before
+
+
+def test_oversized_leaf_splits_when_small_bucket_cannot_fold():
+    for na, nb, max_size in [(8, 3, 10), (12, 3, 14)]:
+        vectors = {**topic(0, "a", na), **topic(1, "b", nb)}
+        leaves = [leaf("L", "p", sorted(vectors), vectors)]
+        config = HierarchyConfig(min_cluster_size=5, max_cluster_size=max_size)
+        r = maintain_leaves(leaves, vectors, assign(leaves), config, 0.0, set())
+        assert [o["op"] for o in r.operations] == ["split"]
+        assert len(r.leaves) >= 2
+        assert all(len(g["document_ids"]) <= max_size for g in r.leaves)
+        assert sorted(i for g in r.leaves for i in g["document_ids"]) == sorted(vectors)
+
+
+def test_split_folds_small_bucket_when_it_fits():
+    vectors = {**topic(0, "a", 6), **topic(1, "b", 6), **topic(2, "c", 2)}
+    leaves = [leaf("D", "p", sorted(vectors), vectors)]
+    config = HierarchyConfig(min_cluster_size=5, target_cluster_size=5)
+    r = maintain_leaves(leaves, vectors, assign(leaves), config, 0.9, set())
+    assert [o["op"] for o in r.operations] == ["split"]
+    assert sorted(len(g["document_ids"]) for g in r.leaves) == [6, 8]
+
+
+def test_spawned_leaf_is_not_split_in_same_call():
+    vectors, leaves = two_leaves()
+    new = {**topic(2, "n", 7), **topic(3, "m", 3)}
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    config = HierarchyConfig(min_cluster_size=3)
+    r = maintain_leaves(leaves, vectors, assignments, config, 0.75, set(new))
+    assert [o["op"] for o in r.operations] == ["spawn"]
+    ids = {g["id"] for g in r.leaves}
+    assert all(gid in ids for o in r.operations for gid in o["group_ids"])

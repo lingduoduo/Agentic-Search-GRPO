@@ -133,6 +133,7 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         if i in owner and _similarity(i, owner[i], vectors) < reference
     )
     spawned = set()
+    spawned_ids = set()
     if len(poor) >= min_size:
         existing = sorted(
             (g for g in current if g["document_ids"]), key=lambda g: g["id"]
@@ -162,6 +163,7 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
                 g["document_ids"] = [i for i in g["document_ids"] if i not in bucket]
             current.append(new)
             spawned.update(bucket)
+            spawned_ids.add(new["id"])
             operations.append(
                 dict(
                     op="spawn",
@@ -178,6 +180,9 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
     result = []
     for g in current:
         size = len(g["document_ids"])
+        if g["id"] in spawned_ids:
+            result.append(g)
+            continue
         poor_fraction = (
             sum(_similarity(i, g, vectors) < reference for i in g["document_ids"])
             / size
@@ -202,16 +207,23 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         if flag and not oversized:
             result.append(g)
             continue
-        # Fold undersized buckets, smallest first, into the nearest other bucket.
-        while len(buckets) > 1 and min(len(b) for b in buckets) < min_size:
+        # Fold undersized buckets, smallest first, into the nearest other bucket
+        # when the result fits; a bucket that cannot fold stays its own child.
+        kept = []
+        while buckets:
             small = min(range(len(buckets)), key=lambda k: len(buckets[k]))
             bucket = buckets.pop(small)
+            others = [b for b in buckets + kept if len(b) + len(bucket) <= max_size]
+            if len(bucket) >= min_size or not others:
+                kept.append(bucket)
+                continue
             center = centroid(bucket, vectors)
             target = max(
-                range(len(buckets)),
-                key=lambda k: float(np.dot(center, centroid(buckets[k], vectors))),
+                others, key=lambda b: float(np.dot(center, centroid(b, vectors)))
             )
-            buckets[target] = sorted(buckets[target] + bucket)
+            target.extend(bucket)
+            target.sort()
+        buckets = kept
         if len(buckets) < 2:
             result.append(g)
             continue
