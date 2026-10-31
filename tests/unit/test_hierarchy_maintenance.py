@@ -2,6 +2,7 @@ import copy
 import math
 
 import numpy as np
+import pytest
 
 from src.internal.document_index.hierarchy import HierarchyConfig
 from src.internal.document_index.hierarchy_maintenance import (
@@ -135,7 +136,14 @@ def test_new_topic_spawns_leaf_and_forces_parent_refresh():
     assert set(next(g for g in r.leaves if g["id"] == "A")["document_ids"]) == set(
         topic(0, "a", 6)
     )
-    assert r.pending_poor_fit_ids == []
+    # Only spawned members below the reference stay pending (here n3 ties the
+    # reference to within float rounding).
+    assert r.pending_poor_fit_ids == sorted(
+        i
+        for i in spawned[0]["document_ids"]
+        if float(np.dot(vectors[i], spawned[0]["centroid"])) < reference
+    )
+    assert len(r.pending_poor_fit_ids) < len(new)
     assert r.poor_fit_count == sum(
         float(np.dot(vectors[i], g["centroid"])) < reference
         for g in r.leaves
@@ -172,6 +180,56 @@ def test_new_topic_spawns_despite_scattered_poor_fit_candidates():
     spawned = next(g for g in r.leaves if g["id"] == spawns[0]["group_ids"][0])
     assert set(spawned["document_ids"]) == set(new)
     assert set(scattered) <= set(r.pending_poor_fit_ids)
+
+
+@pytest.mark.parametrize("seed", [0, 11, 29])
+def test_spawn_returns_noise_member_to_pending(seed):
+    # Regression: mean fit let one random doc ride along with a coherent new
+    # topic, and spawned members left pending_poor_fit_ids for good.
+    dims = 32
+    rng = np.random.default_rng(seed)
+    axes = [rng.normal(size=dims) for _ in range(4)]
+
+    def near(axis):
+        return unit(axis / np.linalg.norm(axis) + rng.normal(scale=0.12, size=dims))
+
+    vectors, leaves = {}, []
+    for t in range(3):
+        ids = [f"t{t}_{j}" for j in range(40)]
+        vectors.update({i: near(axes[t]) for i in ids})
+        leaves.append(leaf(f"L{t}", "p", ids, vectors))
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = {f"n{j}": near(axes[3]) for j in range(12)}
+    noise = {f"s{j}": unit(rng.normal(size=dims)) for j in range(6)}
+    vectors.update(new)
+    vectors.update(noise)
+    candidates = set(new) | set(noise)
+    assignments = assign(leaves)
+    for i in candidates:
+        assignments[i] = max(leaves, key=lambda g: np.dot(vectors[i], g["centroid"]))[
+            "id"
+        ]
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        candidates,
+    )
+    spawns = [o for o in r.operations if o["op"] == "spawn"]
+    assert len(spawns) == 1
+    spawned = next(g for g in r.leaves if g["id"] == spawns[0]["group_ids"][0])
+    # A noise doc may ride along in the spawned leaf, but it stays a pending
+    # poor fit; genuine members above the reference do not.
+    assert set(noise) & set(spawned["document_ids"])
+    assert set(noise) <= set(r.pending_poor_fit_ids)
+    assert r.pending_poor_fit_ids == sorted(r.pending_poor_fit_ids)
+    members = {i for g in r.leaves for i in g["document_ids"]}
+    assert set(r.pending_poor_fit_ids) <= members
+    for i in spawned["document_ids"]:
+        fits = float(np.dot(vectors[i], spawned["centroid"])) >= reference
+        assert (i in r.pending_poor_fit_ids) != fits
 
 
 def test_unrelated_poor_fits_never_spawn_and_stay_pending():

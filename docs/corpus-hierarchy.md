@@ -207,7 +207,8 @@ proportional to change:
     own centroid at or above the reference). Established members never spawn.
     Candidates are clustered with increasing cluster counts until a coherent
     bucket appears, so unrelated poor fits do not hide a new topic. Poor fits
-    that do not spawn are carried to the next update.
+    that do not spawn, and spawned members that still fit their new leaf below
+    the reference, are carried to the next update.
   - `split`: a leaf above `max_cluster_size`, or one of at least twice the
     minimum size whose poor-fit fraction reaches `split_poor_fit_fraction`
     (default 0.3), is re-clustered into children.

@@ -313,8 +313,15 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
     poor_fit_count = sum(
         _similarity(i, g, vectors) < reference for g in final for i in g["document_ids"]
     )
-    remaining = {i for g in final for i in g["document_ids"]}
-    pending = [i for i in poor if i not in spawned and i in remaining]
+    # Spawned members that fit their new leaf poorly (a mean fit can carry an
+    # unrelated member) stay pending, so they remain spawn candidates.
+    final_owner = {i: g for g in final for i in g["document_ids"]}
+    pending = [
+        i
+        for i in poor
+        if i in final_owner
+        and (i not in spawned or _similarity(i, final_owner[i], vectors) < reference)
+    ]
     return MaintenanceResult(
         leaves=final,
         operations=operations,
