@@ -1,5 +1,7 @@
 import copy
 
+import numpy as np
+
 from src.internal.document_index.hierarchy import (
     HierarchyArtifact,
     HierarchyConfig,
@@ -173,3 +175,35 @@ def test_update_is_deterministic():
     first = build_hierarchy(source, config, embedder=TopicEmbedder(), previous=base)
     second = build_hierarchy(source, config, embedder=TopicEmbedder(), previous=base)
     assert first == second
+
+
+def test_build_reports_oversize_even_when_kmeans_is_degenerate():
+    class Same:
+        model_name = HierarchyConfig().embedding_model
+
+        def encode(self, texts):
+            return np.ones((len(texts), 3))
+
+    artifact = build_hierarchy(
+        docs("alpha", 5),
+        HierarchyConfig(mode="cluster", n_clusters=4, max_cluster_size=2),
+        embedder=Same(),
+    )
+    assert len(artifact.groups) == 3
+    warnings = artifact.diagnostics["warnings"]
+    assert any(w.startswith("Degenerate semantic vectors") for w in warnings)
+    assert any(w.startswith("Oversized semantic cluster") for w in warnings)
+
+
+def test_update_keeps_unrelated_undersized_leaves():
+    embedder = TopicEmbedder()
+    config = HierarchyConfig(mode="cluster", n_clusters=3, min_cluster_size=5)
+    source = two_topics() + docs("gamma", 3)
+    base = build_hierarchy(source, config, embedder=embedder)
+    small = next(g for g in base.groups if len(g["document_ids"]) == 3)
+    updated = build_hierarchy(
+        source + docs("alpha", 1, start=20), config, embedder=embedder, previous=base
+    )
+    kept = next((g for g in updated.groups if g["id"] == small["id"]), None)
+    assert kept and kept["document_ids"] == small["document_ids"]
+    assert not ops(updated, "merge")

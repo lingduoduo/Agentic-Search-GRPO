@@ -59,17 +59,19 @@ def test_kmeans_partition_bounds_size_and_is_deterministic():
     members = sorted(vectors)
     first = kmeans_partition(members, vectors, 1, 7, 42)
     second = kmeans_partition(members, vectors, 1, 7, 42)
-    buckets, degenerate = first
+    buckets, degenerate, oversized = first
     assert first == second
-    assert not degenerate
+    assert not degenerate and oversized
     assert max(len(b) for b in buckets) <= 7
     assert sorted(i for b in buckets for i in b) == members
 
 
 def test_kmeans_partition_reports_degenerate_vectors():
     vectors = {str(i): unit([1, 0, 0, 0]) for i in range(4)}
-    buckets, degenerate = kmeans_partition(sorted(vectors), vectors, 3, 10, 42)
-    assert degenerate
+    buckets, degenerate, oversized = kmeans_partition(
+        sorted(vectors), vectors, 3, 10, 42
+    )
+    assert degenerate and not oversized
     assert sorted(i for b in buckets for i in b) == sorted(vectors)
 
 
@@ -231,13 +233,41 @@ def test_undersized_leaf_merges_into_nearest_sibling():
 
 def test_merge_prefers_same_parent():
     vectors, leaves = two_leaves()
-    leaves[1]["parent_id"] = "q"
-    small = topic(1, "s", 2)
+    # "0C" fits as well as A and sorts first, so only the parent preference picks A.
+    other = topic(0, "c", 6)
+    vectors.update(other)
+    leaves.append(leaf("0C", "q", list(other), vectors))
+    small = topic(0, "s", 2)
     vectors.update(small)
     leaves.append(leaf("S", "p", list(small), vectors))
     r = maintain_leaves(
         leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
     )
+    assert [(o["op"], o["group_ids"]) for o in r.operations] == [("merge", ["A"])]
+
+
+def test_dissimilar_undersized_leaf_does_not_merge():
+    vectors, leaves = two_leaves()
+    small = topic(2, "s", 2)
+    vectors.update(small)
+    leaves.append(leaf("S", "p", list(small), vectors))
+    r = maintain_leaves(
+        leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    assert r.operations == []
+    assert sorted(g["id"] for g in r.leaves) == ["A", "B", "S"]
+
+
+def test_merge_skips_nearer_parent_target_that_fails_fit():
+    vectors, leaves = two_leaves()
+    leaves[0]["parent_id"] = "q"
+    small = topic(0, "s", 2)
+    vectors.update(small)
+    leaves.append(leaf("S", "p", list(small), vectors))
+    r = maintain_leaves(
+        leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    # Sibling B (same parent, other topic) fails the fit check; A fits.
     assert [(o["op"], o["group_ids"]) for o in r.operations] == [("merge", ["A"])]
 
 

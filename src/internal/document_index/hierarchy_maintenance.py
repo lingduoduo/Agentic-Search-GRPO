@@ -35,12 +35,13 @@ class MaintenanceResult:
 def kmeans_partition(member_ids, vectors, count, max_size, random_state):
     """K-means, then split buckets over ``max_size`` into balanced chunks.
 
-    Returns ``(buckets, degenerate)``; ``degenerate`` means sklearn warned,
-    typically because duplicate vectors produced fewer distinct clusters.
+    Returns ``(buckets, degenerate, oversized)``; ``degenerate`` means sklearn
+    warned, typically because duplicate vectors produced fewer distinct
+    clusters; ``oversized`` means some k-means cluster exceeded ``max_size``.
     """
     members = sorted(member_ids)
     if not members:
-        return [], False
+        return [], False, False
     from sklearn.cluster import KMeans
 
     with warnings.catch_warnings(record=True) as caught:
@@ -53,14 +54,16 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
     for member, label in zip(members, labels):
         bucket_map.setdefault(int(label), []).append(member)
     chunks = []
+    oversized = False
     for label in sorted(bucket_map):
         bucket = bucket_map[label]
         parts = math.ceil(len(bucket) / max_size)
+        oversized |= parts > 1
         chunks.extend(
             part.tolist()
             for part in np.array_split(np.array(bucket, dtype=object), parts)
         )
-    return chunks, bool(caught)
+    return chunks, bool(caught), oversized
 
 
 def centroid(member_ids, vectors):
@@ -138,7 +141,7 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         existing = sorted(
             (g for g in current if g["document_ids"]), key=lambda g: g["id"]
         )
-        buckets, flag = kmeans_partition(
+        buckets, flag, _ = kmeans_partition(
             poor,
             vectors,
             math.ceil(len(poor) / config.target_cluster_size),
@@ -196,7 +199,7 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         if not (oversized or drifted):
             result.append(g)
             continue
-        buckets, flag = kmeans_partition(
+        buckets, flag, _ = kmeans_partition(
             g["document_ids"],
             vectors,
             max(2, math.ceil(size / config.target_cluster_size)),
@@ -244,7 +247,8 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         )
     current = result
 
-    # 4. Merge undersized leaves into the nearest fitting leaf, same parent first.
+    # 4. Merge undersized leaves into the nearest leaf with room whose centroid
+    # the members fit (mean similarity >= reference), same parent first.
     merged = set()
     for g in sorted(current, key=lambda g: (len(g["document_ids"]), g["id"])):
         size = len(g["document_ids"])
@@ -257,6 +261,8 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
                 if o is not g
                 and o["document_ids"]
                 and len(o["document_ids"]) + size <= max_size
+                and np.mean([_similarity(i, o, vectors) for i in g["document_ids"]])
+                >= reference
             ),
             key=lambda o: o["id"],
         )
@@ -384,7 +390,7 @@ def balance_levels(groups, vectors, max_fanout, random_state):
             k: centroid(_descendant_documents(k, children, by_id), vectors)
             for k in kids
         }
-        buckets, _ = kmeans_partition(
+        buckets, _, _ = kmeans_partition(
             kids,
             child_centroids,
             math.ceil(len(kids) / max_fanout),

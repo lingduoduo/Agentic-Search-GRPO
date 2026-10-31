@@ -469,7 +469,10 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
             set(previous.diagnostics.get("pending_poor_fit_ids", [])) & semantic_set
         )
         if old_semantic_docs == semantic_set and semantic_set <= unchanged:
-            # No semantic document changed: the previous structure is a fixed point.
+            # Shortcut: no semantic document was added, edited or deleted, so skip
+            # the planner and keep the previous semantic groups. Structure then
+            # changes only in response to semantic changes; the planner itself is
+            # not proven idempotent on unchanged input.
             semantic_groups = old_semantic
             pending_poor_fit_ids = carried
         else:
@@ -492,11 +495,10 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         count = config.n_clusters or math.ceil(
             len(semantic) / config.target_cluster_size
         )
-        buckets, degenerate = kmeans_partition(
+        buckets, degenerate, oversized = kmeans_partition(
             semantic, vectors, count, config.max_cluster_size, config.random_state
         )
-        # Chunking past the k-means cluster count means a cluster was oversized.
-        if len(buckets) > min(len(semantic), count):
+        if oversized:
             notices.append(
                 "Oversized semantic cluster split into deterministic balanced chunks; routing quality may be reduced."
             )
