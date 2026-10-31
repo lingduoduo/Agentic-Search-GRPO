@@ -59,9 +59,7 @@ def test_structure_roundtrip_and_corruption(tmp_path):
 
 def test_semantic_incremental_reuse_and_overflow():
     encoder = Encoder()
-    config = HierarchyConfig(
-        target_cluster_size=2, max_cluster_size=2, min_cluster_size=1
-    )
+    config = HierarchyConfig(target_cluster_size=2, max_cluster_size=2)
     artifact = build_hierarchy(docs(), config, embedder=encoder)
     assert all(len(g["document_ids"]) <= 2 for g in artifact.groups)
     snapshot = copy.deepcopy(artifact)
@@ -103,9 +101,7 @@ def test_identical_vectors_hard_bound():
             return np.ones((len(texts), 2))
 
     artifact = build_hierarchy(
-        docs(9),
-        HierarchyConfig(max_cluster_size=2, min_cluster_size=1),
-        embedder=Same(),
+        docs(9), HierarchyConfig(max_cluster_size=2), embedder=Same()
     )
     assert max(len(g["document_ids"]) for g in artifact.groups) <= 2
     assert artifact.diagnostics["warnings"]
@@ -132,9 +128,7 @@ def test_edit_embeds_only_changed_and_does_not_mutate_inputs():
     source = docs(4)
     original = copy.deepcopy(source)
     encoder = Encoder()
-    config = HierarchyConfig(
-        max_cluster_size=2, target_cluster_size=2, min_cluster_size=1
-    )
+    config = HierarchyConfig(max_cluster_size=2, target_cluster_size=2)
     artifact = build_hierarchy(source, config, embedder=encoder)
     assert source == original
     source[0]["contents"] = "Edited content. Extra."
@@ -338,7 +332,6 @@ MAINTENANCE_FIELDS = (
     "field,value",
     [
         ("min_cluster_size", 0),
-        ("min_cluster_size", 201),
         ("max_fanout", 1),
         ("max_fanout", True),
         ("fit_quantile", 0.0),
@@ -361,3 +354,13 @@ def test_old_config_without_maintenance_fields_still_updates():
     updated = build_hierarchy(docs(7, ["A", "B"]), previous=artifact)
     assert len(updated.assignments) == 7
     assert set(MAINTENANCE_FIELDS) <= set(updated.config)
+
+
+def test_small_max_cluster_size_config_and_old_artifact_still_work():
+    assert HierarchyConfig(max_cluster_size=2).min_cluster_size == 5
+    config = HierarchyConfig(mode="structure", max_cluster_size=2)
+    artifact = build_hierarchy(docs(path=["A", "B"]), config)
+    for name in MAINTENANCE_FIELDS:
+        artifact.config.pop(name)
+    updated = build_hierarchy(docs(7, ["A", "B"]), previous=artifact)
+    assert len(updated.assignments) == 7

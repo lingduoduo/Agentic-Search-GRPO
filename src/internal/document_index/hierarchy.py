@@ -66,11 +66,8 @@ class HierarchyConfig:
             or not self.description_model.strip()
         ):
             raise ValueError("description_model must be nonempty or None")
-        if (
-            type(self.min_cluster_size) is not int
-            or not 1 <= self.min_cluster_size <= self.max_cluster_size
-        ):
-            raise ValueError("min_cluster_size must be between 1 and max_cluster_size")
+        if type(self.min_cluster_size) is not int or self.min_cluster_size < 1:
+            raise ValueError("min_cluster_size must be a positive integer")
         if self.max_fanout is not None and (
             type(self.max_fanout) is not int or self.max_fanout < 2
         ):
