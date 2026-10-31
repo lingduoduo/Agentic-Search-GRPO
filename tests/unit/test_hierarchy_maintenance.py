@@ -5,6 +5,7 @@ import numpy as np
 
 from src.internal.document_index.hierarchy import HierarchyConfig
 from src.internal.document_index.hierarchy_maintenance import (
+    balance_levels,
     centroid,
     fit_reference,
     kmeans_partition,
@@ -327,3 +328,88 @@ def test_spawned_leaf_is_not_split_in_same_call():
     assert [o["op"] for o in r.operations] == ["spawn"]
     ids = {g["id"] for g in r.leaves}
     assert all(gid in ids for o in r.operations for gid in o["group_ids"])
+
+
+def _level_fixture(n=9):
+    vectors = {}
+    leaves = []
+    for k in range(n):
+        v = np.zeros(DIMS)
+        v[k % DIMS] = 1.0
+        v[(k + 1) % DIMS] += 0.1 * (k // DIMS)
+        vectors[f"d{k}"] = unit(v)
+        leaves.append(leaf(f"L{k}", None, [f"d{k}"], vectors))
+    return vectors, leaves
+
+
+def _child_counts(groups):
+    counts = {}
+    for g in groups:
+        counts[g["parent_id"]] = counts.get(g["parent_id"], 0) + 1
+    return counts
+
+
+def test_root_over_fanout_inserts_level_with_bounded_children():
+    vectors, leaves = _level_fixture(9)
+    before = copy.deepcopy(leaves)
+    groups, ops, new_ids = balance_levels(leaves, vectors, 3, 42)
+    assert leaves == before
+    assert max(_child_counts(groups).values()) <= 3
+    assert {g["id"] for g in leaves} <= {g["id"] for g in groups}
+    assert any(o["op"] == "insert_level" for o in ops)
+    assert new_ids and new_ids <= {g["id"] for g in groups}
+    by_id = {g["id"]: g for g in groups}
+    for g in groups:
+        assert g["parent_id"] is None or g["parent_id"] in by_id
+    for gid in new_ids:
+        assert gid.startswith("semantic-level-")
+        assert by_id[gid]["document_ids"] == []
+
+
+def test_deep_overflow_repeats_until_bounded():
+    vectors, leaves = _level_fixture(30)
+    groups, _, _ = balance_levels(leaves, vectors, 2, 42)
+    assert max(_child_counts(groups).values()) <= 2
+    assert sum(1 for g in groups if g["document_ids"]) == 30
+
+
+def test_disabled_fanout_changes_nothing_but_collapses_single_child():
+    vectors, leaves = _level_fixture(4)
+    leaves[0]["parent_id"] = "m"
+    middle = dict(
+        id="m",
+        parent_id=None,
+        label="m",
+        document_ids=[],
+        centroid=centroid(["d0"], vectors),
+    )
+    groups, ops, new_ids = balance_levels([middle] + leaves, vectors, None, 42)
+    by_id = {g["id"]: g for g in groups}
+    assert "m" not in by_id
+    assert by_id["L0"]["parent_id"] is None
+    assert [o["op"] for o in ops] == ["collapse_level"]
+    assert not new_ids
+
+
+def test_empty_intermediate_removed_and_no_dangling_parents():
+    vectors, leaves = _level_fixture(3)
+    empty = dict(id="e", parent_id="m", label="e", document_ids=[], centroid=[0.0])
+    middle = dict(id="m", parent_id=None, label="m", document_ids=[], centroid=[0.0])
+    groups, _, _ = balance_levels([middle, empty] + leaves, vectors, None, 42)
+    ids = {g["id"] for g in groups}
+    assert ids == {"L0", "L1", "L2"}
+    assert all(g["parent_id"] is None or g["parent_id"] in ids for g in groups)
+
+
+def test_levels_deterministic():
+    vectors, leaves = _level_fixture(12)
+    assert balance_levels(leaves, vectors, 3, 7) == balance_levels(
+        leaves, vectors, 3, 7
+    )
+
+
+def test_identical_vectors_still_terminate_within_bound():
+    vectors = {f"d{k}": unit([1, 0, 0, 0]) for k in range(10)}
+    leaves = [leaf(f"L{k}", None, [f"d{k}"], vectors) for k in range(10)]
+    groups, _, _ = balance_levels(leaves, vectors, 3, 42)
+    assert max(_child_counts(groups).values()) <= 3

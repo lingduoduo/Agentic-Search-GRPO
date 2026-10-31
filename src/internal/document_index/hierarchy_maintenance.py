@@ -308,3 +308,126 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         pending_poor_fit_ids=pending,
         degenerate=degenerate,
     )
+
+
+def _descendant_documents(gid, children, by_id):
+    if not children.get(gid):
+        return list(by_id[gid]["document_ids"])
+    return [
+        i
+        for child in children[gid]
+        for i in _descendant_documents(child, children, by_id)
+    ]
+
+
+def balance_levels(groups, vectors, max_fanout, random_state):
+    """Collapse degenerate intermediates, then bound every parent's fanout.
+
+    Returns ``(groups, operations, new_group_ids)``. Intermediates are groups
+    with no documents of their own; a parent over ``max_fanout`` children gets
+    new intermediate levels built by k-means over child centroids.
+    """
+    if max_fanout is not None and max_fanout < 2:
+        raise ValueError("max_fanout must be at least 2")
+    current = [dict(g) for g in groups]
+    operations = []
+
+    # 1. Remove childless intermediates and collapse single-child ones.
+    while True:
+        counts = {}
+        for g in current:
+            counts.setdefault(g["parent_id"], []).append(g["id"])
+        target = next(
+            (
+                g
+                for g in sorted(current, key=lambda g: g["id"])
+                if not g["document_ids"] and len(counts.get(g["id"], [])) <= 1
+            ),
+            None,
+        )
+        if target is None:
+            break
+        kids = counts.get(target["id"], [])
+        for g in current:
+            if g["parent_id"] == target["id"]:
+                g["parent_id"] = target["parent_id"]
+        current = [g for g in current if g["id"] != target["id"]]
+        operations.append(
+            dict(
+                op="collapse_level",
+                group_ids=kids,
+                source_ids=[target["id"]],
+                reason=(
+                    "intermediate has one child"
+                    if kids
+                    else "intermediate has no children"
+                ),
+            )
+        )
+
+    # 2. Insert levels under every parent over the fanout bound.
+    new_ids = set()
+    while max_fanout is not None:
+        by_id = {g["id"]: g for g in current}
+        children = {}
+        for g in current:
+            children.setdefault(g["parent_id"], []).append(g["id"])
+        over = sorted(
+            (p for p, kids in children.items() if len(kids) > max_fanout),
+            key=lambda p: (p is not None, p or ""),
+        )
+        if not over:
+            break
+        parent = over[0]
+        kids = sorted(children[parent])
+        child_centroids = {
+            k: centroid(_descendant_documents(k, children, by_id), vectors)
+            for k in kids
+        }
+        buckets, _ = kmeans_partition(
+            kids,
+            child_centroids,
+            math.ceil(len(kids) / max_fanout),
+            max_fanout,
+            random_state,
+        )
+        if len(buckets) >= len(kids):
+            # No progress (degenerate centroids): chunk by ID order instead.
+            parts = math.ceil(len(kids) / max_fanout)
+            buckets = [
+                p.tolist() for p in np.array_split(np.array(kids, dtype=object), parts)
+            ]
+        created = []
+        moved = []
+        for bucket in buckets:
+            if len(bucket) < 2:
+                continue
+            bucket = sorted(bucket)
+            gid = "semantic-level-" + _hash(bucket)[:20]
+            for g in current:
+                if g["id"] in bucket:
+                    g["parent_id"] = gid
+            documents = [
+                i for k in bucket for i in _descendant_documents(k, children, by_id)
+            ]
+            current.append(
+                dict(
+                    id=gid,
+                    parent_id=parent,
+                    label="Topic " + gid[-8:],
+                    document_ids=[],
+                    centroid=centroid(documents, vectors),
+                )
+            )
+            created.append(gid)
+            moved.extend(bucket)
+        new_ids.update(created)
+        operations.append(
+            dict(
+                op="insert_level",
+                group_ids=created,
+                source_ids=sorted(moved),
+                reason=f"{len(kids)} children exceed max_fanout {max_fanout}",
+            )
+        )
+    return current, operations, new_ids
