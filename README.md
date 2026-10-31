@@ -208,13 +208,21 @@ Start each service in a separate terminal from the repository root.
 
 ### 1. Start retrieval
 
-Run one retrieval server on port **8001**, where the API looks for it by default:
+**Simplest: skip this step.** The bundled corpora are static, so the API can serve one itself. Start the API in step 2 with `AGENTIC_SEARCH_EMBEDDED_RETRIEVAL` set:
+
+```bash
+AGENTIC_SEARCH_EMBEDDED_RETRIEVAL=demo PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
+```
+
+It takes the same corpus values as `--corpus` below, or a `.jsonl` path. It serves TF-IDF only, at `/retrieval/retrieve` on the API, and refuses callers from other hosts. If the API runs on a port other than 7860, set `AGENTIC_SEARCH_WEB_PORT` to match.
+
+**Or run a separate retrieval server**, for hybrid retrieval or a server several processes share. Run it on port **8001**, where the API looks for it by default:
 
 ```bash
 python3 -m src.internal.servers.retrieval.demo --corpus demo
 ```
 
-That's all a first run needs. To change what it serves, pick a server and a corpus.
+To change what it serves, pick a server and a corpus.
 
 **Server** (both serve the same API on port 8001, so either works with the backend):
 

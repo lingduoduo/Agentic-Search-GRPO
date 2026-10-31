@@ -13,7 +13,8 @@ from itertools import islice
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from src.internal.servers.sse import sse_frame
@@ -23,7 +24,11 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError
 
 from src.internal.auth import AuthenticatedUser
-from src.internal.servers._auth import caller_may_use_session, make_require_admin
+from src.internal.servers._auth import (
+    caller_may_use_session,
+    make_require_admin,
+    require_loopback_client,
+)
 from src.internal.configs import AppSettings
 from src.internal.configs import get_env_int
 from src.internal.configs import get_timeout_policies
@@ -1663,6 +1668,41 @@ def create_web_app(
     # Cheap enough to run everywhere: one monotonic pair and a bounded deque
     # append per request. /api/debug/latency reads what it records.
     add_latency_logging_middleware(app, logging.LoggerAdapter(logger, {}))
+
+    if resolved.services.embedded_retrieval:
+        # A static corpus needs no process of its own: serve the demo TF-IDF
+        # server's routes in-process. load_app_settings already points
+        # retrieval_url here unless AGENTIC_SEARCH_RETRIEVAL_URL overrides it.
+        # Imported lazily so the default path does not load scikit-learn.
+        from src.internal.servers.retrieval.corpus_registry import (
+            resolve_corpus_docs,
+        )
+        from src.internal.servers.retrieval.demo import TfidfRetriever
+        from src.internal.servers.retrieval.demo import (
+            create_app as create_retrieval_app,
+        )
+
+        retriever = TfidfRetriever.from_docs(
+            resolve_corpus_docs(resolved.services.embedded_retrieval)
+        )
+        # Only its API routes (/retrieve, /health), not its /docs pages, and
+        # only for same-host callers, as the standalone server binds 127.0.0.1.
+        retrieval_routes = APIRouter()
+        retrieval_routes.routes.extend(
+            route
+            for route in create_retrieval_app(retriever).routes
+            if isinstance(route, APIRoute)
+        )
+        app.include_router(
+            retrieval_routes,
+            prefix="/retrieval",
+            dependencies=[Depends(require_loopback_client)],
+        )
+        logger.info(
+            "Serving retrieval in-process at %s (corpus: %s)",
+            resolved.services.retrieval_url,
+            resolved.services.embedded_retrieval,
+        )
 
     _register_routers(
         app,
