@@ -46,7 +46,7 @@ def _html_sections(text):
             node.extract()
     for tag in list(soup.find_all(True)):
         # An earlier excluded ancestor may already have decomposed this tag.
-        if tag.name is None:
+        if tag.decomposed:
             continue
         style = re.sub(r"\s+", "", str(tag.get("style", "")).lower())
         if (
