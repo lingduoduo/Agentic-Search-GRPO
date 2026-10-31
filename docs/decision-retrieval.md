@@ -3,7 +3,10 @@
 This opt-in backend borrows the hierarchy and judgment strategy from
 [Retriever-Free Retrieval: Navigating Documents with Decision Models](https://arxiv.org/abs/2610.35868)
 (DecisionRAG, Section 3). It does not replace the default demo or hybrid server.
-There is no embedding index, BM25, TF-IDF, or first-stage search.
+There is no embedding index, BM25, TF-IDF, or first-stage search at query time.
+Optional [offline corpus hierarchy construction](corpus-hierarchy.md) recovers
+metadata/HTML/URL structure or builds semantic clusters, persists descriptions,
+and maintains incremental snapshots; clustering embeddings are offline only.
 
 ## Run locally
 
@@ -56,7 +59,9 @@ to `Documents`. Duplicate document IDs and malformed text/topic fields are error
    -> passage**. No clustering, generated summaries, or vector index is needed.
    Plain text gets one `Body` section. Markdown fenced-code headings are not
    sections. Passages contain at most `--passage-words` whitespace-delimited
-   words; this is not a tokenizer token budget.
+   words and `--max-passage-chars` characters (default 1200), supporting no-space
+   text too; these are not tokenizer token budgets. With `--hierarchy`, stored
+   group structure and normalized sections replace this basic fallback tree.
 2. Prune inaccessible documents and empty branches **before any model call**,
    using the existing `filters.access_acl` semantics. This is defense in depth,
    not an authentication boundary: filters must come from a trusted caller.
