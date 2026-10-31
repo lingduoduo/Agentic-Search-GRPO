@@ -1,6 +1,6 @@
 # Agentic Search
 
-Agentic Search is a retrieval-backed platform for building multi-turn search, RAG, and tool-using agents. It combines a FastAPI backend, interchangeable retrieval services, a React development UI, and training and evaluation workflows in one repository.
+Agentic Search is a retrieval-backed platform for building multi-turn search, RAG, and tool-using agents. This repository holds the FastAPI backend, interchangeable retrieval services, and training and evaluation workflows. The React web UI lives in its own repository, [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI).
 
 ## What it provides
 
@@ -11,7 +11,7 @@ Agentic Search is a retrieval-backed platform for building multi-turn search, RA
 - Connector data models, document ingestion, and offline index building via the `index_builder` CLI
 - Web search through Google Custom Search, SerpAPI, and browser automation
 - Search-source agents — twenty source categories (`web`, `academic`, `code`, `social_media`, `resource`, `news`, `official`, `legal`, `financial`, `patent`, `product`, `business`, `local`, `travel`, `media`, `books`, `education`, `events`, `jobs`, `statistics`) that steer a query toward a kind of source. Each category defines its primary search topics and typical sources, which shape a query hint for the configured web providers (a few categories also reach keyless public-data tools); typical sources are descriptive, not dedicated integrations; subjects such as health or gaming are query topics, not categories. Selectable from the HTTP API or the Assist page (default `web`). A request may use up to three categories, searched in parallel with results fused (RRF), reranked and cited; multi-category relevance is not yet measured; `domains: ["auto"]` is opt-in automatic selection; its second evaluation, which credits every acceptable category, passed its pre-registered bar on a small 60-query test set (hit 1.00, pick precision 0.71, 1.5 picks on average; [details](docs/search-engine.md#automatic-category-selection))
-- A React UI with four surfaces — an auto-routing Assistant plus direct Search, Chat, and Tool pages — with streaming responses, a running conversation transcript, source inspection, and observability panels
+- A React UI ([Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI)) with four surfaces — an auto-routing Assistant plus direct Search, Chat, and Tool pages — with streaming responses, a running conversation transcript, source inspection, and observability panels
 - Post-training for search agents — supervised (SFT), preference (DPO), and reinforcement (GRPO) — plus evaluation workflows
 - Identity-aware access: signing in narrows results to what you may read and unlocks user-scoped tools and memory, without changing which engine runs
 - MCP in both directions — a server exposing search and retrieval to compatible clients, and a client that turns another server's tools into ordinary registry tools
@@ -186,13 +186,6 @@ Install the optional MCP dependencies when needed:
 pip install -e ".[mcp]"
 ```
 
-The web UI lives in a separate repository. Clone it next to this one and install its dependencies:
-
-```bash
-git clone https://github.com/lingduoduo/Agentic-Search-UI ../Agentic-Search-UI
-cd ../Agentic-Search-UI && npm install
-```
-
 ## Configure
 
 Copy the example environment file, then provide the model settings required by your LLM provider:
@@ -265,15 +258,9 @@ The FastAPI backend runs on port **7860**:
 PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
-### 3. Start the frontend
+### 3. Web UI (optional)
 
-The live Vite development UI, from the [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI) checkout, runs on port **5173** and proxies backend requests to port 7860:
-
-```bash
-cd ../Agentic-Search-UI && npm run dev
-```
-
-Open <http://127.0.0.1:5173>. The header links to the four pages: **Assistant** (`/assist`), **Search** (`/search`), **Chat** (`/chat`), and **Tools** (`/tools`). Each has its own URL, so pages can be linked to and survive a refresh.
+The web UI is a separate repository, [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI). Its README covers installing and running it against this backend on port 7860.
 
 ## Verify the stack
 
@@ -301,11 +288,19 @@ Prometheus metrics are always recorded, but `GET /metrics` is mounted only with 
 
 ## Run with Docker
 
-`docker/docker-compose.yml` runs the retrieval server (port 8000 inside the stack), the web backend with the built frontend on port 7860, and Postgres and Redis. The containers run as a non-root user:
+`docker/docker-compose.yml` runs the retrieval server (port 8000 inside the stack), the web backend (API only) on port 7860, and Postgres and Redis. The containers run as a non-root user:
 
 ```bash
 docker compose --env-file .env -f docker/docker-compose.yml up --build
 ```
+
+To include the web UI, clone [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI) next to this repository and add the `frontend` profile. That builds the UI's nginx image, which serves the app on port 8080 and proxies API calls to the backend:
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml --profile frontend up --build   # UI at http://localhost:8080
+```
+
+See [Frontend](docs/frontend.md) for how to point it at a different checkout or a published image.
 
 `--env-file .env` supplies the LLM settings (`GEN_AI_*`) and `SERP_API_KEY` from your `.env`. Only the keys the compose file names reach the containers; host-only values such as `localhost` service URLs stay out. Without it, the containers run with an empty LLM key. The browser search server is host-only and is not available under compose.
 
@@ -396,5 +391,5 @@ See [Testing](docs/testing.md) for focused suites and integration-test prerequis
 - [Operational metrics](docs/observability-metrics.md) — `/metrics`, each metric's definition, PromQL, and alert rules
 - [Authentication](docs/authentication.md) — bearer tokens, registration, and route protection
 - [Workload identity](docs/workload-identity.md) — automated-client authentication, production safeguards, and renewable Redis IAM credentials
-- [Testing](docs/testing.md) — backend and frontend checks, integration tests, and debugging commands
+- [Testing](docs/testing.md) — backend unit and regression tests, integration tests, and debugging commands
 - [Self-review task reports](docs/development/self-review-reports.md) — validated implementation handoffs and mandatory review gates
