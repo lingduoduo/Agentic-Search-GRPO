@@ -238,6 +238,14 @@ class HierarchyArtifact:
                     )
                 ):
                     raise ValueError("invalid description provenance")
+                full = provenance.get("sample_ids")
+                if "sample_ids" in provenance and (
+                    not isinstance(full, list)
+                    or any(not isinstance(i, str) for i in full)
+                    or len(set(full)) != len(full)
+                    or not set(full) <= set(descendants[gid])
+                ):
+                    raise ValueError("invalid description provenance sample_ids")
             if "description_stale" in group and (
                 type(group["description_stale"]) is not bool
             ):
@@ -610,9 +618,13 @@ def build_hierarchy(
             continue
         members = memberships[gid]
         current = set(members)
-        stored = provenance["document_ids"]
+        # Compare against the full pre-packing sample; artifacts written before
+        # sample_ids existed fall back to the (possibly packed) document_ids.
+        stored = provenance.get("sample_ids", provenance["document_ids"])
         removed_samples[gid] = {
-            i for i in stored if i not in current or i not in unchanged
+            i
+            for i in set(stored) | set(provenance["document_ids"])
+            if i not in current or i not in unchanged
         }
         overlap = 1.0
         if members != old_memberships.get(gid, []) or not current <= unchanged:
@@ -697,6 +709,7 @@ def build_hierarchy(
         provenance["generation_signature"] = _hash(settings)
         provenance["generation_settings"] = settings
         provenance.setdefault("warnings", [])
+        provenance.setdefault("sample_ids", [s["document_id"] for s in samples])
         group["description_provenance"] = provenance
 
     def reuse_old(group):
@@ -726,6 +739,10 @@ def build_hierarchy(
             provenance["roles"] = {
                 i: r for i, r in provenance["roles"].items() if i not in removed
             }
+            if "sample_ids" in provenance:
+                provenance["sample_ids"] = [
+                    i for i in provenance["sample_ids"] if i not in removed
+                ]
             provenance.setdefault("warnings", [])
             if "stale_samples_removed" not in provenance["warnings"]:
                 provenance["warnings"].append("stale_samples_removed")

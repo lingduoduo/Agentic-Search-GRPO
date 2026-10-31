@@ -8,6 +8,9 @@ from src.internal.document_index.hierarchy import (
     HierarchyConfig,
     build_hierarchy,
 )
+from src.internal.document_index.hierarchy_descriptions import (
+    select_description_samples,
+)
 from tests.unit.hierarchy_fakes import CountingDescriber, TopicEmbedder, docs
 
 MAINTENANCE_FIELDS = (
@@ -330,6 +333,7 @@ def test_zero_cap_defers_existing_refresh_with_valid_provenance(tmp_path):
     provenance = stale["description_provenance"]
     assert sampled not in provenance["document_ids"]
     assert sampled not in provenance["roles"]
+    assert sampled not in provenance["sample_ids"]
     assert "stale_samples_removed" in provenance["warnings"]
     other = group(new, base.groups[1]["id"])
     assert "description_stale" not in other
@@ -454,3 +458,128 @@ def test_invalid_stale_field_rejected():
         artifact.validate()
     artifact.groups[0]["description_stale"] = False
     artifact.validate()
+
+
+class PackingDescriber(CountingDescriber):
+    """Keeps only two sample IDs, as context packing can."""
+
+    def describe_with_provenance(self, label, documents, *, vectors=None, sample_size):
+        result = super().describe_with_provenance(
+            label, documents, vectors=vectors, sample_size=sample_size
+        )
+        keep = result["document_ids"][:2]
+        result["document_ids"] = keep
+        result["roles"] = {k: result["roles"][k] for k in keep}
+        return result
+
+
+def test_packed_provenance_does_not_trigger_overlap_refresh():
+    config = HierarchyConfig(mode="cluster", n_clusters=3, **DESCRIBED)
+    describer = PackingDescriber()
+    source = three_topics()
+    previous = build_hierarchy(
+        source, config, embedder=TopicEmbedder(), describer=describer
+    )
+    for group_ in previous.groups:
+        provenance = group_["description_provenance"]
+        assert len(provenance["document_ids"]) == 2
+        assert len(provenance["sample_ids"]) == config.description_sample_size
+    for step in range(3):
+        describer.calls.clear()
+        source = source + docs("alpha", 1, start=20 + step)
+        previous = build_hierarchy(
+            source,
+            config,
+            embedder=TopicEmbedder(),
+            describer=describer,
+            previous=previous,
+        )
+        assert describer.calls == []
+        assert previous.diagnostics["update_cost"]["capped_description_calls"] == 0
+
+
+def test_sample_ids_recorded_on_every_generation_path():
+    config = HierarchyConfig(mode="cluster", n_clusters=2)
+    extractive = build_hierarchy(two_topics(), config, embedder=TopicEmbedder())
+
+    class Plain:
+        def describe(self, label, documents):
+            return "Plain summary of " + label
+
+    plain = build_hierarchy(
+        two_topics(), config, embedder=TopicEmbedder(), describer=Plain()
+    )
+    for artifact in (extractive, plain):
+        for group_ in artifact.groups:
+            provenance = group_["description_provenance"]
+            assert len(provenance["sample_ids"]) == config.description_sample_size
+            assert set(provenance["document_ids"]) <= set(provenance["sample_ids"])
+
+
+def test_invalid_sample_ids_rejected():
+    artifact = build_hierarchy(
+        two_topics(), HierarchyConfig(mode="cluster"), embedder=TopicEmbedder()
+    )
+    provenance = artifact.groups[0]["description_provenance"]
+    for bad in ("x", [1], ["missing-doc"], [provenance["sample_ids"][0]] * 2):
+        provenance["sample_ids"] = bad
+        with pytest.raises(ValueError, match="provenance"):
+            artifact.validate()
+    del provenance["sample_ids"]
+    artifact.validate()
+
+
+def test_pre_sample_ids_artifact_falls_back_to_document_ids():
+    config, describer, base = described_base(two_topics(), n_clusters=2)
+    for group_ in base.groups:
+        del group_["description_provenance"]["sample_ids"]
+    base.validate()
+    new = build_hierarchy(
+        two_topics() + docs("alpha", 1, start=20),
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+    )
+    assert describer.calls == []
+    assert new.diagnostics["update_cost"]["reused_descriptions"] == 2
+
+
+def test_lowest_overlap_refreshed_first_under_cap():
+    config, describer, base = described_base(
+        two_topics(), n_clusters=2, description_refresh_overlap=1.0
+    )
+    source = two_topics() + docs("alpha", 15, start=20) + docs("beta", 15, start=20)
+    new = build_hierarchy(
+        source,
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+        max_description_calls=1,
+    )
+    assert not ops(new, "spawn") and not ops(new, "split")
+    by_id = {d["id"]: d for d in new.documents}
+    overlaps = {}
+    for old in base.groups:
+        current = group(new, old["id"])
+        fresh = {
+            s["document_id"]
+            for s in select_description_samples(
+                [by_id[i] for i in current["document_ids"]],
+                vectors=new.vectors,
+                limit=config.description_sample_size,
+            )
+        }
+        stored = set(old["description_provenance"]["sample_ids"])
+        overlaps[old["id"]] = len(fresh & stored) / len(fresh | stored)
+    assert all(v < 1.0 for v in overlaps.values())
+    first, second = sorted(overlaps, key=lambda gid: (overlaps[gid], gid))
+    assert called_ids(new, describer) == {first}
+    assert "description_stale" not in group(new, first)
+    assert group(new, second)["description_stale"] is True
+    cost = new.diagnostics["update_cost"]
+    assert cost["capped_description_calls"] == 1
+    assert cost["deferred_descriptions"] == 1
+    assert_cost_consistent(new, describer)
+    new.validate()
