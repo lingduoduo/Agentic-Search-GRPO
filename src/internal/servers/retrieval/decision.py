@@ -78,6 +78,9 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--corpus_path", help="Path to JSONL corpus")
     source.add_argument("--corpus", help="Registered corpus name, comma-list, or 'all'")
+    source.add_argument(
+        "--hierarchy", help="Validated offline hierarchy JSON (no online embedding)"
+    )
     parser.add_argument(
         "--model", required=True, help="Local model path or Hugging Face causal LM"
     )
@@ -86,6 +89,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shortlist-size", type=int, choices=range(1, 27), default=20)
     parser.add_argument("--batch-size", type=int, choices=range(1, 27), default=16)
     parser.add_argument("--passage-words", type=int, default=200)
+    parser.add_argument("--max-passage-chars", type=int, default=1200)
+    for kind in ("group", "document", "section"):
+        parser.add_argument(f"--{kind}-beam-width", type=int, default=None)
     parser.add_argument("--min-relevance", type=float, default=0.0)
     parser.add_argument("--max-context-tokens", type=int, default=4096)
     parser.add_argument("--inference-batch-size", type=int, default=1)
@@ -111,15 +117,28 @@ def main() -> None:
         batch_size=args.batch_size,
         passage_words=args.passage_words,
         min_relevance=args.min_relevance,
+        max_passage_chars=args.max_passage_chars,
+        beam_widths={
+            kind: value
+            for kind in ("group", "document", "section")
+            if (value := getattr(args, f"{kind}_beam_width")) is not None
+        },
     )
-    docs = resolve_corpus_docs(args.corpus or args.corpus_path)
+    hierarchy = None
+    if args.hierarchy:
+        from src.internal.document_index.hierarchy import HierarchyArtifact
+
+        hierarchy = HierarchyArtifact.load(args.hierarchy)
+        docs = hierarchy.documents
+    else:
+        docs = resolve_corpus_docs(args.corpus or args.corpus_path)
     model = LocalDecisionModel.from_pretrained(
         args.model,
         device=args.device,
         max_context_tokens=args.max_context_tokens,
         inference_batch_size=args.inference_batch_size,
     )
-    retriever = DecisionRetriever(docs, model, config)
+    retriever = DecisionRetriever(docs, model, config, hierarchy=hierarchy)
     run_uvicorn_app(create_app(retriever), host=args.host, port=args.port)
 
 
