@@ -238,6 +238,10 @@ class HierarchyArtifact:
                     )
                 ):
                     raise ValueError("invalid description provenance")
+            if "description_stale" in group and (
+                type(group["description_stale"]) is not bool
+            ):
+                raise ValueError("invalid description_stale")
             quality = group.get("description_quality")
             if quality is not None and (
                 not isinstance(quality, dict)
@@ -303,7 +307,22 @@ def _descendant_memberships(groups):
     return result
 
 
-def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previous=None):
+def build_hierarchy(
+    docs,
+    config=None,
+    *,
+    embedder=None,
+    describer=None,
+    previous=None,
+    max_description_calls: int | None = None,
+    dry_run: bool = False,
+):
+    if max_description_calls is not None and (
+        type(max_description_calls) is not int or max_description_calls < 0
+    ):
+        raise ValueError("max_description_calls must be None or an integer >= 0")
+    if type(dry_run) is not bool:
+        raise ValueError("dry_run must be a bool")
     if previous is not None:
         previous.validate()
     config = config or (
@@ -567,81 +586,160 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         if value is not None:
             generation_settings[name] = value
     generation_signature = _hash(generation_settings)
+    extractive_settings = dict(
+        sample_size=config.description_sample_size, adapter="extractive"
+    )
     memberships = _descendant_memberships(groups)
     old_memberships = _descendant_memberships(old_groups)
-    for gid, group in groups.items():
-        group["document_ids"].sort()
-        members = memberships[gid]
+    # Classify every group before generating anything: exempt groups are always
+    # generated, capped refreshes are ordered by priority and limited by
+    # max_description_calls, and everything else reuses its description.
+    exempt, capped, reuse = [], [], []
+    removed_samples = {}
+    for gid in sorted(groups):
+        groups[gid]["document_ids"].sort()
         old = old_groups.get(gid)
-        old_members = old_memberships.get(gid, [])
+        provenance = (old or {}).get("description_provenance") or {}
         if (
-            old
-            and members == old_members
-            and all(i in unchanged for i in members)
-            and (old.get("description_provenance") or {}).get("selection_version")
-            == DESCRIPTION_POLICY_VERSION
-            and old["description_provenance"].get("generation_signature")
-            == generation_signature
+            old is None
+            or gid in forced_description_ids
+            or provenance.get("selection_version") != DESCRIPTION_POLICY_VERSION
+            or provenance.get("generation_signature") != generation_signature
         ):
-            for key in (
-                "description",
-                "description_source",
-                "description_provenance",
-                "description_quality",
-            ):
-                if key in old:
-                    group[key] = copy.deepcopy(old[key])
-        else:
-            documents = [copy.deepcopy(by_id[i]) for i in members]
-            samples = select_description_samples(
-                documents, vectors=vectors, limit=config.description_sample_size
-            )
-            selected = [copy.deepcopy(by_id[s["document_id"]]) for s in samples]
-            provenance = dict(
-                document_ids=[s["document_id"] for s in samples],
-                roles={s["document_id"]: s["roles"] for s in samples},
-                selection_version=DESCRIPTION_POLICY_VERSION,
-                generation_version="custom-text-v1" if describer else "extractive-v1",
-                warnings=[],
-            )
-            if describer and hasattr(describer, "describe_with_provenance"):
-                result = describer.describe_with_provenance(
-                    group["label"],
-                    documents,
+            exempt.append(gid)
+            continue
+        members = memberships[gid]
+        current = set(members)
+        stored = provenance["document_ids"]
+        removed_samples[gid] = {
+            i for i in stored if i not in current or i not in unchanged
+        }
+        overlap = 1.0
+        if members != old_memberships.get(gid, []) or not current <= unchanged:
+            fresh = {
+                s["document_id"]
+                for s in select_description_samples(
+                    [by_id[i] for i in members],
                     vectors=vectors,
-                    sample_size=config.description_sample_size,
+                    limit=config.description_sample_size,
                 )
-                description = result["text"]
-                provenance = {k: v for k, v in result.items() if k != "text"}
-            elif describer:
-                description = describer.describe(group["label"], selected)
-            else:
-                quota = max(1, (1600 - 2 * len(selected)) // max(1, len(selected)))
-                contributing = [
-                    (
-                        d["id"],
-                        (d["title"] or first_sentence(d["contents"])).strip()[:quota],
-                    )
-                    for d in selected
-                ]
-                contributing = [(i, t) for i, t in contributing if t]
-                description = "; ".join(t for _, t in contributing) or group["label"]
-                provenance["document_ids"] = [i for i, _ in contributing]
-                provenance["roles"] = {
-                    i: provenance["roles"][i] for i, _ in contributing
-                }
-            if not isinstance(description, str) or not description.strip():
-                raise ValueError("describer must return nonempty text")
-            group["description"] = description.strip()
-            group["description_source"] = (
-                getattr(describer, "description_source", "llm")
-                if describer
-                else "extractive"
+            }
+            union = fresh | set(stored)
+            overlap = len(fresh & set(stored)) / len(union) if union else 1.0
+        if old.get("description_stale"):
+            capped.append((0, 0.0, gid))
+        elif removed_samples[gid]:
+            capped.append((1, 0.0, gid))
+        elif overlap < config.description_refresh_overlap:
+            capped.append((2, overlap, gid))
+        else:
+            reuse.append(gid)
+    capped.sort()
+    # Extractive generation is free, so the cap binds only with a describer.
+    if describer is not None and max_description_calls is not None:
+        refresh = capped[:max_description_calls]
+        deferred = capped[max_description_calls:]
+    else:
+        refresh, deferred = capped, []
+    use_model = describer is not None and not dry_run
+    model_calls = 0
+
+    def generate(group):
+        nonlocal model_calls
+        documents = [copy.deepcopy(by_id[i]) for i in memberships[group["id"]]]
+        samples = select_description_samples(
+            documents, vectors=vectors, limit=config.description_sample_size
+        )
+        selected = [copy.deepcopy(by_id[s["document_id"]]) for s in samples]
+        provenance = dict(
+            document_ids=[s["document_id"] for s in samples],
+            roles={s["document_id"]: s["roles"] for s in samples},
+            selection_version=DESCRIPTION_POLICY_VERSION,
+            generation_version="custom-text-v1" if use_model else "extractive-v1",
+            warnings=[],
+        )
+        if use_model and hasattr(describer, "describe_with_provenance"):
+            model_calls += 1
+            result = describer.describe_with_provenance(
+                group["label"],
+                documents,
+                vectors=vectors,
+                sample_size=config.description_sample_size,
             )
-            provenance["generation_signature"] = generation_signature
-            provenance["generation_settings"] = generation_settings
+            description = result["text"]
+            provenance = {k: v for k, v in result.items() if k != "text"}
+        elif use_model:
+            model_calls += 1
+            description = describer.describe(group["label"], selected)
+        else:
+            quota = max(1, (1600 - 2 * len(selected)) // max(1, len(selected)))
+            contributing = [
+                (
+                    d["id"],
+                    (d["title"] or first_sentence(d["contents"])).strip()[:quota],
+                )
+                for d in selected
+            ]
+            contributing = [(i, t) for i, t in contributing if t]
+            description = "; ".join(t for _, t in contributing) or group["label"]
+            provenance["document_ids"] = [i for i, _ in contributing]
+            provenance["roles"] = {i: provenance["roles"][i] for i, _ in contributing}
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("describer must return nonempty text")
+        group["description"] = description.strip()
+        group["description_source"] = (
+            getattr(describer, "description_source", "llm")
+            if use_model
+            else "extractive"
+        )
+        # A dry run records the extractive settings it actually used.
+        settings = generation_settings if use_model else extractive_settings
+        provenance["generation_signature"] = _hash(settings)
+        provenance["generation_settings"] = settings
+        provenance.setdefault("warnings", [])
+        group["description_provenance"] = provenance
+
+    def reuse_old(group):
+        old = old_groups[group["id"]]
+        for key in (
+            "description",
+            "description_source",
+            "description_provenance",
+            "description_quality",
+        ):
+            if key in old:
+                group[key] = copy.deepcopy(old[key])
+
+    for gid in exempt + [gid for _, _, gid in refresh]:
+        generate(groups[gid])
+    for gid in reuse:
+        reuse_old(groups[gid])
+    for _, _, gid in deferred:
+        group = groups[gid]
+        reuse_old(group)
+        provenance = group["description_provenance"]
+        removed = removed_samples[gid]
+        if removed:
+            provenance["document_ids"] = [
+                i for i in provenance["document_ids"] if i not in removed
+            ]
+            provenance["roles"] = {
+                i: r for i, r in provenance["roles"].items() if i not in removed
+            }
             provenance.setdefault("warnings", [])
-            group["description_provenance"] = provenance
+            if "stale_samples_removed" not in provenance["warnings"]:
+                provenance["warnings"].append("stale_samples_removed")
+        group["description_stale"] = True
+    update_cost = dict(
+        embedded_documents=len(pending),
+        description_generations=len(exempt) + len(refresh),
+        description_model_calls=model_calls,
+        exempt_description_calls=len(exempt),
+        capped_description_calls=len(refresh),
+        deferred_descriptions=len(deferred),
+        reused_descriptions=len(reuse),
+    )
+    for group in groups.values():
         if group["description_provenance"].get("warnings"):
             notices.append(
                 "Description provenance records context or sampling coverage losses; inspect group provenance."
@@ -728,6 +826,8 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         churn=churn,
         structure_reference=reference,
         structure_operations=structure_operations,
+        update_cost=update_cost,
+        dry_run=dry_run,
         poor_fit_documents=int(poor_fit_documents),
         pending_poor_fit_ids=pending_poor_fit_ids,
         rebuild_recommended=bool(

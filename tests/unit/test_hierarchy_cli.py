@@ -184,3 +184,86 @@ def test_build_stores_maintenance_flags(tmp_path):
     config = HierarchyArtifact.load(output).config
     assert config["min_cluster_size"] == 3
     assert config["max_fanout"] == 4
+
+
+def test_update_dry_run_prints_diagnostics_and_writes_nothing(tmp_path, capsys):
+    source = tmp_path / "docs.jsonl"
+    artifact = tmp_path / "tree.json"
+    output = tmp_path / "dry.json"
+    corpus(source)
+    assert main(["build", "--corpus-path", str(source), "--output", str(artifact)]) == 0
+    capsys.readouterr()
+    corpus(source, 3)
+    assert (
+        main(
+            [
+                "update",
+                "--corpus-path",
+                str(source),
+                "--previous",
+                str(artifact),
+                "--output",
+                str(output),
+                "--dry-run",
+                "--max-description-calls",
+                "0",
+            ]
+        )
+        == 0
+    )
+    assert not output.exists()
+    diagnostics = json.loads(capsys.readouterr().out)
+    assert diagnostics["dry_run"] is True
+    assert "structure_operations" in diagnostics
+    assert diagnostics["update_cost"]["description_model_calls"] == 0
+
+
+def test_update_passes_description_call_cap(tmp_path, monkeypatch):
+    import src.internal.document_index.hierarchy_cli as cli
+
+    source = tmp_path / "docs.jsonl"
+    artifact = tmp_path / "tree.json"
+    corpus(source)
+    assert main(["build", "--corpus-path", str(source), "--output", str(artifact)]) == 0
+    seen = {}
+    real = cli.build_hierarchy
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "build_hierarchy", spy)
+    args = ["--corpus-path", str(source), "--previous", str(artifact)]
+    assert (
+        main(
+            ["update", *args, "--output", str(artifact), "--max-description-calls", "3"]
+        )
+        == 0
+    )
+    assert seen["max_description_calls"] == 3
+    assert seen["dry_run"] is False
+
+
+def test_update_help_documents_dry_run_cost():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.internal.document_index.hierarchy_cli",
+            "update",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    text = " ".join(result.stdout.split())
+    assert "--max-description-calls" in text
+    assert "new documents are still embedded" in text
+    assert "no description model calls are made" in text
+
+
+def test_build_has_no_update_only_flags(capsys):
+    with pytest.raises(SystemExit):
+        main(["build", "--corpus", "x", "--output", "x", "--dry-run"])
+    assert "unrecognized arguments" in capsys.readouterr().err

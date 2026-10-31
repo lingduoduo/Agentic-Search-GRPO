@@ -3,6 +3,9 @@
 import numpy as np
 
 from src.internal.document_index.hierarchy import HierarchyConfig
+from src.internal.document_index.hierarchy_descriptions import (
+    select_description_samples,
+)
 
 TOPICS = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta")
 DIMS = len(TOPICS) + 3
@@ -42,3 +45,27 @@ class TopicEmbedder:
             row[-1] = 0.08 * ((number * 7) % 5) / 5
             rows.append(row)
         return np.array(rows)
+
+
+class CountingDescriber:
+    """Records the label of every group it describes."""
+
+    model_name = "counting-describer"
+    description_source = "llm"
+
+    def __init__(self):
+        self.calls = []
+
+    def describe_with_provenance(self, label, documents, *, vectors=None, sample_size):
+        self.calls.append(label)
+        samples = select_description_samples(
+            documents, vectors=vectors, limit=sample_size
+        )
+        return dict(
+            text=f"Summary of {label} ({len(documents)} documents)",
+            document_ids=[s["document_id"] for s in samples],
+            roles={s["document_id"]: s["roles"] for s in samples},
+            selection_version="coverage-v1",
+            generation_version="test",
+            warnings=[],
+        )

@@ -410,6 +410,10 @@ def balance_levels(groups, vectors, max_fanout, random_state):
                 continue
             bucket = sorted(bucket)
             gid = "semantic-level-" + _hash(bucket)[:20]
+            if any(g["id"] == gid for g in current):
+                # The bucket equals an existing intermediate's original children
+                # (e.g. that parent gained a child); reusing its ID makes a cycle.
+                gid = "semantic-level-" + _hash([parent or "", *bucket])[:20]
             for g in current:
                 if g["id"] in bucket:
                     g["parent_id"] = gid

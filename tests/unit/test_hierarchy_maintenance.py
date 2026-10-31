@@ -443,3 +443,35 @@ def test_identical_vectors_still_terminate_within_bound():
     leaves = [leaf(f"L{k}", None, [f"d{k}"], vectors) for k in range(10)]
     groups, _, _ = balance_levels(leaves, vectors, 3, 42)
     assert max(_child_counts(groups).values()) <= 3
+
+
+def test_inserted_level_id_never_collides_with_existing_group():
+    vectors = {"a": [1.0, 0.0], "b": [0.9, 0.1], "c": [0.0, 1.0]}
+    leaves = [
+        dict(id=k, parent_id="old", label=k, document_ids=[k], centroid=v)
+        for k, v in vectors.items()
+    ]
+    # An existing intermediate whose ID is the hash of the bucket {a, b}.
+    from src.internal.document_index.hierarchy_maintenance import _hash
+
+    old = dict(
+        id="semantic-level-" + _hash(["a", "b"])[:20],
+        parent_id=None,
+        label="old",
+        document_ids=[],
+        centroid=[0.7, 0.7],
+    )
+    for leaf in leaves:
+        leaf["parent_id"] = old["id"]
+    groups, _, new_ids = balance_levels([old] + leaves, vectors, 2, 42)
+    ids = [g["id"] for g in groups]
+    assert len(ids) == len(set(ids))
+    assert old["id"] not in new_ids
+    by_id = {g["id"]: g for g in groups}
+    for g in groups:
+        seen = set()
+        gid = g["id"]
+        while gid is not None:
+            assert gid not in seen
+            seen.add(gid)
+            gid = by_id[gid]["parent_id"]

@@ -1,13 +1,14 @@
 import copy
 
 import numpy as np
+import pytest
 
 from src.internal.document_index.hierarchy import (
     HierarchyArtifact,
     HierarchyConfig,
     build_hierarchy,
 )
-from tests.unit.hierarchy_fakes import TopicEmbedder, docs
+from tests.unit.hierarchy_fakes import CountingDescriber, TopicEmbedder, docs
 
 MAINTENANCE_FIELDS = (
     "min_cluster_size",
@@ -207,3 +208,249 @@ def test_update_keeps_unrelated_undersized_leaves():
     kept = next((g for g in updated.groups if g["id"] == small["id"]), None)
     assert kept and kept["document_ids"] == small["document_ids"]
     assert not ops(updated, "merge")
+
+
+DESCRIBED = dict(description_model=CountingDescriber.model_name)
+
+
+def three_topics():
+    return docs("alpha", 20) + docs("beta", 20) + docs("gamma", 20)
+
+
+def described_base(source, **config):
+    config = HierarchyConfig(mode="cluster", **DESCRIBED, **config)
+    describer = CountingDescriber()
+    base = build_hierarchy(
+        source, config, embedder=TopicEmbedder(), describer=describer
+    )
+    describer.calls.clear()
+    return config, describer, base
+
+
+def called_ids(artifact, describer):
+    by_label = {g["label"]: g["id"] for g in artifact.groups}
+    return {by_label[label] for label in describer.calls}
+
+
+def group(artifact, gid):
+    return next(g for g in artifact.groups if g["id"] == gid)
+
+
+def assert_cost_consistent(artifact, describer=None):
+    cost = artifact.diagnostics["update_cost"]
+    assert set(cost) == {
+        "embedded_documents",
+        "description_generations",
+        "description_model_calls",
+        "exempt_description_calls",
+        "capped_description_calls",
+        "deferred_descriptions",
+        "reused_descriptions",
+    }
+    assert all(type(v) is int and v >= 0 for v in cost.values())
+    assert cost["description_generations"] == (
+        cost["exempt_description_calls"] + cost["capped_description_calls"]
+    )
+    assert cost["description_generations"] + cost["deferred_descriptions"] + cost[
+        "reused_descriptions"
+    ] == len(artifact.groups)
+    if describer is not None:
+        assert cost["description_model_calls"] == len(describer.calls)
+
+
+def delete_sampled(source, artifact, gid):
+    sampled = group(artifact, gid)["description_provenance"]["document_ids"][0]
+    return sampled, [d for d in source if d["id"] != sampled]
+
+
+def test_small_additions_do_not_cascade_to_ancestors():
+    config, describer, base = described_base(three_topics(), n_clusters=3, max_fanout=2)
+    intermediates = {g["id"] for g in base.groups if not g["document_ids"]}
+    assert intermediates
+    new = build_hierarchy(
+        three_topics() + docs("alpha", 1, start=20),
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+    )
+    called = called_ids(new, describer)
+    assert not called & intermediates
+    old = {g["id"]: g for g in base.groups}
+    for g in new.groups:
+        if g["id"] in called:
+            assert (
+                g["description_provenance"]["document_ids"]
+                != old[g["id"]]["description_provenance"]["document_ids"]
+            )
+    assert new.diagnostics["update_cost"]["reused_descriptions"] > 0
+    assert new.diagnostics["update_cost"]["embedded_documents"] == 1
+    assert_cost_consistent(new, describer)
+
+
+def test_spawn_describes_new_leaf_and_its_parent_even_with_zero_cap():
+    config, describer, base = described_base(three_topics(), n_clusters=3, max_fanout=2)
+    new = build_hierarchy(
+        three_topics() + docs("delta", 8),
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+        max_description_calls=0,
+    )
+    (spawn,) = ops(new, "spawn")
+    (spawned_id,) = spawn["group_ids"]
+    parent_id = group(new, spawned_id)["parent_id"]
+    assert parent_id is not None
+    assert {spawned_id, parent_id} <= called_ids(new, describer)
+    cost = new.diagnostics["update_cost"]
+    assert cost["exempt_description_calls"] >= 2
+    assert cost["capped_description_calls"] == 0
+    assert not any(g.get("description_stale") for g in new.groups)
+    assert_tree(new)
+    assert_cost_consistent(new, describer)
+
+
+def test_zero_cap_defers_existing_refresh_with_valid_provenance(tmp_path):
+    config, describer, base = described_base(two_topics(), n_clusters=2)
+    leaf = base.groups[0]
+    sampled, source = delete_sampled(two_topics(), base, leaf["id"])
+    new = build_hierarchy(
+        source,
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+        max_description_calls=0,
+    )
+    assert describer.calls == []
+    stale = group(new, leaf["id"])
+    assert stale["description"] == leaf["description"]
+    assert stale["description_stale"] is True
+    provenance = stale["description_provenance"]
+    assert sampled not in provenance["document_ids"]
+    assert sampled not in provenance["roles"]
+    assert "stale_samples_removed" in provenance["warnings"]
+    other = group(new, base.groups[1]["id"])
+    assert "description_stale" not in other
+    assert new.diagnostics["update_cost"]["deferred_descriptions"] == 1
+    assert_cost_consistent(new, describer)
+    path = tmp_path / "tree.json"
+    new.save(path)
+    assert HierarchyArtifact.load(path) == new
+
+
+def test_edited_sample_document_is_refreshed_when_uncapped():
+    config, describer, base = described_base(two_topics(), n_clusters=2)
+    leaf = base.groups[0]
+    sampled = leaf["description_provenance"]["document_ids"][0]
+    source = two_topics()
+    for doc in source:
+        if doc["id"] == sampled:
+            doc["contents"] += " Revised."
+    new = build_hierarchy(
+        source, config, embedder=TopicEmbedder(), describer=describer, previous=base
+    )
+    assert called_ids(new, describer) == {leaf["id"]}
+    assert new.diagnostics["update_cost"]["capped_description_calls"] == 1
+    assert_cost_consistent(new, describer)
+
+
+def test_stale_group_refreshed_first_when_budget_returns():
+    config, describer, base = described_base(two_topics(), n_clusters=2)
+    first, second = (g["id"] for g in base.groups)
+    _, source = delete_sampled(two_topics(), base, first)
+    stale = build_hierarchy(
+        source,
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+        max_description_calls=0,
+    )
+    assert group(stale, first)["description_stale"] is True
+    # The second leaf now needs a priority-1 refresh too; the stale one wins.
+    _, source = delete_sampled(source, stale, second)
+    refreshed = build_hierarchy(
+        source,
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=stale,
+        max_description_calls=1,
+    )
+    assert called_ids(refreshed, describer) == {first}
+    assert "description_stale" not in group(refreshed, first)
+    assert group(refreshed, second)["description_stale"] is True
+    cost = refreshed.diagnostics["update_cost"]
+    assert cost["capped_description_calls"] == 1
+    assert cost["deferred_descriptions"] == 1
+    assert_cost_consistent(refreshed, describer)
+
+
+def test_cap_is_free_without_describer():
+    config = HierarchyConfig(mode="cluster", n_clusters=2)
+    base = build_hierarchy(two_topics(), config, embedder=TopicEmbedder())
+    _, source = delete_sampled(two_topics(), base, base.groups[0]["id"])
+    new = build_hierarchy(
+        source,
+        config,
+        embedder=TopicEmbedder(),
+        previous=base,
+        max_description_calls=0,
+    )
+    assert not any("description_stale" in g for g in new.groups)
+    cost = new.diagnostics["update_cost"]
+    assert cost["capped_description_calls"] == 1
+    assert cost["description_model_calls"] == 0
+    assert_cost_consistent(new)
+
+
+def test_dry_run_makes_no_describer_calls():
+    config, describer, base = described_base(three_topics(), n_clusters=3, max_fanout=2)
+    snapshot = copy.deepcopy(base)
+    embedder = TopicEmbedder()
+    new = build_hierarchy(
+        three_topics() + docs("delta", 8),
+        config,
+        embedder=embedder,
+        describer=describer,
+        previous=base,
+        dry_run=True,
+    )
+    assert describer.calls == []
+    assert embedder.calls == [8]
+    assert new.diagnostics["dry_run"] is True
+    cost = new.diagnostics["update_cost"]
+    assert cost["description_model_calls"] == 0
+    assert cost["exempt_description_calls"] >= 2
+    assert ops(new, "spawn")
+    assert base == snapshot
+    assert_cost_consistent(new, describer)
+    real = build_hierarchy(
+        three_topics() + docs("delta", 8),
+        config,
+        embedder=TopicEmbedder(),
+        describer=describer,
+        previous=base,
+    )
+    assert real.diagnostics["dry_run"] is False
+    assert (
+        real.diagnostics["structure_operations"]
+        == (new.diagnostics["structure_operations"])
+    )
+    assert (
+        real.diagnostics["update_cost"]["exempt_description_calls"]
+        == (cost["exempt_description_calls"])
+    )
+
+
+def test_invalid_stale_field_rejected():
+    artifact = build_hierarchy(
+        two_topics(), HierarchyConfig(mode="cluster"), embedder=TopicEmbedder()
+    )
+    artifact.groups[0]["description_stale"] = "yes"
+    with pytest.raises(ValueError, match="description_stale"):
+        artifact.validate()
+    artifact.groups[0]["description_stale"] = False
+    artifact.validate()
