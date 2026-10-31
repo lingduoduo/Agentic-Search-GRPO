@@ -162,9 +162,27 @@ def maintain_leaves(
         for i in candidate_ids
         if i in owner and _similarity(i, owner[i], vectors) < reference
     )
+    # Only poor fits new to this update start a spawn search, which covers them
+    # plus the pending poor fits resembling one of them (similarity >=
+    # reference). Unrelated pending documents are not re-clustered on every
+    # update, so the search scales with the change, not the pending backlog.
+    pending_set = set(pending_ids)
+    seeds = [i for i in poor if i not in pending_set]
+    pool = seeds
+    if seeds:
+        seed_matrix = np.asarray([vectors[i] for i in seeds])
+        pool = sorted(
+            seeds
+            + [
+                i
+                for i in poor
+                if i in pending_set
+                and float(np.max(seed_matrix @ np.asarray(vectors[i]))) >= reference
+            ]
+        )
     spawned = set()
     spawned_ids = set()
-    if len(poor) >= min_size:
+    if len(pool) >= min_size:
         existing = sorted(
             (g for g in current if g["document_ids"]), key=lambda g: g["id"]
         )
@@ -182,12 +200,12 @@ def maintain_leaves(
         ]
         # Poor fits from unrelated regions can share one cluster with a new
         # topic and fail the fit check, so retry with doubling cluster counts
-        # until some bucket is accepted; at most len(poor) - min_size + 1
+        # until some bucket is accepted; at most len(pool) - min_size + 1
         # clusters, the most that still leaves room for one min_size bucket.
-        count = math.ceil(len(poor) / config.target_cluster_size)
+        count = math.ceil(len(pool) / config.target_cluster_size)
         while True:
             buckets, flag, _ = kmeans_partition(
-                poor, vectors, count, max_size, config.random_state
+                pool, vectors, count, max_size, config.random_state
             )
             accepted = []
             for bucket in buckets:
@@ -200,7 +218,7 @@ def maintain_leaves(
                 )
                 if fit >= reference and near < reference:
                     accepted.append(bucket)
-            limit = len(poor) - min_size + 1
+            limit = len(pool) - min_size + 1
             if accepted or count >= limit:
                 break
             count = min(2 * count, limit)
@@ -223,7 +241,7 @@ def maintain_leaves(
                     op="spawn",
                     group_ids=[new["id"]],
                     source_ids=sources,
-                    reason=f"{len(poor)} poor-fit candidates below the fit reference",
+                    reason=f"{len(pool)} poor-fit candidates below the fit reference",
                 )
             )
         for g in current:
