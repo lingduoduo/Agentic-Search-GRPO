@@ -42,15 +42,13 @@ necessarily wrong if their actual evidence overlaps.
 
 ## Reproduced mechanics
 
-Run the local audit script from the repository root:
-
-```sh
-python .planning/description-audit/reproduce.py
-```
-
-The script uses a transparent deterministic test judge and prompt capture. It
-loads no model weights. Results are saved in
-`.planning/description-audit/results.json`.
+These probes were run once with a local script, which is not kept in the
+repository, against the code as it stood before #708. It used a transparent
+deterministic test judge and prompt capture and loaded no model weights. #708
+since changed several of these behaviors: whitespace-only descriptions are
+rejected, description samples are coverage-selected rather than ID prefixes, and
+extractive and ACL-visible text use per-item quotas. The unit tests for those
+changes now cover the same mechanics.
 
 | Probe | Observed result |
 |---|---|
