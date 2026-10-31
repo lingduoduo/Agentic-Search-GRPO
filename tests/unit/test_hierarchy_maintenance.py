@@ -174,6 +174,27 @@ def test_new_topic_spawns_despite_scattered_poor_fit_candidates():
     assert set(scattered) <= set(r.pending_poor_fit_ids)
 
 
+def test_unrelated_poor_fits_never_spawn_and_stay_pending():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    unrelated = {
+        f"u{k}": unit(np.eye(DIMS)[2 + k % 6] + 0.3 * np.eye(DIMS)[(3 + k) % DIMS])
+        for k in range(12)
+    }
+    vectors.update(unrelated)
+    assignments = {**assign(leaves), **{i: "A" for i in unrelated}}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(unrelated),
+    )
+    assert "spawn" not in [o["op"] for o in r.operations]
+    assert set(unrelated) <= set(r.pending_poor_fit_ids)
+
+
 def test_effective_minimum_is_capped_by_max_cluster_size():
     vectors = {**topic(0, "a", 3), **topic(1, "b", 3)}
     leaves = [

@@ -216,9 +216,11 @@ proportional to change:
     that stays within `max_cluster_size`, preferring siblings; otherwise it
     stays.
   - `remove`: emptied leaves are dropped.
-  - `insert_level` / `collapse_level`: with `--max-fanout N` (default off),
-    a parent with more than N children gets an intermediate level; a parent
-    left with one child is collapsed.
+  - `insert_level`: with `--max-fanout N` (default off), a parent with more
+    than N children gets an intermediate level.
+  - `collapse_level`: an intermediate group left with one child or none is
+    removed and any child reattached to its parent, whether or not
+    `--max-fanout` is set.
 - When no semantic document was added, edited or deleted, the planner is
   skipped and the previous semantic groups are kept as they are.
 
