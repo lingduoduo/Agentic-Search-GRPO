@@ -48,17 +48,6 @@
       "groupName": "python minor and patch"
     },
     {
-      "description": "Group npm minor/patch updates into one PR.",
-      "matchManagers": [
-        "npm"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "groupName": "npm minor and patch"
-    },
-    {
       "description": "Group Go module minor/patch updates into one PR.",
       "matchManagers": [
         "gomod"

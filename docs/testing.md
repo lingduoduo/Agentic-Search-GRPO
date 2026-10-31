@@ -37,7 +37,6 @@ pytest tests/unit/test_reward.py tests/unit/test_grpo.py tests/unit/test_llm_age
 | Docker build context | builds `docker/Dockerfile.contract` (corpus in the build context, package registered) |
 | Docker image (full build) | builds the image, imports the ASGI app inside it, asserts no CUDA wheels and a non-root user |
 | Docker compose stack | `docker compose up --wait`, probes `/health` on 7860 and 8000, retrieves from the corpus |
-| Frontend | `npm run typecheck`, `npm run build`, and `npm run test:unit` |
 
 The unit job installs `pip install -e .` plus `requirements-unit-test.txt`,
 which leaves out torch, transformers, faiss and pyserini; tests that need them
@@ -76,24 +75,9 @@ python -m examples.audit_integration_endpoints --show-files # per-file buckets
 
 ## Frontend checks
 
-```bash
-cd web && npm run typecheck            # TypeScript check
-cd web && npm run build                # production bundle → web/dist/ (served by FastAPI)
-cd web && npm run test:unit            # Vitest unit tests (vitest run)
-cd web && npm run test                 # typecheck, then the unit tests
-```
-
-Frontend tests (33 files) live under `web/src/__tests__/`, `web/src/components/__tests__/`,
-`web/src/components/debug/__tests__/`, and `web/src/pages/__tests__/`. A few of the
-component tests:
-
-| Test file | What is tested |
-|-----------|----------------|
-| `App.test.tsx` | SSE streaming flow, intent class applied per response, reset on new session |
-| `AnswerPanel.test.tsx` | Markdown rendering, `[D1]` citation link generation, `ReactNode[]` children handling |
-| `SessionTimeline.test.tsx` | Chat bubble layout, system message filtering, stable React keys |
-| `SourceGrid.test.tsx` | Card expand/collapse, copy button 1.5 s feedback, `id` anchor attribute |
-| `ToolCallTracePanel.test.tsx` | Empty→null, completed/failed card classes, latency display, JSON arguments |
+The frontend and its Vitest suite live in the
+[Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI) repository,
+which runs them in its own CI (`npm run test:ci`).
 
 ## Debugging search providers
 

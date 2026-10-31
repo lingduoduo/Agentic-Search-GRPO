@@ -43,8 +43,6 @@ norecursedirs = [
     "data",
     "indexes",
     "models",
-    "web/dist",
-    "web/node_modules",
 ]
 # Add src/ to sys.path so shared_configs and other src-level packages are importable
 # without the src. prefix (matching their package structure).

@@ -224,8 +224,6 @@ tempCodeRunnerFile.py
 
 # Frontend dependencies/build output
 node_modules/
-web/dist/
-web/tsconfig.tsbuildinfo
 
 # PyPI configuration file
 .pypirc

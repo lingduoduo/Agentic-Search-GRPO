@@ -275,9 +275,10 @@ def test_stream_claim_from_worker_thread_uses_the_threadsafe_hop(monkeypatch, tm
 def test_stream_auto_routed_chat_emits_claim_events_before_answer(
     monkeypatch, tmp_path
 ):
-    """The real browser never sends `mode` (see web/src/pages/AssistPage.tsx), so
-    every live request goes through the auto-routing path (`_run_auto_routed`),
-    not the explicit `chat_loop` mode covered above. This pins on_claim's
+    """The real browser never sends `mode` (see src/pages/AssistPage.tsx in the
+    Agentic-Search-UI frontend repository), so every live request goes through
+    the auto-routing path (`_run_auto_routed`), not the explicit `chat_loop`
+    mode covered above. This pins on_claim's
     forwarding through that path's CHAT branch specifically."""
     from src.internal.servers.web.intent import RouteDecision, RouteStrategy
 

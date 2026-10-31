@@ -10,7 +10,6 @@ from the Renovate GitHub App. The policy lives in
 - Runs every Monday at 05:00 UTC. You can also start it from **Actions → Renovate → Run workflow**.
 - Minor and patch updates are grouped into one PR per ecosystem:
   - python (`requirements*.txt`, `pyproject.toml`)
-  - npm (`web/`, root `package.json`)
   - go (`cli/go.mod`, followed by `go mod tidy`)
   - GitHub Actions
   - pre-commit hooks

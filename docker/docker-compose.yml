@@ -156,6 +156,25 @@ services:
     networks:
       - agentic_search_default
 
+  # Opt-in: `--profile frontend up --build` also builds and serves the UI from
+  # the separate frontend repository (Agentic-Search-UI), cloned next to this
+  # one by default. Its nginx proxies the API to `web`, so open :8080, not :7860.
+  frontend:
+    profiles: ["frontend"]
+    image: ${AGENTIC_SEARCH_FRONTEND_IMAGE:-agentic-search-ui:local}
+    build:
+      context: ${AGENTIC_SEARCH_FRONTEND_CONTEXT:-../../Agentic-Search-UI}
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://web:7860
+    ports:
+      - "8080:8080"
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - agentic_search_default
+
 volumes:
   postgres_data:
   redis_data:

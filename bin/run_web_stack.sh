@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start the full local dev stack: SerpAPI retrieval server + web backend + Vite frontend.
+# Start the full local dev stack: SerpAPI retrieval server + web backend + Vite frontend
+# (from the sibling Agentic-Search-UI checkout).
 #
 # Usage:
 #   bin/run_web_stack.sh
@@ -12,6 +13,7 @@
 #   SERP_PORT            retrieval server port (default: 8000)
 #   WEB_PORT             web backend port (default: 7860)
 #   MCP_PORT             MCP server port (default: 8090; only started when MCP_ENABLED=1)
+#   FRONTEND_DIR         frontend checkout (default: ../Agentic-Search-UI)
 #   MCP_ENABLED          set to 1 to start the MCP server alongside the web stack
 #                        Requires: pip install -e ".[mcp]"
 
@@ -83,6 +85,13 @@ else
     echo ">> MCP server disabled (set MCP_ENABLED=1 in .env to enable; requires pip install -e '[mcp]')"
 fi
 
+# The frontend is its own repository (Agentic-Search-UI), cloned next to this one.
+FRONTEND_DIR="${FRONTEND_DIR:-$ROOT/../Agentic-Search-UI}"
+if [ ! -f "$FRONTEND_DIR/package.json" ]; then
+    echo ">> Frontend not found at $FRONTEND_DIR (set FRONTEND_DIR, or clone Agentic-Search-UI there)."
+    echo ">> Backend is running on http://127.0.0.1:${WEB_PORT}. Ctrl-C to stop."
+    wait
+fi
 echo ">> Starting frontend dev server..."
 echo ">> Open http://127.0.0.1:5173 when ready."
-cd "$ROOT/web" && npm run dev
+cd "$FRONTEND_DIR" && BACKEND_URL="http://127.0.0.1:${WEB_PORT}" npm run dev

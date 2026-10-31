@@ -1710,7 +1710,8 @@ def create_web_app(
 
     # The frontend routes these client-side. They are listed explicitly rather
     # than served from a catch-all so a mistyped API path stays a 404 instead of
-    # silently returning HTML. Keep in sync with ROUTES in web/src/router.tsx.
+    # silently returning HTML. Keep in sync with ROUTES in src/router.tsx of the
+    # frontend repository (Agentic-Search-UI).
     @app.get("/assist", response_class=HTMLResponse)
     @app.get("/search", response_class=HTMLResponse)
     @app.get("/chat", response_class=HTMLResponse)
@@ -3448,12 +3449,16 @@ def _optional_user_from_request(
 
 
 def _frontend_dist_path() -> Path | None:
-    # parents[4], counting up from src/internal/servers/web/app.py: web →
-    # servers → internal → src → the repository root, where `npm run build`
-    # writes web/dist. parents[3] is `src/`, whose web/dist nothing creates, so
-    # this returned None for every build and the backend quietly served the
-    # inline fallback shell instead of the app.
-    dist = Path(__file__).resolve().parents[4] / "web" / "dist"
+    import os
+
+    # The frontend is a separate repository (Agentic-Search-UI) and normally
+    # ships as its own nginx image. Point AGENTIC_SEARCH_FRONTEND_DIST at a
+    # built `dist/` to serve it from this process instead; unset, the inline
+    # fallback shell is served.
+    configured = os.environ.get("AGENTIC_SEARCH_FRONTEND_DIST", "").strip()
+    if not configured:
+        return None
+    dist = Path(configured).expanduser().resolve()
     if (dist / "index.html").exists() and (dist / "assets").is_dir():
         return dist
     return None

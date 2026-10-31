@@ -140,12 +140,16 @@ python3 -m src.internal.servers.web_search.browser --port 8003
 # Terminal 2 — web backend (port 7860)
 PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 
-# Terminal 3 — frontend dev server (port 5173)
-cd web && npm install && npm run dev
+# Terminal 3 — frontend dev server (port 5173), from the separate
+# Agentic-Search-UI repo cloned next to this one
+cd ../Agentic-Search-UI && npm install && npm run dev
 ```
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to port 7860 during development.
-For production, `npm run build` produces `web/dist`; the FastAPI app serves it automatically when the bundle exists.
+In production the frontend is its own nginx image proxying to this backend
+(`docker compose -f docker/docker-compose.yml --profile frontend up --build`).
+The backend image is API-only; set `AGENTIC_SEARCH_FRONTEND_DIST` to a built `dist/`
+to have FastAPI serve a bundle itself. See docs/frontend.md.
 
 ### Tests
 
@@ -161,7 +165,6 @@ pytest tests/integration/        # needs live Postgres/Redis; most of it targets
 ruff check . --fix && ruff format .
 ```
 
-Frontend type-check: `cd web && npm run typecheck`
 
 ### Agent CLI
 
@@ -214,7 +217,7 @@ FastAPI app that exposes `POST /api/agent`. On each request it:
 
 The backend also mounts a large set of admin/enterprise routers (auth, SCIM, billing, connectors, OAuth, etc.) all registered in `create_web_app()`.
 
-**3. Frontend** (`web/`)
+**3. Frontend** (separate repo: [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI))
 React 19 + Vite + TypeScript. No component library — custom components only. Proxies `/api/*` to the FastAPI server on port 7860 in dev mode.
 
 **Agent loops** (`src/agents/`, grouped into `core/` `generation/` `search/` `tool/`)

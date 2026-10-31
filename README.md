@@ -186,10 +186,11 @@ Install the optional MCP dependencies when needed:
 pip install -e ".[mcp]"
 ```
 
-Install frontend dependencies:
+The web UI lives in a separate repository. Clone it next to this one and install its dependencies:
 
 ```bash
-cd web && npm install
+git clone https://github.com/lingduoduo/Agentic-Search-UI ../Agentic-Search-UI
+cd ../Agentic-Search-UI && npm install
 ```
 
 ## Configure
@@ -266,10 +267,10 @@ PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --por
 
 ### 3. Start the frontend
 
-The live Vite development UI runs on port **5173** and proxies backend requests to port 7860:
+The live Vite development UI, from the [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI) checkout, runs on port **5173** and proxies backend requests to port 7860:
 
 ```bash
-cd web && npm run dev
+cd ../Agentic-Search-UI && npm run dev
 ```
 
 Open <http://127.0.0.1:5173>. The header links to the four pages: **Assistant** (`/assist`), **Search** (`/search`), **Chat** (`/chat`), and **Tools** (`/tools`). Each has its own URL, so pages can be linked to and survive a refresh.
@@ -369,9 +370,6 @@ The offline `index_builder` turns a corpus into the searchable sparse/dense inde
 
 ```bash
 pytest                              # backend unit and regression tests
-cd web && npm run typecheck         # frontend TypeScript check
-cd web && npm run test              # frontend typecheck and unit tests
-cd web && npm run build             # production bundle served by FastAPI
 ```
 
 See [Testing](docs/testing.md) for focused suites and integration-test prerequisites.
@@ -389,7 +387,7 @@ See [Testing](docs/testing.md) for focused suites and integration-test prerequis
 - [Ingestion](docs/ingestion.md) — connector data models and the offline `index_builder` indexing tool
 - [HTTP API reference](docs/api-reference.md) — local retrieval, web, chat/session, and health endpoints
 - [Training and evaluation](docs/training-and-evaluation.md) — examples, datasets, SFT, DPO, GRPO, and benchmarks
-- [Frontend development](docs/frontend.md) — React/Vite workflow, UI behavior, and observability surfaces
+- [Frontend](docs/frontend.md) — the separate web UI repository, and what the backend provides for it
 - [Command-line tools](docs/cli.md) — the Go `query` + `memory` CLIs, build, usage, auth, and exit codes
 - [MCP server](docs/mcp.md) — installation, transport, client configuration, tools, and resources
 - [Configuration](docs/configuration.md) — environment variables for providers, services, retrieval, and routing
