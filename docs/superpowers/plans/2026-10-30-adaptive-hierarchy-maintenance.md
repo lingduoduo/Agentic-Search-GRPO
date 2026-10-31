@@ -89,18 +89,19 @@ CLI test: `build --min-cluster-size 3 --max-fanout 4` stores both in `artifact.c
   - `kmeans_partition(member_ids: list[str], vectors, count: int, max_size: int, random_state: int) -> tuple[list[list[str]], bool]` — k-means then deterministic balanced chunking of buckets over `max_size`; bool = degenerate vectors produced fewer distinct labels. Moved out of the `partition` closure in `build_hierarchy`.
   - `centroid(member_ids, vectors) -> list[float]` — normalized mean.
   - `fit_reference(leaves: list[dict], vectors, quantile: float) -> float` — the `quantile` of pooled member-to-own-centroid cosine similarity over all leaf members.
-  - `maintain_leaves(leaves: list[dict], vectors, assignments: dict[str, str], config: HierarchyConfig, reference: float) -> MaintenanceResult`
-  - `@dataclass MaintenanceResult: leaves: list[dict]; operations: list[dict]; forced_description_ids: set[str]; poor_fit_count: int; degenerate: bool`
+  - `maintain_leaves(leaves: list[dict], vectors, assignments: dict[str, str], config: HierarchyConfig, reference: float, candidate_ids: set[str]) -> MaintenanceResult`
+  - `@dataclass MaintenanceResult: leaves: list[dict]; operations: list[dict]; forced_description_ids: set[str]; poor_fit_count: int; pending_poor_fit_ids: list[str]; degenerate: bool`
+  - `_hash(value) -> str` moves here from `hierarchy.py` (same implementation); `hierarchy.py` imports it from this module.
   - Operation dict: `{"op": "spawn"|"split"|"merge"|"remove", "group_ids": [new or surviving ids], "source_ids": [affected prior ids], "reason": str}`.
   - New leaf IDs: `"semantic-" + _hash(sorted(member_ids))[:20]` (same scheme as today; import `_hash` from `hierarchy` is circular — copy the 3-line sha256 helper or move `_hash` into this module and import it from `hierarchy`).
 
 `maintain_leaves` algorithm (order matters; `assignments` maps each semantic doc ID to a leaf ID already chosen — Task 4 does the nearest-centroid assignment):
 1. Rebuild leaf memberships from `assignments`; recompute centroids.
-2. **Spawn:** poor-fit docs = cosine(doc, own leaf centroid) `< reference`. If `>= min_cluster_size` of them: `kmeans_partition(poor, k=ceil(n/target_cluster_size))`; each bucket with size `>= min_cluster_size` and mean member-to-bucket-centroid similarity `>= reference` becomes a new leaf (members removed from their source leaves). Parent = `parent_id` of the existing leaf whose centroid is nearest the bucket centroid; add that parent to `forced_description_ids` when not `None`. Reason names the poor-fit count.
+2. **Spawn:** only `candidate_ids` (documents newly assigned this update plus previously pending poor fits — Task 4 supplies them) can spawn; established members never do, because by construction about `fit_quantile` of all members fall below `reference`. Poor-fit candidates = candidates with cosine(doc, own leaf centroid) `< reference`. If `>= min_cluster_size` of them: `kmeans_partition(poor, k=ceil(n/target_cluster_size))`; each bucket with size `>= min_cluster_size` and mean member-to-bucket-centroid similarity `>= reference` becomes a new leaf (members removed from their source leaves). Parent = `parent_id` of the existing leaf whose centroid is nearest the bucket centroid; add that parent to `forced_description_ids` when not `None`. Reason names the poor-fit count.
 3. **Split:** a leaf with size `> max_cluster_size`, or with size `>= 2*min_cluster_size` and poor-fit fraction `>= split_poor_fit_fraction`, is re-partitioned with `k = max(2, ceil(size/target_cluster_size))`; buckets below `min_cluster_size` join the nearest other bucket. If k-means is degenerate and the leaf is not oversized, skip. Children replace the leaf under the same parent; the old ID is retired.
 4. **Merge:** a leaf with `0 < size < min_cluster_size` merges into the nearest other leaf (same parent preferred, then any) if the result is `<= max_cluster_size`; the survivor keeps its ID.
 5. **Remove:** empty leaves are dropped.
-6. Recompute centroids; `poor_fit_count` is recounted on the final leaves.
+6. Recompute centroids; `poor_fit_count` is recounted over all members of the final leaves; `pending_poor_fit_ids` = sorted poor-fit candidates that did not spawn and are still members.
 
 - [ ] **Step 1: Write failing tests** (helper `unit(v)`; vectors in 4–8 dims, topics as orthogonal axes plus small fixed offsets)
 
@@ -116,7 +117,8 @@ def test_new_topic_spawns_leaf_and_forces_parent_refresh():
     assert set(spawned[0]["document_ids"]) == new_ids and spawned[0]["parent_id"] == "p"
     assert r.forced_description_ids == {"p"}
     assert {"A", "B"} <= {l["id"] for l in r.leaves}          # untouched IDs stable
-def test_too_few_poor_fits_do_not_spawn():                     # 3 new-axis docs, min 5 -> no ops, poor_fit_count == 3
+def test_too_few_poor_fits_do_not_spawn():                     # 3 new-axis candidate docs, min 5 -> no ops, pending_poor_fit_ids == those 3
+def test_established_poor_fits_never_spawn():                  # 6 new-axis docs NOT in candidate_ids -> no spawn op
 def test_drifted_leaf_splits_into_coherent_children(): ...     # leaf half axis0 half axis1, both halves >= min -> one "split", old id retired
 def test_undersized_leaf_merges_into_nearest_sibling(): ...    # survivor keeps id; op "merge"
 def test_emptied_leaf_is_removed(): ...
@@ -174,7 +176,7 @@ def test_levels_deterministic(): ...
 
 Behavior:
 - **Build:** `kmeans_partition` replaces the closure (same output for the same input — existing tests must pass unchanged); then `balance_levels(...)` (no-op with `max_fanout=None`); reference = `fit_reference(leaves, vectors, config.fit_quantile)`, `computed_at="build"`. No spawn/split/merge at build.
-- **Update:** previous semantic groups = groups with `centroid` (leaves: no semantic children; intermediates: the rest, kept with their `parent_id`). Unchanged docs keep their previous leaf if it still exists; others go to the nearest leaf centroid (as today). Reference = previous `diagnostics["structure_reference"]` if present, else `fit_reference` over the previous leaves with `computed_at="first_update"`. Then `maintain_leaves`, then `balance_levels`. Intermediate centroids recomputed from descendant docs. `forced_description_ids` = `MaintenanceResult.forced_description_ids` plus the non-`None` parents of every group in `balance_levels`' `new_group_ids` (a parent that gained a new child).
+- **Update:** previous semantic groups = groups with `centroid` (leaves: no semantic children; intermediates: the rest, kept with their `parent_id`). Unchanged docs keep their previous leaf if it still exists; others go to the nearest leaf centroid (as today). Reference = previous `diagnostics["structure_reference"]` if present, else `fit_reference` over the previous leaves with `computed_at="first_update"`. Then `maintain_leaves` with `candidate_ids` = new/edited semantic docs ∪ (previous `diagnostics["pending_poor_fit_ids"]` ∩ current semantic docs), then `balance_levels`. Persist `diagnostics["pending_poor_fit_ids"]` (empty after build). Intermediate centroids recomputed from descendant docs. `forced_description_ids` = `MaintenanceResult.forced_description_ids` plus the non-`None` parents of every group in `balance_levels`' `new_group_ids` (a parent that gained a new child).
 - `rebuild_recommended = bool(previous and semantic and poor_fit_documents / len(semantic) >= config.split_poor_fit_fraction)`; replace the 30%-churn warning text with "Many semantic documents fit their cluster poorly after local maintenance; consider a full rebuild." `churn` stays reported.
 - `validate`: every non-root `parent_id` exists (already true); intermediates may have empty `document_ids`.
 
