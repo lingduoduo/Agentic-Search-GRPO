@@ -106,6 +106,77 @@ of titles and first sentences. Descriptions record their source, including
 `local_llm` or `extractive`; they are not verified factual summaries. Empty model
 outputs or samples that cannot fit the context budget fail explicitly.
 
+## Description judgeability
+
+Every group description is a routing input: the decision model judges a branch
+from its label plus description, and a pruned branch is never revisited. A
+group that is coherent but labelled "various documents" can therefore lose its
+gold evidence permanently. Three mechanisms address this; none of them is a
+calibrated semantic-quality score.
+
+**Coverage-aware samples with provenance.** Both the local describer and the
+extractive fallback draw `--description-sample-size` (default 12) documents
+chosen by `select_description_samples`, not an ID prefix: the typical document
+nearest the centroid, one representative per language/script stratum, the
+boundary document farthest from it, then farthest-first minority coverage.
+Stored semantic vectors are used when present; otherwise a content-hashed
+lexical proxy is used and labelled `lexical_proxy`. The local prompt asks for
+major and minority topics and sibling-distinguishing scope. When the context
+budget is tight, fields are shortened before whole samples are dropped, and
+every drop is recorded. Extractive descriptions give each sample an equal
+character quota, so one long title cannot hide the rest.
+
+Each group stores `description_provenance` (sampled document IDs, their roles,
+selection/generation versions, generation settings, warnings such as
+`context_dropped:` or `uncovered_language:`) and `description_quality`
+(`weak` plus heuristic flags: `missing_or_blank`, `generic_description` for
+English/Chinese boilerplate, `low_information`). Validation rejects
+whitespace-only descriptions and provenance IDs that are not descendants.
+`inspect` reports `weak_description_count`. Older artifacts without current
+provenance stay loadable; the next `update` regenerates their descriptions
+without re-embedding unchanged documents.
+
+**Bounded child-preview recovery (serving, off by default).** With
+`--preview-max-nodes N`, a candidate whose description is flagged weak or is
+identical to a sibling's gets a short, explicitly sampled preview of visible
+descendant evidence (first sentence plus title) appended before the ordinary
+binary judgment. Beam widths and the number of judge questions are unchanged.
+Per-query limits: `--preview-max-nodes`, `--preview-total-chars` (1800),
+`--preview-chars-per-node` (600), `--preview-children` (4 items) and
+`--preview-scan-limit` (64 visited nodes). Under an active `filters.access_acl`
+previews read only the already-pruned visible subtree. `include_trace` now
+also returns per-query `usage` (protocol calls/judgments and character
+proxies — not tokenizer tokens) and per-stage `previewed_ids`.
+
+**Paired routing evaluation.** Measure descriptions by whether they preserve
+gold paths under a fixed tree, judge and budget, not by how they read:
+
+```sh
+python -m src.internal.document_index.description_eval_cli \
+  --hierarchy indexes/nq-tree.json \
+  --queries dev-queries.jsonl \
+  --model /path/to/local/instruct-model \
+  --output reports/descriptions.json \
+  --group-beam-width 5 --topk 5
+```
+
+Each query line is `{"id", "query", "gold_passage_ids": [...], "filters"?}`;
+passage IDs have the form `<document id>::passage-<n>` under the configured
+segmentation, and every gold ID must be visible under its filters. Built-in
+variants are `stored`, `label_only` and `extractive` (coverage-sampled titles);
+`--variants FILE` adds `{name: {group_id: text}}` overrides. All variants reuse
+one model instance and the same artifact — memberships are never regenerated,
+and gold labels never reach a prompt. The report gives per-stage unconditional
+and conditional survival (group depths, document, section, passage, choice)
+with explicit denominators, complete ancestor-path survival, final passage
+recall@k, cost proxies and latency, plus paired differences against `stored`
+with seeded bootstrap 95% intervals. Equal budgets do not imply equal compute,
+since branches differ in size. Active ACL filters bypass stored summaries, so
+those queries are excluded from the macro, stage and paired comparisons and
+reported separately under `acl_bypassed_macro_metrics`. Use held-out
+human-checked queries: queries generated from the descriptions themselves
+reward matching the generator's wording.
+
 ## Updates are full snapshots
 
 ```sh
@@ -195,6 +266,7 @@ in depth, not an authentication boundary.
 
 ```sh
 python -m pytest tests/unit/test_hierarchy*.py \
+  tests/unit/test_description_*.py \
   tests/unit/test_decision_retriever.py \
   tests/unit/test_local_decision_model.py \
   tests/unit/servers/retrieval/test_decision_retrieval.py

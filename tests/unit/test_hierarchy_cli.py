@@ -116,3 +116,44 @@ def test_update_rejects_encoder_override(tmp_path, capsys):
         )
     assert error.value.code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_build_exposes_description_sample_budget(tmp_path):
+    import json
+    from src.internal.document_index.hierarchy_cli import main
+    from src.internal.document_index.hierarchy import HierarchyArtifact
+
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "id": str(i),
+                    "title": f"Topic {i}",
+                    "contents": "body",
+                    "metadata": {"hierarchy_path": ["Root"]},
+                }
+            )
+            for i in range(3)
+        )
+    )
+    output = tmp_path / "tree.json"
+    assert (
+        main(
+            [
+                "build",
+                "--mode",
+                "structure",
+                "--corpus-path",
+                str(corpus),
+                "--output",
+                str(output),
+                "--description-sample-size",
+                "2",
+            ]
+        )
+        == 0
+    )
+    artifact = HierarchyArtifact.load(output)
+    assert artifact.config["description_sample_size"] == 2
+    assert len(artifact.groups[0]["description_provenance"]["document_ids"]) == 2
