@@ -317,3 +317,50 @@ def test_generation_settings_record_config_sample_size_and_null_provenance_updat
     old.validate()
     refreshed = build_hierarchy(docs, config, describer=Describer(), previous=old)
     assert all(g["description_provenance"] for g in refreshed.groups)
+
+
+MAINTENANCE_FIELDS = (
+    "min_cluster_size",
+    "max_fanout",
+    "fit_quantile",
+    "split_poor_fit_fraction",
+    "description_refresh_overlap",
+)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("min_cluster_size", 0),
+        ("max_fanout", 1),
+        ("max_fanout", True),
+        ("fit_quantile", 0.0),
+        ("fit_quantile", 0.5),
+        ("split_poor_fit_fraction", 0.0),
+        ("split_poor_fit_fraction", 1.5),
+        ("description_refresh_overlap", -0.1),
+        ("description_refresh_overlap", 1.1),
+    ],
+)
+def test_maintenance_config_validation(field, value):
+    with pytest.raises(ValueError, match=field):
+        HierarchyConfig(**{field: value})
+
+
+def test_old_config_without_maintenance_fields_still_updates():
+    artifact = build_hierarchy(docs(path=["A", "B"]), HierarchyConfig(mode="structure"))
+    for name in MAINTENANCE_FIELDS:
+        artifact.config.pop(name)
+    updated = build_hierarchy(docs(7, ["A", "B"]), previous=artifact)
+    assert len(updated.assignments) == 7
+    assert set(MAINTENANCE_FIELDS) <= set(updated.config)
+
+
+def test_small_max_cluster_size_config_and_old_artifact_still_work():
+    assert HierarchyConfig(max_cluster_size=2).min_cluster_size == 5
+    config = HierarchyConfig(mode="structure", max_cluster_size=2)
+    artifact = build_hierarchy(docs(path=["A", "B"]), config)
+    for name in MAINTENANCE_FIELDS:
+        artifact.config.pop(name)
+    updated = build_hierarchy(docs(7, ["A", "B"]), previous=artifact)
+    assert len(updated.assignments) == 7

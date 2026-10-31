@@ -122,6 +122,7 @@ class _Node:
     children: tuple[_Node, ...] = ()
     document: dict | None = None
     description: str | None = None
+    stale: bool = False
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -342,6 +343,8 @@ class DecisionRetriever:
                 ),
                 tuple(children),
                 description=description,
+                stale=group["id"] not in self._group_descriptions
+                and bool(group.get("description_stale", False)),
             )
 
         return tuple(
@@ -418,7 +421,11 @@ class DecisionRetriever:
         counts = Counter(normalized)
         output, previewed, added = [], [], 0
         for node, normalized_text in zip(candidates, normalized):
-            weak = assess_description(text(node))["weak"] or counts[normalized_text] > 1
+            weak = (
+                assess_description(text(node))["weak"]
+                or counts[normalized_text] > 1
+                or node.stale
+            )
             remaining = self.config.preview_total_chars - result.usage["preview_chars"]
             if (
                 weak

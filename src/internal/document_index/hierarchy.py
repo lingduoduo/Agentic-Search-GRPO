@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import math
 import os
 import tempfile
-import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -21,6 +19,14 @@ from .hierarchy_descriptions import (
     select_description_samples,
 )
 from .hierarchy_formats import first_sentence, normalize_document, split_passages
+from .hierarchy_maintenance import (
+    _hash,
+    balance_levels,
+    centroid,
+    fit_reference,
+    kmeans_partition,
+    maintain_leaves,
+)
 
 
 @dataclass
@@ -34,6 +40,11 @@ class HierarchyConfig:
     embedding_model: str = "intfloat/multilingual-e5-base"
     description_model: str | None = None
     description_sample_size: int = 12
+    min_cluster_size: int = 5
+    max_fanout: int | None = None
+    fit_quantile: float = 0.05
+    split_poor_fit_fraction: float = 0.3
+    description_refresh_overlap: float = 0.5
 
     def __post_init__(self):
         if self.mode not in ("auto", "structure", "cluster"):
@@ -61,12 +72,20 @@ class HierarchyConfig:
             or not self.description_model.strip()
         ):
             raise ValueError("description_model must be nonempty or None")
-
-
-def _hash(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()
-    ).hexdigest()
+        if type(self.min_cluster_size) is not int or self.min_cluster_size < 1:
+            raise ValueError("min_cluster_size must be a positive integer")
+        if self.max_fanout is not None and (
+            type(self.max_fanout) is not int or self.max_fanout < 2
+        ):
+            raise ValueError("max_fanout must be None or an integer >= 2")
+        for name, valid in (
+            ("fit_quantile", lambda v: 0 < v < 0.5),
+            ("split_poor_fit_fraction", lambda v: 0 < v <= 1),
+            ("description_refresh_overlap", lambda v: 0 <= v <= 1),
+        ):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not valid(value):
+                raise ValueError(f"{name} is out of range")
 
 
 @dataclass
@@ -219,6 +238,18 @@ class HierarchyArtifact:
                     )
                 ):
                     raise ValueError("invalid description provenance")
+                full = provenance.get("sample_ids")
+                if "sample_ids" in provenance and (
+                    not isinstance(full, list)
+                    or any(not isinstance(i, str) for i in full)
+                    or len(set(full)) != len(full)
+                    or not set(full) <= set(descendants[gid])
+                ):
+                    raise ValueError("invalid description provenance sample_ids")
+            if "description_stale" in group and (
+                type(group["description_stale"]) is not bool
+            ):
+                raise ValueError("invalid description_stale")
             quality = group.get("description_quality")
             if quality is not None and (
                 not isinstance(quality, dict)
@@ -227,6 +258,29 @@ class HierarchyArtifact:
                 or any(not isinstance(f, str) for f in quality["flags"])
             ):
                 raise ValueError("invalid description quality")
+        reference = self.diagnostics.get("structure_reference")
+        if reference is not None and (
+            not isinstance(reference, dict)
+            or any(
+                type(reference.get(k)) not in (int, float)
+                or not math.isfinite(reference[k])
+                for k in ("poor_fit_similarity", "quantile")
+            )
+            or reference.get("computed_at") not in ("build", "first_update")
+        ):
+            raise ValueError("invalid structure_reference")
+        if "pending_poor_fit_ids" in self.diagnostics:
+            pending = self.diagnostics["pending_poor_fit_ids"]
+            semantic = {
+                i for g in groups.values() if "centroid" in g for i in g["document_ids"]
+            }
+            if (
+                not isinstance(pending, list)
+                or any(not isinstance(i, str) for i in pending)
+                or len(set(pending)) != len(pending)
+                or not set(pending) <= semantic
+            ):
+                raise ValueError("invalid pending_poor_fit_ids")
         json.dumps(asdict(self), allow_nan=False)
         return self
 
@@ -284,7 +338,22 @@ def _descendant_memberships(groups):
     return result
 
 
-def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previous=None):
+def build_hierarchy(
+    docs,
+    config=None,
+    *,
+    embedder=None,
+    describer=None,
+    previous=None,
+    max_description_calls: int | None = None,
+    dry_run: bool = False,
+):
+    if max_description_calls is not None and (
+        type(max_description_calls) is not int or max_description_calls < 0
+    ):
+        raise ValueError("max_description_calls must be None or an integer >= 0")
+    if type(dry_run) is not bool:
+        raise ValueError("dry_run must be a bool")
     if previous is not None:
         previous.validate()
     config = config or (
@@ -400,75 +469,150 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         if not doc["structure_path"]:
             notices.append("Unstructured documents use the Documents fallback group.")
 
-    def partition(members, prefix=None):
-        members = sorted(members)
-        if not members:
-            return
-        count = min(
-            len(members),
-            config.n_clusters or math.ceil(len(members) / config.target_cluster_size),
-        )
-        from sklearn.cluster import KMeans
-
-        with warnings.catch_warnings(record=True) as caught:
-            labels = KMeans(
-                n_clusters=count, random_state=config.random_state, n_init=10
-            ).fit_predict(np.array([vectors[i] for i in members]))
-        if caught:
-            notices.append("Degenerate semantic vectors reduced distinct clusters.")
-        bucket_map = {}
-        for member, label in zip(members, labels):
-            bucket_map.setdefault(int(label), []).append(member)
-        buckets = [bucket_map[label] for label in sorted(bucket_map)]
-        for bucket in buckets:
-            if len(bucket) > config.max_cluster_size:
-                notices.append(
-                    "Oversized semantic cluster split into deterministic balanced chunks; routing quality may be reduced."
-                )
-            count_parts = math.ceil(len(bucket) / config.max_cluster_size)
-            for part in np.array_split(np.array(bucket, dtype=object), count_parts):
-                chunk = part.tolist()
-                gid = "semantic-" + _hash(chunk)[:20]
-                center = np.mean([vectors[i] for i in chunk], axis=0)
-                norm = np.linalg.norm(center)
-                center = center / norm if norm else center
-                add_group(gid, prefix, "Cluster " + gid[-8:], chunk, center.tolist())
-
-    if previous and semantic:
-        old_parent_ids = {g["parent_id"] for g in previous.groups}
-        old_semantic = [
-            g
+    # Semantic (clustered) groups only; structural groups above are never touched.
+    old_semantic = (
+        [
+            copy.deepcopy(
+                {
+                    k: g[k]
+                    for k in ("id", "parent_id", "label", "document_ids", "centroid")
+                }
+            )
             for g in previous.groups
-            if "centroid" in g and g["id"] not in old_parent_ids
+            if "centroid" in g
         ]
-        if old_semantic:
-            buckets = {g["id"]: [] for g in old_semantic}
-            for i in semantic:
-                old_gid = previous.assignments.get(i) if i in unchanged else None
-                if old_gid not in buckets:
-                    old_gid = max(
-                        old_semantic,
-                        key=lambda g: float(np.dot(vectors[i], g["centroid"])),
-                    )["id"]
-                buckets[old_gid].append(i)
-            for old in old_semantic:
-                members = buckets[old["id"]]
-                if len(members) > config.max_cluster_size:
-                    partition(members)
-                elif members:
-                    center = np.mean([vectors[i] for i in members], axis=0)
-                    norm = np.linalg.norm(center)
-                    add_group(
-                        old["id"],
-                        None,
-                        old["label"],
-                        members,
-                        (center / norm if norm else center).tolist(),
-                    )
+        if previous
+        else []
+    )
+    old_semantic_parents = {g["parent_id"] for g in old_semantic}
+    old_leaves = [g for g in old_semantic if g["id"] not in old_semantic_parents]
+    structure_operations = []
+    forced_description_ids = set()
+    reference = None
+    pending_poor_fit_ids = []
+    degenerate = False
+    if semantic and old_leaves:
+        stored = previous.diagnostics.get("structure_reference")
+        reference = (
+            copy.deepcopy(stored)
+            if stored
+            else dict(
+                poor_fit_similarity=fit_reference(
+                    old_leaves, previous.vectors, config.fit_quantile
+                ),
+                quantile=config.fit_quantile,
+                computed_at="first_update",
+            )
+        )
+        leaf_ids = {g["id"] for g in old_leaves}
+        leaf_assignments = {}
+        for i in semantic:
+            old_gid = previous.assignments.get(i) if i in unchanged else None
+            if old_gid not in leaf_ids:
+                old_gid = max(
+                    old_leaves,
+                    key=lambda g: float(np.dot(vectors[i], g["centroid"])),
+                )["id"]
+            leaf_assignments[i] = old_gid
+        old_semantic_docs = {i for g in old_leaves for i in g["document_ids"]}
+        carried = sorted(
+            set(previous.diagnostics.get("pending_poor_fit_ids", [])) & semantic_set
+        )
+        if old_semantic_docs == semantic_set and semantic_set <= unchanged:
+            # Shortcut: no semantic document was added, edited or deleted, so skip
+            # the planner and keep the previous semantic groups. Structure then
+            # changes only in response to semantic changes; the planner itself is
+            # not proven idempotent on unchanged input.
+            semantic_groups = old_semantic
+            pending_poor_fit_ids = carried
         else:
-            partition(semantic)
+            result = maintain_leaves(
+                old_leaves,
+                vectors,
+                leaf_assignments,
+                config,
+                reference["poor_fit_similarity"],
+                sorted((semantic_set - unchanged) | set(carried)),
+                pending_ids=carried,
+            )
+            structure_operations.extend(result.operations)
+            forced_description_ids.update(result.forced_description_ids)
+            pending_poor_fit_ids = result.pending_poor_fit_ids
+            degenerate = result.degenerate
+            semantic_groups = result.leaves + [
+                g for g in old_semantic if g["id"] in old_semantic_parents
+            ]
+    elif semantic:
+        count = config.n_clusters or math.ceil(
+            len(semantic) / config.target_cluster_size
+        )
+        buckets, degenerate, oversized = kmeans_partition(
+            semantic, vectors, count, config.max_cluster_size, config.random_state
+        )
+        if oversized:
+            notices.append(
+                "Oversized semantic cluster split into deterministic balanced chunks; routing quality may be reduced."
+            )
+        semantic_groups = []
+        for bucket in buckets:
+            gid = "semantic-" + _hash(bucket)[:20]
+            semantic_groups.append(
+                dict(
+                    id=gid,
+                    parent_id=None,
+                    label="Cluster " + gid[-8:],
+                    document_ids=bucket,
+                    centroid=centroid(bucket, vectors),
+                )
+            )
+        reference = dict(
+            poor_fit_similarity=fit_reference(
+                semantic_groups, vectors, config.fit_quantile
+            ),
+            quantile=config.fit_quantile,
+            computed_at="build",
+        )
     else:
-        partition(semantic)
+        semantic_groups = []
+        structure_operations.extend(
+            dict(
+                op="remove",
+                group_ids=[],
+                source_ids=[g["id"]],
+                reason="no semantic documents remain",
+            )
+            for g in sorted(old_semantic, key=lambda g: g["id"])
+        )
+    if degenerate:
+        notices.append("Degenerate semantic vectors reduced distinct clusters.")
+    semantic_groups, level_operations, new_level_ids = balance_levels(
+        semantic_groups, vectors, config.max_fanout, config.random_state
+    )
+    structure_operations.extend(level_operations)
+    semantic_by_id = {g["id"]: g for g in semantic_groups}
+    forced_description_ids.update(
+        semantic_by_id[gid]["parent_id"]
+        for gid in new_level_ids
+        if semantic_by_id[gid]["parent_id"] is not None
+    )
+    semantic_descendants = _descendant_memberships(semantic_by_id)
+    for g in semantic_groups:
+        members = g["document_ids"]
+        center = (
+            g["centroid"]
+            if members
+            else centroid(semantic_descendants[g["id"]], vectors)
+        )
+        add_group(g["id"], g["parent_id"], g["label"], list(members), center)
+    poor_fit_documents = (
+        sum(
+            float(np.dot(vectors[i], g["centroid"])) < reference["poor_fit_similarity"]
+            for g in semantic_groups
+            for i in g["document_ids"]
+        )
+        if reference
+        else 0
+    )
     old_groups = {g["id"]: g for g in previous.groups} if previous else {}
 
     generation_settings = dict(
@@ -483,81 +627,169 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         if value is not None:
             generation_settings[name] = value
     generation_signature = _hash(generation_settings)
+    extractive_settings = dict(
+        sample_size=config.description_sample_size, adapter="extractive"
+    )
     memberships = _descendant_memberships(groups)
     old_memberships = _descendant_memberships(old_groups)
-    for gid, group in groups.items():
-        group["document_ids"].sort()
-        members = memberships[gid]
+    # Classify every group before generating anything: exempt groups are always
+    # generated, capped refreshes are ordered by priority and limited by
+    # max_description_calls, and everything else reuses its description.
+    exempt, capped, reuse = [], [], []
+    removed_samples = {}
+    for gid in sorted(groups):
+        groups[gid]["document_ids"].sort()
         old = old_groups.get(gid)
-        old_members = old_memberships.get(gid, [])
+        provenance = (old or {}).get("description_provenance") or {}
         if (
-            old
-            and members == old_members
-            and all(i in unchanged for i in members)
-            and (old.get("description_provenance") or {}).get("selection_version")
-            == DESCRIPTION_POLICY_VERSION
-            and old["description_provenance"].get("generation_signature")
-            == generation_signature
+            old is None
+            or gid in forced_description_ids
+            or provenance.get("selection_version") != DESCRIPTION_POLICY_VERSION
+            or provenance.get("generation_signature") != generation_signature
         ):
-            for key in (
-                "description",
-                "description_source",
-                "description_provenance",
-                "description_quality",
-            ):
-                if key in old:
-                    group[key] = copy.deepcopy(old[key])
-        else:
-            documents = [copy.deepcopy(by_id[i]) for i in members]
-            samples = select_description_samples(
-                documents, vectors=vectors, limit=config.description_sample_size
-            )
-            selected = [copy.deepcopy(by_id[s["document_id"]]) for s in samples]
-            provenance = dict(
-                document_ids=[s["document_id"] for s in samples],
-                roles={s["document_id"]: s["roles"] for s in samples},
-                selection_version=DESCRIPTION_POLICY_VERSION,
-                generation_version="custom-text-v1" if describer else "extractive-v1",
-                warnings=[],
-            )
-            if describer and hasattr(describer, "describe_with_provenance"):
-                result = describer.describe_with_provenance(
-                    group["label"],
-                    documents,
+            exempt.append(gid)
+            continue
+        members = memberships[gid]
+        current = set(members)
+        # Compare against the full pre-packing sample; artifacts written before
+        # sample_ids existed fall back to the (possibly packed) document_ids.
+        stored = provenance.get("sample_ids", provenance["document_ids"])
+        removed_samples[gid] = {
+            i
+            for i in set(stored) | set(provenance["document_ids"])
+            if i not in current or i not in unchanged
+        }
+        overlap = 1.0
+        if members != old_memberships.get(gid, []) or not current <= unchanged:
+            fresh = {
+                s["document_id"]
+                for s in select_description_samples(
+                    [by_id[i] for i in members],
                     vectors=vectors,
-                    sample_size=config.description_sample_size,
+                    limit=config.description_sample_size,
                 )
-                description = result["text"]
-                provenance = {k: v for k, v in result.items() if k != "text"}
-            elif describer:
-                description = describer.describe(group["label"], selected)
-            else:
-                quota = max(1, (1600 - 2 * len(selected)) // max(1, len(selected)))
-                contributing = [
-                    (
-                        d["id"],
-                        (d["title"] or first_sentence(d["contents"])).strip()[:quota],
-                    )
-                    for d in selected
-                ]
-                contributing = [(i, t) for i, t in contributing if t]
-                description = "; ".join(t for _, t in contributing) or group["label"]
-                provenance["document_ids"] = [i for i, _ in contributing]
-                provenance["roles"] = {
-                    i: provenance["roles"][i] for i, _ in contributing
-                }
-            if not isinstance(description, str) or not description.strip():
-                raise ValueError("describer must return nonempty text")
-            group["description"] = description.strip()
-            group["description_source"] = (
-                getattr(describer, "description_source", "llm")
-                if describer
-                else "extractive"
+            }
+            union = fresh | set(stored)
+            overlap = len(fresh & set(stored)) / len(union) if union else 1.0
+        if old.get("description_stale"):
+            capped.append((0, 0.0, gid))
+        elif removed_samples[gid]:
+            capped.append((1, 0.0, gid))
+        elif overlap < config.description_refresh_overlap:
+            capped.append((2, overlap, gid))
+        else:
+            reuse.append(gid)
+    capped.sort()
+    # Extractive generation is free, so the cap binds only with a describer.
+    if describer is not None and max_description_calls is not None:
+        refresh = capped[:max_description_calls]
+        deferred = capped[max_description_calls:]
+    else:
+        refresh, deferred = capped, []
+    use_model = describer is not None and not dry_run
+    model_calls = 0
+
+    def generate(group):
+        nonlocal model_calls
+        documents = [copy.deepcopy(by_id[i]) for i in memberships[group["id"]]]
+        samples = select_description_samples(
+            documents, vectors=vectors, limit=config.description_sample_size
+        )
+        selected = [copy.deepcopy(by_id[s["document_id"]]) for s in samples]
+        provenance = dict(
+            document_ids=[s["document_id"] for s in samples],
+            roles={s["document_id"]: s["roles"] for s in samples},
+            selection_version=DESCRIPTION_POLICY_VERSION,
+            generation_version="custom-text-v1" if use_model else "extractive-v1",
+            warnings=[],
+        )
+        if use_model and hasattr(describer, "describe_with_provenance"):
+            model_calls += 1
+            result = describer.describe_with_provenance(
+                group["label"],
+                documents,
+                vectors=vectors,
+                sample_size=config.description_sample_size,
             )
-            provenance["generation_signature"] = generation_signature
-            provenance["generation_settings"] = generation_settings
+            description = result["text"]
+            provenance = {k: v for k, v in result.items() if k != "text"}
+        elif use_model:
+            model_calls += 1
+            description = describer.describe(group["label"], selected)
+        else:
+            quota = max(1, (1600 - 2 * len(selected)) // max(1, len(selected)))
+            contributing = [
+                (
+                    d["id"],
+                    (d["title"] or first_sentence(d["contents"])).strip()[:quota],
+                )
+                for d in selected
+            ]
+            contributing = [(i, t) for i, t in contributing if t]
+            description = "; ".join(t for _, t in contributing) or group["label"]
+            provenance["document_ids"] = [i for i, _ in contributing]
+            provenance["roles"] = {i: provenance["roles"][i] for i, _ in contributing}
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("describer must return nonempty text")
+        group["description"] = description.strip()
+        group["description_source"] = (
+            getattr(describer, "description_source", "llm")
+            if use_model
+            else "extractive"
+        )
+        # A dry run records the extractive settings it actually used.
+        settings = generation_settings if use_model else extractive_settings
+        provenance["generation_signature"] = _hash(settings)
+        provenance["generation_settings"] = settings
+        provenance.setdefault("warnings", [])
+        provenance.setdefault("sample_ids", [s["document_id"] for s in samples])
+        group["description_provenance"] = provenance
+
+    def reuse_old(group):
+        old = old_groups[group["id"]]
+        for key in (
+            "description",
+            "description_source",
+            "description_provenance",
+            "description_quality",
+        ):
+            if key in old:
+                group[key] = copy.deepcopy(old[key])
+
+    for gid in exempt + [gid for _, _, gid in refresh]:
+        generate(groups[gid])
+    for gid in reuse:
+        reuse_old(groups[gid])
+    for _, _, gid in deferred:
+        group = groups[gid]
+        reuse_old(group)
+        provenance = group["description_provenance"]
+        removed = removed_samples[gid]
+        if removed:
+            provenance["document_ids"] = [
+                i for i in provenance["document_ids"] if i not in removed
+            ]
+            provenance["roles"] = {
+                i: r for i, r in provenance["roles"].items() if i not in removed
+            }
+            if "sample_ids" in provenance:
+                provenance["sample_ids"] = [
+                    i for i in provenance["sample_ids"] if i not in removed
+                ]
             provenance.setdefault("warnings", [])
-            group["description_provenance"] = provenance
+            if "stale_samples_removed" not in provenance["warnings"]:
+                provenance["warnings"].append("stale_samples_removed")
+        group["description_stale"] = True
+    update_cost = dict(
+        embedded_documents=len(pending),
+        description_generations=len(exempt) + len(refresh),
+        description_model_calls=model_calls,
+        exempt_description_calls=len(exempt),
+        capped_description_calls=len(refresh),
+        deferred_descriptions=len(deferred),
+        reused_descriptions=len(reuse),
+    )
+    for group in groups.values():
         if group["description_provenance"].get("warnings"):
             notices.append(
                 "Description provenance records context or sampling coverage losses; inspect group provenance."
@@ -642,13 +874,23 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         reused_documents=len(unchanged),
         oversize_groups=sum(size > config.max_cluster_size for size in sizes),
         churn=churn,
-        rebuild_recommended=bool(previous and churn >= 0.3),
+        structure_reference=reference,
+        structure_operations=structure_operations,
+        update_cost=update_cost,
+        dry_run=dry_run,
+        poor_fit_documents=int(poor_fit_documents),
+        pending_poor_fit_ids=pending_poor_fit_ids,
+        rebuild_recommended=bool(
+            previous
+            and semantic
+            and poor_fit_documents / len(semantic) >= config.split_poor_fit_fraction
+        ),
         warnings=sorted(set(notices)),
         max_section_count=max((len(d["sections"]) for d in normalized), default=0),
     )
     if diagnostics["rebuild_recommended"]:
         diagnostics["warnings"].append(
-            "Significant corpus churn: perform a full rebuild to reconsider semantic cluster boundaries."
+            "Many semantic documents fit their cluster poorly after local maintenance; consider a full rebuild."
         )
     return HierarchyArtifact(
         config=settings,

@@ -271,3 +271,48 @@ def test_wide_group_preview_reaches_evidence_before_scan_budget_is_spent():
     assert result.usage["preview_chars"] > 0
     assert result.usage["preview_scan_nodes"] < 64
     assert any("Visible evidence" in text for text in judge.inputs)
+
+
+def stale_tree(stale):
+    artifact = tree()
+    for group in artifact.groups:
+        group["description"] = (
+            "Quantum sensor calibration phase bias measurement procedures"
+            if "gold" in group["document_ids"]
+            else "Quantum software scheduling controls and programming reference"
+        )
+        if stale and "gold" in group["document_ids"]:
+            group["description_stale"] = True
+    artifact.validate()
+    return artifact
+
+
+def previewed(artifact, **kwargs):
+    result = DecisionRetriever(
+        artifact.documents,
+        Judge(),
+        DecisionRetrieverConfig(beam_width=2, preview_max_nodes=1),
+        hierarchy=artifact,
+        **kwargs,
+    ).navigate("q", 1)
+    return [
+        i for stage in result.stages for i in stage.previewed_ids if i.startswith("g/")
+    ]
+
+
+def test_stale_specific_description_gets_preview():
+    gold = next(g for g in stale_tree(True).groups if "gold" in g["document_ids"])
+    assert previewed(stale_tree(True)) == [f"g/{gold['id']}"]
+    assert previewed(stale_tree(False)) == []
+
+
+def test_override_clears_stale():
+    artifact = stale_tree(True)
+    gold = next(g for g in artifact.groups if "gold" in g["document_ids"])
+    assert (
+        previewed(
+            artifact,
+            group_descriptions={gold["id"]: "Quantum sensor calibration procedures"},
+        )
+        == []
+    )

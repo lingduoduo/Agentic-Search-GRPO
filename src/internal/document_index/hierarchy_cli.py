@@ -44,6 +44,8 @@ def _parser():
     build.add_argument("--description-sample-size", type=int, default=12)
     build.add_argument("--target-cluster-size", type=int, default=100)
     build.add_argument("--max-cluster-size", type=int, default=200)
+    build.add_argument("--min-cluster-size", type=int, default=5)
+    build.add_argument("--max-fanout", type=int, default=None)
     build.add_argument(
         "--clusters",
         type=int,
@@ -55,6 +57,20 @@ def _parser():
         "--previous",
         required=True,
         help="Previous hierarchy; configuration is inherited",
+    )
+    update.add_argument(
+        "--max-description-calls",
+        type=int,
+        default=None,
+        help="Cap on description model calls for refreshing existing groups; "
+        "new groups and parents of new children are always described, and "
+        "over-cap groups keep their text marked description_stale",
+    )
+    update.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan the update and print diagnostics without writing --output; "
+        "new documents are still embedded but no description model calls are made",
     )
     inspect = commands.add_parser(
         "inspect", help="Validate an artifact and print its diagnostics"
@@ -119,6 +135,8 @@ def main(argv=None):
                 description_sample_size=args.description_sample_size,
                 target_cluster_size=args.target_cluster_size,
                 max_cluster_size=args.max_cluster_size,
+                min_cluster_size=args.min_cluster_size,
+                max_fanout=args.max_fanout,
                 n_clusters=args.clusters,
                 infer_layout=args.infer_layout,
                 random_state=args.random_state,
@@ -146,10 +164,24 @@ def main(argv=None):
             describer = LocalHierarchyDescriber(
                 config.description_model, device=args.device
             )
-        artifact = build_hierarchy(
-            documents, config, embedder=embedder, describer=describer, previous=previous
+        update_options = (
+            dict(
+                max_description_calls=args.max_description_calls,
+                dry_run=args.dry_run,
+            )
+            if previous
+            else {}
         )
-        artifact.save(args.output)
+        artifact = build_hierarchy(
+            documents,
+            config,
+            embedder=embedder,
+            describer=describer,
+            previous=previous,
+            **update_options,
+        )
+        if not update_options.get("dry_run"):
+            artifact.save(args.output)
         print(json.dumps(artifact.diagnostics, ensure_ascii=False, sort_keys=True))
         return 0
     except (ValueError, OSError, TypeError) as error:
