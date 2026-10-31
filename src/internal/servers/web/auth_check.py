@@ -104,6 +104,8 @@ EE_PUBLIC_ENDPOINT_SPECS = PUBLIC_ENDPOINT_SPECS + [
 # mistaken for the real guard. Keep this small and review additions as auth code.
 _AUTH_DEPENDENCIES = {
     ("src.internal.servers._auth", "make_require_admin.<locals>._require_admin"),
+    # Same-host callers only: the in-process retrieval routes are internal.
+    ("src.internal.servers._auth", "require_loopback_client"),
     ("src.internal.servers.scim.api", "create_scim_router.<locals>._auth"),
     (
         "src.internal.servers.user_group.api",

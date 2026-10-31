@@ -139,6 +139,9 @@ python3 -m src.internal.servers.web_search.browser --port 8003
 
 # Terminal 2 — web backend (port 7860)
 PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
+# Or skip Terminal 1: serve a static corpus in-process (TF-IDF, loopback-only
+# /retrieval/retrieve; same values as --corpus, or a .jsonl path)
+AGENTIC_SEARCH_EMBEDDED_RETRIEVAL=demo PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 
 # Terminal 3 — frontend dev server (port 5173), from the separate
 # Agentic-Search-UI repo cloned next to this one

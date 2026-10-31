@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi import HTTPException, Request
 
 from src.internal.auth import AuthenticatedUser, user_from_headers
@@ -84,3 +86,22 @@ def caller_may_use_session(session, caller) -> bool:
 
 
 __all__ = ["make_require_admin", "is_admin_user", "caller_may_use_session"]
+
+
+def require_loopback_client(request: Request) -> None:
+    """Admit only callers on this host, for routes that are internal by design.
+
+    The in-process retrieval routes stand in for a retrieval server bound to
+    127.0.0.1, and /retrieve trusts caller-supplied ACL filters: an outside
+    caller who omits them would read every document. A same-host reverse proxy
+    that forwards these paths would defeat this check, so never proxy them.
+    """
+    host = request.client.host if request.client else ""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        address = getattr(address, "ipv4_mapped", None) or address
+    if address is None or not address.is_loopback:
+        raise HTTPException(status_code=403, detail="Internal endpoint")

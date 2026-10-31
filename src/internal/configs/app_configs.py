@@ -29,6 +29,11 @@ from .timeouts import TimeoutPolicies, get_timeout_policies, load_timeout_polici
 EnvMapping = Mapping[str, str]
 
 DEFAULT_RETRIEVAL_URL = "http://localhost:8001/retrieve"
+# Where the web app serves AGENTIC_SEARCH_EMBEDDED_RETRIEVAL in-process. The port
+# defaults to 7860, the one the documented uvicorn command uses, rather than
+# web_port's 8080; set AGENTIC_SEARCH_WEB_PORT when the API runs elsewhere.
+EMBEDDED_RETRIEVAL_PATH = "/retrieval/retrieve"
+DEFAULT_EMBEDDED_WEB_PORT = 7860
 DEFAULT_FETCH_URL = "http://localhost:8001/fetch"
 DEFAULT_WEB_DB_PATH = ":memory:"
 DEFAULT_AUTH_SECRET = "agentic-search-dev-secret"
@@ -39,6 +44,9 @@ class ServiceSettings:
     """Network and persistence defaults for local services."""
 
     retrieval_url: str = DEFAULT_RETRIEVAL_URL
+    # Corpus the web app serves in-process at EMBEDDED_RETRIEVAL_PATH: a
+    # registered name, comma-list or 'all' (data/corpora.json), or a .jsonl path.
+    embedded_retrieval: str | None = None
     fetch_url: str | None = None
     rerank_url: str | None = None
     browser_search_url: str | None = None
@@ -324,11 +332,21 @@ def load_app_settings(env: EnvMapping | None = None) -> AppSettings:
         raise ValueError(
             "AGENTIC_SEARCH_SEARCH_CACHE_STALE_SECONDS must not be negative."
         )
+    embedded_retrieval = get_env_str(source, "AGENTIC_SEARCH_EMBEDDED_RETRIEVAL", None)
+    default_retrieval_url = DEFAULT_RETRIEVAL_URL
+    if embedded_retrieval:
+        embedded_port = get_env_int(
+            source, "AGENTIC_SEARCH_WEB_PORT", DEFAULT_EMBEDDED_WEB_PORT
+        )
+        default_retrieval_url = (
+            f"http://127.0.0.1:{embedded_port}{EMBEDDED_RETRIEVAL_PATH}"
+        )
     return AppSettings(
         services=ServiceSettings(
             retrieval_url=get_env_str(
-                source, "AGENTIC_SEARCH_RETRIEVAL_URL", DEFAULT_RETRIEVAL_URL
+                source, "AGENTIC_SEARCH_RETRIEVAL_URL", default_retrieval_url
             ),
+            embedded_retrieval=embedded_retrieval,
             fetch_url=get_env_str(source, "AGENTIC_SEARCH_FETCH_URL", None),
             rerank_url=get_env_str(source, "AGENTIC_SEARCH_RERANK_URL", None),
             browser_search_url=get_env_str(

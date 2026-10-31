@@ -208,53 +208,67 @@ Start each service in a separate terminal from the repository root.
 
 ### 1. Start retrieval
 
-The bundled demo corpus is served on port **8001**:
+**Simplest: skip this step.** The bundled corpora are static, so the API can serve one itself. Start the API in step 2 with `AGENTIC_SEARCH_EMBEDDED_RETRIEVAL` set:
 
 ```bash
-python3 -m src.internal.servers.retrieval.demo --corpus_path data/corpus.jsonl
+AGENTIC_SEARCH_EMBEDDED_RETRIEVAL=demo PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
-```bash
-# Named corpora / union via the registry (data/corpora.json):
-python3 -m src.internal.servers.retrieval.demo --corpus demo   # curated 20-doc demo (default)
-python3 -m src.internal.servers.retrieval.demo --corpus all    # union of all registered corpora
-```
+It takes the same corpus values as `--corpus` below, or a `.jsonl` path. It serves TF-IDF only, at `/retrieval/retrieve` on the API, and refuses callers from other hosts. If the API runs on a port other than 7860, set `AGENTIC_SEARCH_WEB_PORT` to match.
+
+**Or run a separate retrieval server**, for hybrid retrieval or a server several processes share. Run it on port **8001**, where the API looks for it by default:
 
 ```bash
-# Add a BEIR benchmark corpus. The converter registers what it writes, so the
-# dataset is loadable by name straight afterwards (pip install beir first):
+python3 -m src.internal.servers.retrieval.demo --corpus demo
+```
+
+To change what it serves, pick a server and a corpus.
+
+**Server** (both serve the same API on port 8001, so either works with the backend):
+
+| Module | Retrieval | Notes |
+|--------|-----------|-------|
+| `src.internal.servers.retrieval.demo` | TF-IDF | No model download |
+| `src.internal.servers.retrieval.hybrid` | Dense e5 + TF-IDF, fused with RRF | Downloads e5 on first start; `--no-dense` runs TF-IDF only |
+
+**Corpus** (required, exactly one):
+
+| Flag | Serves |
+|------|--------|
+| `--corpus demo` | The curated 20-document ML corpus (`data/corpus.jsonl`) |
+| `--corpus all` | The union of every corpus registered in `data/corpora.json` |
+| `--corpus <name>` | One registered corpus, such as a BEIR dataset added below |
+| `--corpus_path <file.jsonl>` | An unregistered corpus file |
+
+To add a BEIR benchmark corpus, install `beir` and run the converter. It registers the dataset, so you can serve it by name right away:
+
+```bash
 python3 -m examples.beir_to_corpus --dataset nfcorpus
 python3 -m src.internal.servers.retrieval.demo --corpus nfcorpus
 ```
 
-```bash
-# Alternative — hybrid: RRF-fused dense e5 + sparse TF-IDF, a drop-in for demo
-# on the same port. Add --no-dense to skip the e5 model download.
-python3 -m src.internal.servers.retrieval.hybrid --corpus_path data/corpus.jsonl
-```
+**Optional services.** Start each in its own terminal, then set its variable on the API in step 2:
 
-```bash
-# Optional — cross-encoder reranker (Terminal 1b). Then set the env on the web
-# backend and restart it so retrieved docs are reranked before display:
-python3 -m src.internal.servers.retrieval.rerank --port 8002
-# web backend env: AGENTIC_SEARCH_RERANK_URL=http://localhost:8002/rerank
-```
+| Service | Command | API variable |
+|---------|---------|--------------|
+| Cross-encoder reranker: reranks retrieved documents before display | `python3 -m src.internal.servers.retrieval.rerank --port 8002` | `AGENTIC_SEARCH_RERANK_URL=http://localhost:8002/rerank` |
+| Browser web search: fallback for the `web_search` tool when SerpAPI fails | `python3 -m src.internal.servers.web_search.browser --port 8003` | `AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve` |
 
-```bash
-# Optional — browser web search (Terminal 1c). The `web_search` tool falls back
-# to it when SerpAPI fails. The /api/agent search route has a browser leg too,
-# but nothing sets its URL from the environment yet. No API key needed, but slow. It wraps the `playwright-cli` binary, which is not
-# a pip package, and it refuses to start without that binary rather than serve
-# empty results. Host only, not in the container image.
-python3 -m src.internal.servers.web_search.browser --port 8003
-# web backend env: AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve
-```
+The browser search server needs no API key, but it is slow. It runs only on the host: it wraps the `playwright-cli` binary, which is not a pip package and is not in the container image, and it refuses to start without it. The `/api/agent` search route also has a browser step, but nothing sets its URL from the environment yet.
 
 ### 2. Start the API
 
 The FastAPI backend runs on port **7860**:
 
 ```bash
+PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
+```
+
+With optional services, set their variables on the same command:
+
+```bash
+AGENTIC_SEARCH_RERANK_URL=http://localhost:8002/rerank \
+AGENTIC_SEARCH_BROWSER_SEARCH_URL=http://localhost:8003/retrieve \
 PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
