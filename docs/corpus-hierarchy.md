@@ -191,21 +191,100 @@ Missing IDs are deletions. File replacement is atomic, so updating in place is
 supported. Serving processes load snapshots at startup; restart/reload the
 service explicitly to use the new file.
 
-For compatible artifacts:
+For compatible artifacts, `update` adapts structure locally and keeps cost
+proportional to change:
 
-- Reuse unchanged document embeddings, assignments and descriptions.
-- Embed only new/edited semantic documents and assign them to existing semantic
-  leaf centroids. A changed structural path reroutes the document structurally.
-- Recompute affected centroids; split only overflowing semantic groups.
-- Refresh descriptions for changed memberships/content and their ancestors;
-  remove deleted memberships and unused groups.
+- Reuse unchanged document embeddings, assignments and descriptions. Embed only
+  new/edited semantic documents; `update_cost.embedded_documents` counts them.
+  A changed structural path reroutes the document structurally. Path-derived
+  (structural) groups are never restructured.
+- Assign new/edited semantic documents to the nearest existing leaf centroid,
+  then plan local operations over semantic leaves only, recorded in
+  `structure_operations`:
+  - `spawn`: new/edited documents, plus earlier poor fits carried in
+    `pending_poor_fit_ids`, that fit their leaf poorly form a new leaf when at
+    least `min_cluster_size` of them are coherent (mean similarity to their
+    own centroid at or above the reference). Established members never spawn.
+    Candidates are clustered with increasing cluster counts until a coherent
+    bucket appears, so unrelated poor fits do not hide a new topic. Poor fits
+    that do not spawn are carried to the next update.
+  - `split`: a leaf above `max_cluster_size`, or one of at least twice the
+    minimum size whose poor-fit fraction reaches `split_poor_fit_fraction`
+    (default 0.3), is re-clustered into children.
+  - `merge`: a leaf below `min_cluster_size` joins the nearest leaf it fits
+    (mean member similarity to that centroid at or above the reference) and
+    that stays within `max_cluster_size`, preferring siblings; otherwise it
+    stays.
+  - `remove`: emptied leaves are dropped.
+  - `insert_level` / `collapse_level`: with `--max-fanout N` (default off),
+    a parent with more than N children gets an intermediate level; a parent
+    left with one child is collapsed.
+- When no semantic document was added, edited or deleted, the planner is
+  skipped and the previous semantic groups are kept as they are.
+
+Thresholds are relative, never absolute similarity constants. The reference is
+the `fit_quantile` (default 0.05) quantile of member-to-centroid similarity,
+recorded at `build` as `structure_reference` (`computed_at: "build"`) and reused
+by every update; artifacts written before this field get it computed once from
+their stored leaves (`computed_at: "first_update"`). `structure_reference` is
+`null` when the tree has no semantic documents.
+
+Descriptions follow a refresh policy:
+
+- **Exempt** (always generated): new groups from spawn, split or level
+  insertion, parents refreshed because of a new child, and groups whose stored
+  provenance predates the current description policy or generation settings.
+- **Capped refresh**: groups whose description is already stale, whose
+  sampled documents were deleted, edited or moved out, or whose fresh sample
+  overlaps the stored provenance `sample_ids` by less than
+  `description_refresh_overlap` (Jaccard, default 0.5). Refreshes run in that
+  priority order.
+- **Reuse**: everything else keeps its text.
+
+`--max-description-calls N` caps only the capped refreshes; exempt groups are
+always described. A group over the cap keeps its previous text, drops removed
+documents from its provenance, and is marked `description_stale: true`. At
+serving time, with `--preview-max-nodes` above 0, a stale group is eligible for
+child-preview recovery like a weak one. The cap binds only with a description
+model; extractive descriptions cost no model calls.
+
+`--dry-run` plans the update and prints diagnostics without writing `--output`.
+New/edited documents are still embedded, but no description model is called;
+`update_cost.exempt_description_calls` and `capped_description_calls` then count
+the calls a real run would make, while `description_model_calls` is 0.
+
+`update_cost` reports `embedded_documents`, `description_generations`,
+`description_model_calls`, `exempt_description_calls`,
+`capped_description_calls`, `deferred_descriptions` and `reused_descriptions`.
+`rebuild_recommended` (with a warning) is set when the fraction of semantic
+documents that fit their leaf poorly after maintenance reaches
+`split_poor_fit_fraction`; `churn` still records the changed fraction.
 
 Updates inherit the previous configuration. Changing the encoder, description
-model, clustering settings, or extraction policy requires a fresh `build`.
-A churn warning recommends rebuilding when changed/added/deleted documents
-reach 30% of the previous corpus. Small updates preserve existing cluster
-boundaries; centroid assignment does not guarantee the same result as a full
-k-means rebuild. There is no background job or automatic global reclustering.
+model, clustering or maintenance settings, or extraction policy requires a
+fresh `build`; `update` refuses a changed configuration or embedding dimension.
+Local maintenance does not guarantee the result a full k-means rebuild would
+produce. There is no background job or automatic global reclustering.
+
+The DecisionRAG paper describes how to construct a tree but has no maintenance
+method; these update rules extend its construction rules (title + first
+sentence embeddings, k-means, cluster descriptions) to local changes.
+
+`examples/simulate_hierarchy_churn.py` is a manual offline measurement with
+real local models: it holds out documents, adds and deletes some each day, and
+records per-day and cumulative embedding and description-model call counts for
+incremental `update` against a full `build` of every snapshot. With
+`--decision-model` and `--queries` it also runs the description evaluator on
+both final trees, reporting queries whose gold passages are absent as skipped.
+It has no pass threshold.
+
+```sh
+python -m examples.simulate_hierarchy_churn \
+  --corpus-path data/corpus.jsonl --days 5 --daily-add 20 --daily-delete 10 \
+  --embedding-model intfloat/multilingual-e5-base \
+  --description-model /path/to/local/instruct-model \
+  --max-description-calls 4 --output reports/churn.json --seed 0
+```
 
 Artifacts include normalized documents, configuration, membership, fingerprints,
 vectors, centroids and descriptions. They contain corpus data and should have
@@ -266,6 +345,9 @@ in depth, not an authentication boundary.
 
 ```sh
 python -m pytest tests/unit/test_hierarchy*.py \
+  tests/unit/test_hierarchy_maintenance.py \
+  tests/unit/test_hierarchy_adaptive_update.py \
+  tests/unit/test_hierarchy_churn.py \
   tests/unit/test_description_*.py \
   tests/unit/test_decision_retriever.py \
   tests/unit/test_local_decision_model.py \
@@ -273,7 +355,7 @@ python -m pytest tests/unit/test_hierarchy*.py \
 ```
 
 Tests exercise actual clustering with injected vectors, format extraction,
-artifact corruption and persistence, incremental edits/deletions, description
-cache invalidation, lazy model boundaries, CLI workflows, ragged navigation,
-ACL-safe routing and the existing retrieval API. They do not establish semantic
+artifact corruption and persistence, incremental edits/deletions, local
+structure maintenance, multi-day churn costs, description cache invalidation,
+lazy model boundaries, CLI workflows, ragged navigation, ACL-safe routing and the existing retrieval API. They do not establish semantic
 retrieval quality for a trained production model.

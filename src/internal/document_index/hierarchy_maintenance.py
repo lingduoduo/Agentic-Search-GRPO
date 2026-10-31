@@ -141,21 +141,30 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         existing = sorted(
             (g for g in current if g["document_ids"]), key=lambda g: g["id"]
         )
-        buckets, flag, _ = kmeans_partition(
-            poor,
-            vectors,
-            math.ceil(len(poor) / config.target_cluster_size),
-            max_size,
-            config.random_state,
-        )
+        # Poor fits from unrelated regions can share one cluster with a new
+        # topic and fail the fit check, so retry with doubling cluster counts
+        # until some bucket is coherent; at most len(poor) - min_size + 1
+        # clusters, the most that still leaves room for one min_size bucket.
+        count = math.ceil(len(poor) / config.target_cluster_size)
+        while True:
+            buckets, flag, _ = kmeans_partition(
+                poor, vectors, count, max_size, config.random_state
+            )
+            accepted = []
+            for bucket in buckets:
+                if len(bucket) < min_size:
+                    continue
+                center = centroid(bucket, vectors)
+                fit = np.mean([float(np.dot(vectors[i], center)) for i in bucket])
+                if fit >= reference:
+                    accepted.append(bucket)
+            limit = len(poor) - min_size + 1
+            if accepted or count >= limit:
+                break
+            count = min(2 * count, limit)
         degenerate |= flag
-        for bucket in buckets:
-            if len(bucket) < min_size:
-                continue
+        for bucket in accepted:
             center = centroid(bucket, vectors)
-            fit = np.mean([float(np.dot(vectors[i], center)) for i in bucket])
-            if fit < reference:
-                continue
             parent_id = _nearest(center, existing)["parent_id"]
             if parent_id is not None:
                 forced.add(parent_id)

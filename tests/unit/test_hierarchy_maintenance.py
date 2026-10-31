@@ -144,6 +144,36 @@ def test_new_topic_spawns_leaf_and_forces_parent_refresh():
     assert not r.degenerate
 
 
+def test_new_topic_spawns_despite_scattered_poor_fit_candidates():
+    # Regression: one k-means cluster over all poor fits mixed the new topic
+    # with unrelated poor fits, failed the fit check, and spawned nothing.
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 6)
+    scattered = {
+        "s0": unit([0, 0, 0, 1, 0, 0, 0, 0]),
+        "s1": unit([1, 0, 0, 1, 0, 0, 0, 0]),
+        "s2": unit([0, 1, 0, 1, 0, 0, 0, 0]),
+    }
+    vectors.update(new)
+    vectors.update(scattered)
+    candidates = set(new) | set(scattered)
+    assignments = {**assign(leaves), **{i: "A" for i in candidates}}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        candidates,
+    )
+    spawns = [o for o in r.operations if o["op"] == "spawn"]
+    assert len(spawns) == 1
+    spawned = next(g for g in r.leaves if g["id"] == spawns[0]["group_ids"][0])
+    assert set(spawned["document_ids"]) == set(new)
+    assert set(scattered) <= set(r.pending_poor_fit_ids)
+
+
 def test_effective_minimum_is_capped_by_max_cluster_size():
     vectors = {**topic(0, "a", 3), **topic(1, "b", 3)}
     leaves = [
