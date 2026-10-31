@@ -1,0 +1,296 @@
+import copy
+import math
+
+import numpy as np
+
+from src.internal.document_index.hierarchy import HierarchyConfig
+from src.internal.document_index.hierarchy_maintenance import (
+    centroid,
+    fit_reference,
+    kmeans_partition,
+    maintain_leaves,
+)
+
+DIMS = 8
+
+
+def unit(v):
+    v = np.asarray(v, dtype=float)
+    return (v / np.linalg.norm(v)).tolist()
+
+
+def topic(axis, prefix, n):
+    """n unit vectors near topic ``axis`` with small fixed offsets on axes 4-7."""
+    vectors = {}
+    for j in range(n):
+        v = np.zeros(DIMS)
+        v[axis] = 1.0
+        v[4 + j % 4] = 0.05 * (1 + j % 2)
+        vectors[f"{prefix}{j}"] = unit(v)
+    return vectors
+
+
+def leaf(gid, parent, members, vectors):
+    return dict(
+        id=gid,
+        parent_id=parent,
+        label=gid,
+        document_ids=sorted(members),
+        centroid=centroid(sorted(members), vectors),
+    )
+
+
+def two_leaves():
+    vectors = {**topic(0, "a", 6), **topic(1, "b", 6)}
+    leaves = [
+        leaf("A", "p", [i for i in vectors if i.startswith("a")], vectors),
+        leaf("B", "p", [i for i in vectors if i.startswith("b")], vectors),
+    ]
+    return vectors, leaves
+
+
+def assign(leaves):
+    return {i: g["id"] for g in leaves for i in g["document_ids"]}
+
+
+def test_kmeans_partition_bounds_size_and_is_deterministic():
+    vectors = {**topic(0, "a", 15), **topic(1, "b", 15)}
+    members = sorted(vectors)
+    first = kmeans_partition(members, vectors, 1, 7, 42)
+    second = kmeans_partition(members, vectors, 1, 7, 42)
+    buckets, degenerate = first
+    assert first == second
+    assert not degenerate
+    assert max(len(b) for b in buckets) <= 7
+    assert sorted(i for b in buckets for i in b) == members
+
+
+def test_kmeans_partition_reports_degenerate_vectors():
+    vectors = {str(i): unit([1, 0, 0, 0]) for i in range(4)}
+    buckets, degenerate = kmeans_partition(sorted(vectors), vectors, 3, 10, 42)
+    assert degenerate
+    assert sorted(i for b in buckets for i in b) == sorted(vectors)
+
+
+def test_centroid_is_normalized_mean():
+    vectors = {"x": unit([1, 0]), "y": unit([0, 1])}
+    assert np.allclose(centroid(["x", "y"], vectors), unit([1, 1]))
+
+
+def test_fit_reference_is_quantile_of_member_similarity():
+    vectors = {**topic(0, "a", 4), **topic(1, "b", 4)}
+    vectors["x"] = unit(
+        [math.cos(math.pi / 3), 0, math.sin(math.pi / 3), 0, 0, 0, 0, 0]
+    )
+    a_members = [*topic(0, "a", 4), "x"]
+    leaves = [
+        dict(
+            id="A",
+            parent_id=None,
+            label="A",
+            document_ids=a_members,
+            centroid=unit([1] + [0] * 7),
+        ),
+        leaf("B", None, list(topic(1, "b", 4)), vectors),
+    ]
+    pooled = [
+        float(np.dot(vectors[i], g["centroid"]))
+        for g in leaves
+        for i in g["document_ids"]
+    ]
+    reference = fit_reference(leaves, vectors, 0.05)
+    assert math.isclose(reference, float(np.quantile(pooled, 0.05)))
+    tight = [s for s in pooled if s > 0.9]
+    assert len(tight) == 8 and reference < min(tight)
+
+
+def test_new_topic_spawns_leaf_and_forces_parent_refresh():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 6)
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(new),
+    )
+    assert [o["op"] for o in r.operations] == ["spawn"]
+    spawned = [g for g in r.leaves if g["id"] not in {"A", "B"}]
+    assert len(spawned) == 1
+    assert (
+        set(spawned[0]["document_ids"]) == set(new) and spawned[0]["parent_id"] == "p"
+    )
+    assert spawned[0]["id"].startswith("semantic-")
+    assert r.operations[0]["group_ids"] == [spawned[0]["id"]]
+    assert r.operations[0]["source_ids"] == ["A"]
+    assert r.forced_description_ids == {"p"}
+    assert {"A", "B"} <= {g["id"] for g in r.leaves}
+    assert set(next(g for g in r.leaves if g["id"] == "A")["document_ids"]) == set(
+        topic(0, "a", 6)
+    )
+    assert r.pending_poor_fit_ids == []
+    assert r.poor_fit_count == sum(
+        float(np.dot(vectors[i], g["centroid"])) < reference
+        for g in r.leaves
+        for i in g["document_ids"]
+    )
+    assert not r.degenerate
+
+
+def test_effective_minimum_is_capped_by_max_cluster_size():
+    vectors = {**topic(0, "a", 3), **topic(1, "b", 3)}
+    leaves = [
+        leaf("A", "p", list(topic(0, "a", 3)), vectors),
+        leaf("B", "p", list(topic(1, "b", 3)), vectors),
+    ]
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 3)
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    config = HierarchyConfig(max_cluster_size=3, min_cluster_size=5)
+    r = maintain_leaves(leaves, vectors, assignments, config, reference, set(new))
+    assert [o["op"] for o in r.operations] == ["spawn"]
+    assert {"A", "B"} <= {g["id"] for g in r.leaves}
+
+
+def test_too_few_poor_fits_do_not_spawn():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 3)
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(new),
+    )
+    assert r.operations == []
+    assert r.pending_poor_fit_ids == sorted(new)
+    assert r.forced_description_ids == set()
+
+
+def test_established_poor_fits_never_spawn():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 6)
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(),
+    )
+    assert "spawn" not in [o["op"] for o in r.operations]
+    assert r.pending_poor_fit_ids == []
+
+
+def test_drifted_leaf_splits_into_coherent_children():
+    vectors, _ = two_leaves()
+    leaves = [leaf("D", "p", sorted(vectors), vectors)]
+    r = maintain_leaves(
+        leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    assert [o["op"] for o in r.operations] == ["split"]
+    assert r.operations[0]["source_ids"] == ["D"]
+    assert "D" not in {g["id"] for g in r.leaves}
+    assert sorted(r.operations[0]["group_ids"]) == sorted(g["id"] for g in r.leaves)
+    assert sorted(sorted(g["document_ids"]) for g in r.leaves) == [
+        sorted(topic(0, "a", 6)),
+        sorted(topic(1, "b", 6)),
+    ]
+    assert all(g["parent_id"] == "p" for g in r.leaves)
+    assert r.poor_fit_count == 0
+
+
+def test_undersized_leaf_merges_into_nearest_sibling():
+    vectors, leaves = two_leaves()
+    small = topic(0, "s", 2)
+    vectors.update(small)
+    leaves.append(leaf("S", "p", list(small), vectors))
+    r = maintain_leaves(
+        leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    assert [o["op"] for o in r.operations] == ["merge"]
+    assert r.operations[0]["group_ids"] == ["A"]
+    assert sorted({g["id"] for g in r.leaves}) == ["A", "B"]
+    assert set(small) <= set(
+        next(g for g in r.leaves if g["id"] == "A")["document_ids"]
+    )
+
+
+def test_merge_prefers_same_parent():
+    vectors, leaves = two_leaves()
+    leaves[1]["parent_id"] = "q"
+    small = topic(1, "s", 2)
+    vectors.update(small)
+    leaves.append(leaf("S", "p", list(small), vectors))
+    r = maintain_leaves(
+        leaves, vectors, assign(leaves), HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    assert [(o["op"], o["group_ids"]) for o in r.operations] == [("merge", ["A"])]
+
+
+def test_emptied_leaf_is_removed():
+    vectors, leaves = two_leaves()
+    leaves.append(
+        dict(
+            id="E",
+            parent_id="p",
+            label="E",
+            document_ids=["a0"],
+            centroid=unit([1] + [0] * 7),
+        )
+    )
+    leaves[0]["document_ids"] = leaves[0]["document_ids"][1:]
+    assignments = {**assign(leaves[:2]), "a0": "A"}
+    r = maintain_leaves(
+        leaves, vectors, assignments, HierarchyConfig(min_cluster_size=5), 0.9, set()
+    )
+    assert [(o["op"], o["source_ids"]) for o in r.operations] == [("remove", ["E"])]
+    assert sorted(g["id"] for g in r.leaves) == ["A", "B"]
+
+
+def test_tiny_semantic_set_is_stable():
+    vectors = {"x": unit([1, 0, 0, 0]), "y": unit([0, 1, 0, 0])}
+    leaves = [leaf("X", None, ["x"], vectors), leaf("Y", None, ["y"], vectors)]
+    reference = fit_reference(leaves, vectors, 0.05)
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assign(leaves),
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        {"x", "y"},
+    )
+    ops = [o["op"] for o in r.operations]
+    assert "spawn" not in ops and "split" not in ops
+    assert sorted(i for g in r.leaves for i in g["document_ids"]) == ["x", "y"]
+
+
+def test_inputs_not_mutated():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    new = topic(2, "n", 6)
+    vectors.update(new)
+    assignments = {**assign(leaves), **{i: "A" for i in new}}
+    candidates = set(new)
+    before = copy.deepcopy((leaves, vectors, assignments, candidates))
+    maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        candidates,
+    )
+    assert (leaves, vectors, assignments, candidates) == before

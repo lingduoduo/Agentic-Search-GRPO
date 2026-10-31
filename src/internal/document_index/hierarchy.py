@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import math
 import os
@@ -21,6 +20,7 @@ from .hierarchy_descriptions import (
     select_description_samples,
 )
 from .hierarchy_formats import first_sentence, normalize_document, split_passages
+from .hierarchy_maintenance import _hash
 
 
 @dataclass
@@ -80,12 +80,6 @@ class HierarchyConfig:
             value = getattr(self, name)
             if type(value) not in (int, float) or not valid(value):
                 raise ValueError(f"{name} is out of range")
-
-
-def _hash(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()
-    ).hexdigest()
 
 
 @dataclass
