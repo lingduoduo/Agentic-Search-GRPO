@@ -7,7 +7,6 @@ import json
 import math
 import os
 import tempfile
-import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -20,7 +19,14 @@ from .hierarchy_descriptions import (
     select_description_samples,
 )
 from .hierarchy_formats import first_sentence, normalize_document, split_passages
-from .hierarchy_maintenance import _hash
+from .hierarchy_maintenance import (
+    _hash,
+    balance_levels,
+    centroid,
+    fit_reference,
+    kmeans_partition,
+    maintain_leaves,
+)
 
 
 @dataclass
@@ -413,75 +419,138 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         if not doc["structure_path"]:
             notices.append("Unstructured documents use the Documents fallback group.")
 
-    def partition(members, prefix=None):
-        members = sorted(members)
-        if not members:
-            return
-        count = min(
-            len(members),
-            config.n_clusters or math.ceil(len(members) / config.target_cluster_size),
-        )
-        from sklearn.cluster import KMeans
-
-        with warnings.catch_warnings(record=True) as caught:
-            labels = KMeans(
-                n_clusters=count, random_state=config.random_state, n_init=10
-            ).fit_predict(np.array([vectors[i] for i in members]))
-        if caught:
-            notices.append("Degenerate semantic vectors reduced distinct clusters.")
-        bucket_map = {}
-        for member, label in zip(members, labels):
-            bucket_map.setdefault(int(label), []).append(member)
-        buckets = [bucket_map[label] for label in sorted(bucket_map)]
-        for bucket in buckets:
-            if len(bucket) > config.max_cluster_size:
-                notices.append(
-                    "Oversized semantic cluster split into deterministic balanced chunks; routing quality may be reduced."
-                )
-            count_parts = math.ceil(len(bucket) / config.max_cluster_size)
-            for part in np.array_split(np.array(bucket, dtype=object), count_parts):
-                chunk = part.tolist()
-                gid = "semantic-" + _hash(chunk)[:20]
-                center = np.mean([vectors[i] for i in chunk], axis=0)
-                norm = np.linalg.norm(center)
-                center = center / norm if norm else center
-                add_group(gid, prefix, "Cluster " + gid[-8:], chunk, center.tolist())
-
-    if previous and semantic:
-        old_parent_ids = {g["parent_id"] for g in previous.groups}
-        old_semantic = [
-            g
+    # Semantic (clustered) groups only; structural groups above are never touched.
+    old_semantic = (
+        [
+            copy.deepcopy(
+                {
+                    k: g[k]
+                    for k in ("id", "parent_id", "label", "document_ids", "centroid")
+                }
+            )
             for g in previous.groups
-            if "centroid" in g and g["id"] not in old_parent_ids
+            if "centroid" in g
         ]
-        if old_semantic:
-            buckets = {g["id"]: [] for g in old_semantic}
-            for i in semantic:
-                old_gid = previous.assignments.get(i) if i in unchanged else None
-                if old_gid not in buckets:
-                    old_gid = max(
-                        old_semantic,
-                        key=lambda g: float(np.dot(vectors[i], g["centroid"])),
-                    )["id"]
-                buckets[old_gid].append(i)
-            for old in old_semantic:
-                members = buckets[old["id"]]
-                if len(members) > config.max_cluster_size:
-                    partition(members)
-                elif members:
-                    center = np.mean([vectors[i] for i in members], axis=0)
-                    norm = np.linalg.norm(center)
-                    add_group(
-                        old["id"],
-                        None,
-                        old["label"],
-                        members,
-                        (center / norm if norm else center).tolist(),
-                    )
+        if previous
+        else []
+    )
+    old_semantic_parents = {g["parent_id"] for g in old_semantic}
+    old_leaves = [g for g in old_semantic if g["id"] not in old_semantic_parents]
+    structure_operations = []
+    forced_description_ids = set()
+    reference = None
+    pending_poor_fit_ids = []
+    degenerate = False
+    if semantic and old_leaves:
+        stored = previous.diagnostics.get("structure_reference")
+        reference = (
+            copy.deepcopy(stored)
+            if stored
+            else dict(
+                poor_fit_similarity=fit_reference(
+                    old_leaves, previous.vectors, config.fit_quantile
+                ),
+                quantile=config.fit_quantile,
+                computed_at="first_update",
+            )
+        )
+        leaf_ids = {g["id"] for g in old_leaves}
+        leaf_assignments = {}
+        for i in semantic:
+            old_gid = previous.assignments.get(i) if i in unchanged else None
+            if old_gid not in leaf_ids:
+                old_gid = max(
+                    old_leaves,
+                    key=lambda g: float(np.dot(vectors[i], g["centroid"])),
+                )["id"]
+            leaf_assignments[i] = old_gid
+        old_semantic_docs = {i for g in old_leaves for i in g["document_ids"]}
+        carried = sorted(
+            set(previous.diagnostics.get("pending_poor_fit_ids", [])) & semantic_set
+        )
+        if old_semantic_docs == semantic_set and semantic_set <= unchanged:
+            # No semantic document changed: the previous structure is a fixed point.
+            semantic_groups = old_semantic
+            pending_poor_fit_ids = carried
         else:
-            partition(semantic)
+            result = maintain_leaves(
+                old_leaves,
+                vectors,
+                leaf_assignments,
+                config,
+                reference["poor_fit_similarity"],
+                sorted((semantic_set - unchanged) | set(carried)),
+            )
+            structure_operations.extend(result.operations)
+            forced_description_ids.update(result.forced_description_ids)
+            pending_poor_fit_ids = result.pending_poor_fit_ids
+            degenerate = result.degenerate
+            semantic_groups = result.leaves + [
+                g for g in old_semantic if g["id"] in old_semantic_parents
+            ]
+    elif semantic:
+        count = config.n_clusters or math.ceil(
+            len(semantic) / config.target_cluster_size
+        )
+        buckets, degenerate = kmeans_partition(
+            semantic, vectors, count, config.max_cluster_size, config.random_state
+        )
+        # Chunking past the k-means cluster count means a cluster was oversized.
+        if len(buckets) > min(len(semantic), count):
+            notices.append(
+                "Oversized semantic cluster split into deterministic balanced chunks; routing quality may be reduced."
+            )
+        semantic_groups = []
+        for bucket in buckets:
+            gid = "semantic-" + _hash(bucket)[:20]
+            semantic_groups.append(
+                dict(
+                    id=gid,
+                    parent_id=None,
+                    label="Cluster " + gid[-8:],
+                    document_ids=bucket,
+                    centroid=centroid(bucket, vectors),
+                )
+            )
+        reference = dict(
+            poor_fit_similarity=fit_reference(
+                semantic_groups, vectors, config.fit_quantile
+            ),
+            quantile=config.fit_quantile,
+            computed_at="build",
+        )
     else:
-        partition(semantic)
+        semantic_groups = []
+    if degenerate:
+        notices.append("Degenerate semantic vectors reduced distinct clusters.")
+    semantic_groups, level_operations, new_level_ids = balance_levels(
+        semantic_groups, vectors, config.max_fanout, config.random_state
+    )
+    structure_operations.extend(level_operations)
+    semantic_by_id = {g["id"]: g for g in semantic_groups}
+    forced_description_ids.update(
+        semantic_by_id[gid]["parent_id"]
+        for gid in new_level_ids
+        if semantic_by_id[gid]["parent_id"] is not None
+    )
+    semantic_descendants = _descendant_memberships(semantic_by_id)
+    for g in semantic_groups:
+        members = g["document_ids"]
+        center = (
+            g["centroid"]
+            if members
+            else centroid(semantic_descendants[g["id"]], vectors)
+        )
+        add_group(g["id"], g["parent_id"], g["label"], list(members), center)
+    poor_fit_documents = (
+        sum(
+            float(np.dot(vectors[i], g["centroid"])) < reference["poor_fit_similarity"]
+            for g in semantic_groups
+            for i in g["document_ids"]
+        )
+        if reference
+        else 0
+    )
     old_groups = {g["id"]: g for g in previous.groups} if previous else {}
 
     generation_settings = dict(
@@ -655,13 +724,21 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         reused_documents=len(unchanged),
         oversize_groups=sum(size > config.max_cluster_size for size in sizes),
         churn=churn,
-        rebuild_recommended=bool(previous and churn >= 0.3),
+        structure_reference=reference,
+        structure_operations=structure_operations,
+        poor_fit_documents=int(poor_fit_documents),
+        pending_poor_fit_ids=pending_poor_fit_ids,
+        rebuild_recommended=bool(
+            previous
+            and semantic
+            and poor_fit_documents / len(semantic) >= config.split_poor_fit_fraction
+        ),
         warnings=sorted(set(notices)),
         max_section_count=max((len(d["sections"]) for d in normalized), default=0),
     )
     if diagnostics["rebuild_recommended"]:
         diagnostics["warnings"].append(
-            "Significant corpus churn: perform a full rebuild to reconsider semantic cluster boundaries."
+            "Many semantic documents fit their cluster poorly after local maintenance; consider a full rebuild."
         )
     return HierarchyArtifact(
         config=settings,
