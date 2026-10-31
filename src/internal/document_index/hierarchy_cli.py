@@ -41,6 +41,7 @@ def _parser():
     )
     build.add_argument("--embedding-model", default="intfloat/multilingual-e5-base")
     build.add_argument("--description-model")
+    build.add_argument("--description-sample-size", type=int, default=12)
     build.add_argument("--target-cluster-size", type=int, default=100)
     build.add_argument("--max-cluster-size", type=int, default=200)
     build.add_argument(
@@ -115,6 +116,7 @@ def main(argv=None):
                 mode=args.mode,
                 embedding_model=args.embedding_model,
                 description_model=args.description_model,
+                description_sample_size=args.description_sample_size,
                 target_cluster_size=args.target_cluster_size,
                 max_cluster_size=args.max_cluster_size,
                 n_clusters=args.clusters,

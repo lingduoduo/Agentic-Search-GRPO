@@ -15,6 +15,11 @@ from pathlib import Path
 
 import numpy as np
 
+from .hierarchy_descriptions import (
+    DESCRIPTION_POLICY_VERSION,
+    assess_description,
+    select_description_samples,
+)
 from .hierarchy_formats import first_sentence, normalize_document, split_passages
 
 
@@ -28,11 +33,17 @@ class HierarchyConfig:
     infer_layout: bool = False
     embedding_model: str = "intfloat/multilingual-e5-base"
     description_model: str | None = None
+    description_sample_size: int = 12
 
     def __post_init__(self):
         if self.mode not in ("auto", "structure", "cluster"):
             raise ValueError("mode must be auto, structure or cluster")
-        for name in ("target_cluster_size", "max_cluster_size", "n_clusters"):
+        for name in (
+            "target_cluster_size",
+            "max_cluster_size",
+            "n_clusters",
+            "description_sample_size",
+        ):
             value = getattr(self, name)
             if value is None and name == "n_clusters":
                 continue
@@ -151,7 +162,7 @@ class HierarchyArtifact:
             ):
                 raise ValueError("invalid or duplicate group id")
             for key in ("label", "description", "description_source"):
-                if not isinstance(group.get(key), str) or not group[key]:
+                if not isinstance(group.get(key), str) or not group[key].strip():
                     raise ValueError(f"invalid group {key}")
             if "parent_id" not in group or (
                 group["parent_id"] is not None
@@ -180,6 +191,42 @@ class HierarchyArtifact:
                     raise ValueError("group parent cycle or missing parent")
                 seen.add(gid)
                 gid = groups[gid]["parent_id"]
+        descendants = _descendant_memberships(groups)
+        for gid, group in groups.items():
+            provenance = group.get("description_provenance")
+            if provenance is not None:
+                if not isinstance(provenance, dict):
+                    raise ValueError("invalid description provenance")
+                samples = provenance.get("document_ids")
+                roles = provenance.get("roles")
+                if (
+                    not isinstance(samples, list)
+                    or any(not isinstance(i, str) for i in samples)
+                    or len(set(samples)) != len(samples)
+                    or not set(samples) <= set(descendants[gid])
+                    or not isinstance(roles, dict)
+                    or set(roles) != set(samples)
+                    or any(
+                        not isinstance(v, list)
+                        or not v
+                        or any(not isinstance(r, str) or not r.strip() for r in v)
+                        for v in roles.values()
+                    )
+                    or any(
+                        not isinstance(provenance.get(k), str)
+                        or not provenance[k].strip()
+                        for k in ("selection_version", "generation_version")
+                    )
+                ):
+                    raise ValueError("invalid description provenance")
+            quality = group.get("description_quality")
+            if quality is not None and (
+                not isinstance(quality, dict)
+                or type(quality.get("weak")) is not bool
+                or not isinstance(quality.get("flags"), list)
+                or any(not isinstance(f, str) for f in quality["flags"])
+            ):
+                raise ValueError("invalid description quality")
         json.dumps(asdict(self), allow_nan=False)
         return self
 
@@ -256,7 +303,7 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
                 f"adapter identity does not match config.{field_name}; declare the correct model for a full rebuild"
             )
     settings = asdict(config)
-    if previous and previous.config != settings:
+    if previous and asdict(HierarchyConfig(**previous.config)) != settings:
         raise ValueError(
             "hierarchy configuration changed; perform a full rebuild without previous"
         )
@@ -424,6 +471,18 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         partition(semantic)
     old_groups = {g["id"]: g for g in previous.groups} if previous else {}
 
+    generation_settings = dict(
+        sample_size=config.description_sample_size,
+        adapter=type(describer).__module__ + "." + type(describer).__qualname__
+        if describer
+        else "extractive",
+    )
+    # sample_size comes from config: it is passed explicitly to the describer.
+    for name in ("model_name", "max_context_tokens", "max_new_tokens"):
+        value = getattr(describer, name, None)
+        if value is not None:
+            generation_settings[name] = value
+    generation_signature = _hash(generation_settings)
     memberships = _descendant_memberships(groups)
     old_memberships = _descendant_memberships(old_groups)
     for gid, group in groups.items():
@@ -431,34 +490,85 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
         members = memberships[gid]
         old = old_groups.get(gid)
         old_members = old_memberships.get(gid, [])
-        if old and members == old_members and all(i in unchanged for i in members):
-            group["description"] = old["description"]
-            group["description_source"] = old["description_source"]
-        else:
-            description = (
-                describer.describe(
-                    group["label"], [copy.deepcopy(by_id[i]) for i in members]
-                )
-                if describer
-                else None
-            )
-            if description is not None and (
-                not isinstance(description, str) or not description.strip()
+        if (
+            old
+            and members == old_members
+            and all(i in unchanged for i in members)
+            and (old.get("description_provenance") or {}).get("selection_version")
+            == DESCRIPTION_POLICY_VERSION
+            and old["description_provenance"].get("generation_signature")
+            == generation_signature
+        ):
+            for key in (
+                "description",
+                "description_source",
+                "description_provenance",
+                "description_quality",
             ):
-                raise ValueError("describer must return nonempty text")
-            group["description"] = (
-                description.strip()
-                if description
-                else "; ".join(
-                    by_id[i]["title"] or first_sentence(by_id[i]["contents"])
-                    for i in members[:8]
-                )[:1600]
-                or group["label"]
+                if key in old:
+                    group[key] = copy.deepcopy(old[key])
+        else:
+            documents = [copy.deepcopy(by_id[i]) for i in members]
+            samples = select_description_samples(
+                documents, vectors=vectors, limit=config.description_sample_size
             )
+            selected = [copy.deepcopy(by_id[s["document_id"]]) for s in samples]
+            provenance = dict(
+                document_ids=[s["document_id"] for s in samples],
+                roles={s["document_id"]: s["roles"] for s in samples},
+                selection_version=DESCRIPTION_POLICY_VERSION,
+                generation_version="custom-text-v1" if describer else "extractive-v1",
+                warnings=[],
+            )
+            if describer and hasattr(describer, "describe_with_provenance"):
+                result = describer.describe_with_provenance(
+                    group["label"],
+                    documents,
+                    vectors=vectors,
+                    sample_size=config.description_sample_size,
+                )
+                description = result["text"]
+                provenance = {k: v for k, v in result.items() if k != "text"}
+            elif describer:
+                description = describer.describe(group["label"], selected)
+            else:
+                quota = max(1, (1600 - 2 * len(selected)) // max(1, len(selected)))
+                contributing = [
+                    (
+                        d["id"],
+                        (d["title"] or first_sentence(d["contents"])).strip()[:quota],
+                    )
+                    for d in selected
+                ]
+                contributing = [(i, t) for i, t in contributing if t]
+                description = "; ".join(t for _, t in contributing) or group["label"]
+                provenance["document_ids"] = [i for i, _ in contributing]
+                provenance["roles"] = {
+                    i: provenance["roles"][i] for i, _ in contributing
+                }
+            if not isinstance(description, str) or not description.strip():
+                raise ValueError("describer must return nonempty text")
+            group["description"] = description.strip()
             group["description_source"] = (
                 getattr(describer, "description_source", "llm")
-                if description
+                if describer
                 else "extractive"
+            )
+            provenance["generation_signature"] = generation_signature
+            provenance["generation_settings"] = generation_settings
+            provenance.setdefault("warnings", [])
+            group["description_provenance"] = provenance
+        if group["description_provenance"].get("warnings"):
+            notices.append(
+                "Description provenance records context or sampling coverage losses; inspect group provenance."
+            )
+        group["description_quality"] = assess_description(group["description"])
+        if any(
+            "coverage_limited:language" in roles
+            for roles in group["description_provenance"]["roles"].values()
+        ):
+            notices.append(
+                "Description sampling budget cannot cover every language stratum."
             )
     if any(g["description_source"] == "extractive" for g in groups.values()):
         notices.append(
@@ -501,6 +611,10 @@ def build_hierarchy(docs, config=None, *, embedder=None, describer=None, previou
             "A structural group exceeds max_cluster_size; inspect source hierarchy granularity. The hard cluster-size bound applies to semantic groups."
         )
     diagnostics = dict(
+        weak_description_count=sum(
+            g["description_quality"]["weak"] for g in groups.values()
+        ),
+        description_policy_version=DESCRIPTION_POLICY_VERSION,
         document_count=len(by_id),
         group_count=len(groups),
         group_sizes=sizes,

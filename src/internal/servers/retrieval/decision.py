@@ -68,6 +68,8 @@ def create_app(retriever: DecisionRetriever):
         if body.include_trace:
             traces = [[asdict(stage) for stage in run.stages] for run in runs]
             response["trace"] = traces[0] if body.query is not None else traces
+            usages = [run.usage for run in runs]
+            response["usage"] = usages[0] if body.query is not None else usages
         return response
 
     return app
@@ -93,6 +95,14 @@ def parse_args() -> argparse.Namespace:
     for kind in ("group", "document", "section"):
         parser.add_argument(f"--{kind}-beam-width", type=int, default=None)
     parser.add_argument("--min-relevance", type=float, default=0.0)
+    for name, default in (
+        ("preview-max-nodes", 0),
+        ("preview-chars-per-node", 600),
+        ("preview-total-chars", 1800),
+        ("preview-children", 4),
+        ("preview-scan-limit", 64),
+    ):
+        parser.add_argument(f"--{name}", type=int, default=default)
     parser.add_argument("--max-context-tokens", type=int, default=4096)
     parser.add_argument("--inference-batch-size", type=int, default=1)
     add_host_port_args(
@@ -118,6 +128,11 @@ def main() -> None:
         passage_words=args.passage_words,
         min_relevance=args.min_relevance,
         max_passage_chars=args.max_passage_chars,
+        preview_max_nodes=args.preview_max_nodes,
+        preview_chars_per_node=args.preview_chars_per_node,
+        preview_total_chars=args.preview_total_chars,
+        preview_children=args.preview_children,
+        preview_scan_limit=args.preview_scan_limit,
         beam_widths={
             kind: value
             for kind in ("group", "document", "section")

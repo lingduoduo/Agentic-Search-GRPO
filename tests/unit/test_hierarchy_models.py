@@ -131,3 +131,45 @@ def test_local_describer_generates_only_offline_with_bounded_context(monkeypatch
         )
         == "中文知识主题"
     )
+
+
+def test_packing_records_only_actual_sample_ids_and_preserves_diversity():
+    import json
+
+    torch = pytest.importorskip("torch")
+    prompts = []
+
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def apply_chat_template(self, messages, **kwargs):
+            return messages[1]["content"]
+
+        def __call__(self, text, **kwargs):
+            prompts.append(json.loads(text))
+            width = len(text)
+            return {"input_ids": torch.ones((1, width), dtype=torch.long)}
+
+        def decode(self, tokens, **kwargs):
+            return "Specific topics and minority language coverage"
+
+    class Model:
+        device = "cpu"
+        config = SimpleNamespace(max_position_embeddings=10000)
+
+        def generate(self, input_ids, **kwargs):
+            return torch.cat([input_ids, torch.tensor([[1]])], dim=1)
+
+    adapter = LocalHierarchyDescriber("fake", max_context_tokens=180, max_new_tokens=1)
+    adapter._model = Model()
+    adapter._tokenizer = Tokenizer()
+    docs = [
+        dict(id="a", title="English title " * 30, contents="A" * 500),
+        dict(id="b", title="中文标题" * 40, contents="中" * 500),
+    ]
+    result = adapter.describe_with_provenance("Group", docs)
+    assert len(result["document_ids"]) == len(prompts[-1]["sample"])
+    assert set(result["document_ids"]) == {"a", "b"}
+    assert len(prompts[-1]["sample"][0]["title"]) < 256
+    assert not result["warnings"]

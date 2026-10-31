@@ -229,3 +229,91 @@ def test_granularity_diagnostics_include_explicit_passage_estimate_settings():
     assert diagnostics["estimated_max_passages_per_section"] > 60
     assert any("60 passages" in warning for warning in diagnostics["warnings"])
     assert any("imbalanced" in warning for warning in diagnostics["warnings"])
+
+
+def test_old_schema_policy_upgrade_preserves_embeddings_and_validates_provenance():
+    import copy
+    import pytest
+    from src.internal.document_index.hierarchy import HierarchyConfig, build_hierarchy
+
+    docs = [
+        {
+            "id": "a",
+            "title": "Topic A",
+            "contents": "Details",
+            "structure_path": ["Guide"],
+        }
+    ]
+    artifact = build_hierarchy(docs, HierarchyConfig(mode="structure"))
+    old = copy.deepcopy(artifact)
+    old.config.pop("description_sample_size")
+    for group in old.groups:
+        group.pop("description_provenance")
+        group.pop("description_quality")
+        group["description"] = "Old description"
+    upgraded = build_hierarchy(docs, previous=old)
+    assert upgraded.groups[0]["description"] != "Old description"
+    assert upgraded.groups[0]["description_provenance"]["document_ids"] == ["a"]
+    invalid = copy.deepcopy(upgraded)
+    invalid.groups[0]["description_provenance"]["document_ids"] = ["missing"]
+    with pytest.raises(ValueError, match="provenance"):
+        invalid.validate()
+    invalid = copy.deepcopy(upgraded)
+    invalid.groups[0]["description"] = "   "
+    with pytest.raises(ValueError, match="description"):
+        invalid.validate()
+
+
+def test_old_semantic_description_policy_refresh_does_not_reembed():
+    encoder = Encoder()
+    artifact = build_hierarchy(
+        docs(), HierarchyConfig(mode="cluster", n_clusters=1), embedder=encoder
+    )
+    encoder.calls.clear()
+    for group in artifact.groups:
+        group.pop("description_provenance")
+    refreshed = build_hierarchy(docs(), embedder=encoder, previous=artifact)
+    assert encoder.calls == []
+    assert refreshed.vectors == artifact.vectors
+    assert all("description_provenance" in group for group in refreshed.groups)
+
+
+def test_generation_settings_record_config_sample_size_and_null_provenance_updates():
+    import copy
+    from src.internal.document_index.hierarchy import HierarchyConfig, build_hierarchy
+    from src.internal.document_index.hierarchy_descriptions import (
+        select_description_samples,
+    )
+
+    class Describer:
+        sample_size = 12
+        model_name = "m"
+
+        def describe_with_provenance(self, label, docs, *, vectors=None, sample_size):
+            samples = select_description_samples(docs, limit=sample_size)
+            return dict(
+                text="Topic summary for " + label,
+                document_ids=[s["document_id"] for s in samples],
+                roles={s["document_id"]: s["roles"] for s in samples},
+                selection_version="coverage-v1",
+                generation_version="test",
+                warnings=[],
+            )
+
+    docs = [
+        {"id": f"d{i}", "title": f"T{i}", "contents": f"w{i}.", "structure_path": ["A"]}
+        for i in range(5)
+    ]
+    config = HierarchyConfig(
+        mode="structure", description_model="m", description_sample_size=3
+    )
+    artifact = build_hierarchy(docs, config, describer=Describer())
+    provenance = artifact.groups[0]["description_provenance"]
+    assert len(provenance["document_ids"]) == 3
+    assert provenance["generation_settings"]["sample_size"] == 3
+    old = copy.deepcopy(artifact)
+    for group in old.groups:
+        group["description_provenance"] = None
+    old.validate()
+    refreshed = build_hierarchy(docs, config, describer=Describer(), previous=old)
+    assert all(g["description_provenance"] for g in refreshed.groups)

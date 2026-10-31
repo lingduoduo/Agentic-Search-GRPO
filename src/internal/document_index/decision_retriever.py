@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -42,6 +43,11 @@ class DecisionRetrieverConfig:
     min_relevance: float = 0.0
     max_passage_chars: int = 1200
     beam_widths: dict[str, int] = field(default_factory=dict)
+    preview_max_nodes: int = 0
+    preview_chars_per_node: int = 600
+    preview_total_chars: int = 1800
+    preview_children: int = 4
+    preview_scan_limit: int = 64
 
     def __post_init__(self) -> None:
         for name in (
@@ -50,10 +56,20 @@ class DecisionRetrieverConfig:
             "batch_size",
             "passage_words",
             "max_passage_chars",
+            "preview_chars_per_node",
+            "preview_total_chars",
+            "preview_children",
+            "preview_scan_limit",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if (
+            isinstance(self.preview_max_nodes, bool)
+            or not isinstance(self.preview_max_nodes, int)
+            or self.preview_max_nodes < 0
+        ):
+            raise ValueError("preview_max_nodes must be a nonnegative integer")
         if not isinstance(self.beam_widths, dict) or any(
             kind not in {"group", "topic", "document", "section"}
             or isinstance(width, bool)
@@ -74,12 +90,30 @@ class DecisionStage:
     candidate_ids: tuple[str, ...]
     scores: tuple[float, ...]
     selected_ids: tuple[str, ...]
+    previewed_ids: tuple[str, ...] = ()
+    preview_chars: int = 0
+    candidate_text_chars: tuple[int, ...] = ()
 
 
 @dataclass
 class NavigationResult:
     results: list[dict] = field(default_factory=list)
     stages: list[DecisionStage] = field(default_factory=list)
+    usage: dict[str, int] = field(
+        default_factory=lambda: dict.fromkeys(
+            (
+                "binary_calls",
+                "binary_judgments",
+                "choice_calls",
+                "choice_judgments",
+                "candidate_chars",
+                "preview_nodes",
+                "preview_chars",
+                "preview_scan_nodes",
+            ),
+            0,
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -87,6 +121,7 @@ class _Node:
     candidate: DecisionCandidate
     children: tuple[_Node, ...] = ()
     document: dict | None = None
+    description: str | None = None
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -146,8 +181,25 @@ class DecisionRetriever:
         config: DecisionRetrieverConfig | None = None,
         *,
         hierarchy: HierarchyArtifact | None = None,
+        group_descriptions: dict[str, str] | None = None,
     ) -> None:
         self._hierarchy = hierarchy
+        self._group_descriptions = dict(group_descriptions or {})
+        if group_descriptions is not None and (
+            not isinstance(group_descriptions, dict)
+            or any(
+                not isinstance(key, str) or not isinstance(text, str)
+                for key, text in group_descriptions.items()
+            )
+        ):
+            raise ValueError("group_descriptions must map group IDs to text")
+        known_groups = (
+            {group["id"] for group in hierarchy.groups}
+            if hierarchy is not None
+            else set()
+        )
+        if set(self._group_descriptions) - known_groups:
+            raise ValueError("Unknown group description override")
         if hierarchy is not None:
             hierarchy.validate()
             supplied_ids = [str(doc.get("id", i)) for i, doc in enumerate(docs)]
@@ -279,13 +331,17 @@ class DecisionRetriever:
             )
             if not children:
                 return None
+            description = self._group_descriptions.get(
+                group["id"], group["description"]
+            )
             return _Node(
                 DecisionCandidate(
                     f"g/{group['id']}",
                     "group",
-                    f"{group['label']}\n{group['description']}",
+                    f"{group['label']}\n{description}".strip(),
                 ),
                 tuple(children),
+                description=description,
             )
 
         return tuple(
@@ -294,12 +350,134 @@ class DecisionRetriever:
             if (node := build(group)) is not None
         )
 
+    def _preview(self, node: _Node, result: NavigationResult, limit: int) -> str:
+        """Inspect only the already visible subtree, within the query scan cap."""
+        from src.internal.document_index.hierarchy_formats import first_sentence
+
+        prefix = "\nSampled child evidence (not exhaustive):\n"
+        if limit <= len(prefix) + 16:
+            return ""
+        per_item = max(1, (limit - len(prefix)) // self.config.preview_children)
+        # Lazy depth-first branch iterators reach a passage before spending the
+        # budget on every shallow page of a wide group. After one passage from
+        # a document, discard its remaining iterator frames without inspecting
+        # more sibling passages; then continue with the next visible document.
+        frames = [(iter((node,)), None)]
+        items = []
+        seen_documents = set()
+        while frames and len(items) < self.config.preview_children:
+            if result.usage["preview_scan_nodes"] >= self.config.preview_scan_limit:
+                break
+            iterator, owner = frames[-1]
+            try:
+                current = next(iterator)
+            except StopIteration:
+                frames.pop()
+                continue
+            result.usage["preview_scan_nodes"] += 1
+            if current.document is not None:
+                document = current.document
+                source = document["metadata"].get("document_id", document["id"])
+                if source not in seen_documents:
+                    seen_documents.add(source)
+                    title_limit = min(96, per_item // 3)
+                    title = document.get("title", "")[:title_limit]
+                    text = first_sentence(document["text"])
+                    items.append(f"{text} [title: {title}]"[:per_item])
+                if owner is not None:
+                    while frames and frames[-1][1] == owner:
+                        frames.pop()
+                elif node.candidate.kind == "section":
+                    break
+            else:
+                child_owner = (
+                    current.candidate.id
+                    if current.candidate.kind == "document"
+                    else owner
+                )
+                frames.append((iter(current.children), child_owner))
+        return (prefix + "\n".join(items))[:limit] if items else ""
+
+    def _with_previews(
+        self, candidates: list[_Node], result: NavigationResult
+    ) -> tuple[list[_Node], tuple[str, ...], int]:
+        if not self.config.preview_max_nodes or candidates[0].document is not None:
+            return candidates, (), 0
+        from src.internal.document_index.hierarchy_descriptions import (
+            assess_description,
+        )
+
+        def text(node):
+            return (
+                node.description
+                if node.description is not None
+                else node.candidate.text
+            )
+
+        normalized = [" ".join(text(node).casefold().split()) for node in candidates]
+        counts = Counter(normalized)
+        output, previewed, added = [], [], 0
+        for node, normalized_text in zip(candidates, normalized):
+            weak = assess_description(text(node))["weak"] or counts[normalized_text] > 1
+            remaining = self.config.preview_total_chars - result.usage["preview_chars"]
+            if (
+                weak
+                and result.usage["preview_nodes"] < self.config.preview_max_nodes
+                and remaining > 0
+            ):
+                preview = self._preview(
+                    node, result, min(remaining, self.config.preview_chars_per_node)
+                )
+                if preview:
+                    node = replace(
+                        node,
+                        candidate=replace(
+                            node.candidate, text=node.candidate.text + preview
+                        ),
+                    )
+                    result.usage["preview_nodes"] += 1
+                    result.usage["preview_chars"] += len(preview)
+                    added += len(preview)
+                    previewed.append(node.candidate.id)
+            output.append(node)
+        return output, tuple(previewed), added
+
+    def evidence_paths(
+        self, *, filters: dict | None = None
+    ) -> dict[str, tuple[str, ...]]:
+        """Visible passage paths for evaluation; no model calls or gold inputs."""
+        roots = self._topics
+        if filters and filters.get("access_acl"):
+            roots = tuple(
+                node
+                for original in roots
+                if (node := self._visible(original, filters)) is not None
+            )
+        paths = {}
+        stack = [(node, ()) for node in reversed(roots)]
+        while stack:
+            node, ancestors = stack.pop()
+            path = (*ancestors, node.candidate.id)
+            if node.document is not None:
+                paths[node.document["id"]] = path
+            else:
+                stack.extend((child, path) for child in reversed(node.children))
+        return paths
+
     def _screen_nodes(
         self, query: str, candidates: list[_Node], limit: int, result: NavigationResult
     ) -> list[_Node]:
+        candidates, previewed_ids, preview_chars = self._with_previews(
+            candidates, result
+        )
         scores = []
         for start in range(0, len(candidates), self.config.batch_size):
             batch = candidates[start : start + self.config.batch_size]
+            result.usage["binary_calls"] += 1
+            result.usage["binary_judgments"] += len(batch)
+            result.usage["candidate_chars"] += sum(
+                len(node.candidate.text) for node in batch
+            )
             scores.extend(
                 _validate_scores(
                     self.model.binary(query, [node.candidate for node in batch]),
@@ -318,6 +496,11 @@ class DecisionRetriever:
                 tuple(node.candidate.id for node in candidates),
                 tuple(scores),
                 tuple(node.candidate.id for node in selected),
+                previewed_ids=previewed_ids,
+                preview_chars=preview_chars,
+                candidate_text_chars=tuple(
+                    len(node.candidate.text) for node in candidates
+                ),
             )
         )
         return selected
@@ -346,9 +529,16 @@ class DecisionRetriever:
             candidate = DecisionCandidate(
                 candidate.id,
                 "group",
-                "Visible documents: " + "; ".join(titles(children))[:1600],
+                "Visible documents: "
+                + "; ".join(title[:180] for title in titles(children))[:1600],
             )
-        return _Node(candidate, children)
+        return _Node(
+            candidate,
+            children,
+            description=candidate.text
+            if candidate.kind == "group"
+            else node.description,
+        )
 
     def navigate(
         self, query: str, topk: int = 5, *, filters: dict | None = None
@@ -410,6 +600,11 @@ class DecisionRetriever:
                         ):
                             raise ValueError("Invalid decision model choice capacity")
                         selected = selected[:count]
+                    result.usage["choice_calls"] += 1
+                    result.usage["choice_judgments"] += 1
+                    result.usage["candidate_chars"] += sum(
+                        len(node.candidate.text) for node in selected
+                    )
                     choice_scores = _validate_scores(
                         self.model.choice(query, [node.candidate for node in selected]),
                         len(selected),

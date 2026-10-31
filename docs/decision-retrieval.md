@@ -127,7 +127,10 @@ dependency.
 This is not a reproduction of the paper's latency, cost, or accuracy. Generic
 causal-model label logits are not guaranteed to be calibrated. Title-only
 document routing and section-heading routing can prune relevant evidence, and
-untitled/unstructured corpora may benefit little from navigation. Binary
+untitled/unstructured corpora may benefit little from navigation. Weak group
+descriptions are a further irreversible-pruning risk; see
+[description judgeability](corpus-hierarchy.md#description-judgeability) for
+coverage sampling, bounded preview recovery and the paired evaluator. Binary
 batch scores can vary with their comparison pool. Evaluate recall, ranking,
 memory, and latency on your corpus before enabling it in production.
 
