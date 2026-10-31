@@ -584,3 +584,65 @@ def test_inserted_level_id_never_collides_with_existing_group():
             assert gid not in seen
             seen.add(gid)
             gid = by_id[gid]["parent_id"]
+
+
+def test_pending_doc_moves_to_nearest_leaf_and_leaves_pending_once_it_fits():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    # "x" was pending in A; it now sits squarely on B's topic.
+    vectors["x"] = topic(1, "x", 1)["x0"]
+    vectors["y"] = unit([0, 0, 0, 1, 0, 0, 0, 0])
+    assignments = {**assign(leaves), "x": "A", "y": "A"}
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        {"x", "y"},
+        pending_ids={"x", "y"},
+    )
+    by_id = {g["id"]: g for g in r.leaves}
+    assert "x" in by_id["B"]["document_ids"]
+    assert "x" not in r.pending_poor_fit_ids
+    # "y" fits no leaf: it stays pending wherever it lands.
+    assert r.pending_poor_fit_ids == ["y"]
+
+
+def test_pending_reassignment_breaks_ties_by_leaf_id():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    vectors["x"] = unit([1, 1, 0, 0, 0, 0, 0, 0])
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        {**assign(leaves), "x": "B"},
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        {"x"},
+        pending_ids={"x"},
+    )
+    assert "x" in next(g for g in r.leaves if g["id"] == "A")["document_ids"]
+
+
+def test_unrelated_kmeans_warning_is_not_degeneracy(monkeypatch):
+    import warnings
+
+    import sklearn.cluster
+
+    real = sklearn.cluster.KMeans
+
+    class NoisyKMeans(real):
+        def fit_predict(self, X, y=None, sample_weight=None):
+            warnings.warn("parameter renamed", FutureWarning)
+            return super().fit_predict(X)
+
+    monkeypatch.setattr(sklearn.cluster, "KMeans", NoisyKMeans)
+    vectors = {**topic(0, "a", 6), **topic(1, "b", 6)}
+    with pytest.warns(FutureWarning, match="parameter renamed"):
+        buckets, degenerate, _ = kmeans_partition(sorted(vectors), vectors, 2, 10, 42)
+    assert not degenerate
+    assert sorted(map(sorted, buckets)) == [
+        sorted(topic(0, "a", 6)),
+        sorted(topic(1, "b", 6)),
+    ]

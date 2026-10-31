@@ -258,6 +258,29 @@ class HierarchyArtifact:
                 or any(not isinstance(f, str) for f in quality["flags"])
             ):
                 raise ValueError("invalid description quality")
+        reference = self.diagnostics.get("structure_reference")
+        if reference is not None and (
+            not isinstance(reference, dict)
+            or any(
+                type(reference.get(k)) not in (int, float)
+                or not math.isfinite(reference[k])
+                for k in ("poor_fit_similarity", "quantile")
+            )
+            or reference.get("computed_at") not in ("build", "first_update")
+        ):
+            raise ValueError("invalid structure_reference")
+        if "pending_poor_fit_ids" in self.diagnostics:
+            pending = self.diagnostics["pending_poor_fit_ids"]
+            semantic = {
+                i for g in groups.values() if "centroid" in g for i in g["document_ids"]
+            }
+            if (
+                not isinstance(pending, list)
+                or any(not isinstance(i, str) for i in pending)
+                or len(set(pending)) != len(pending)
+                or not set(pending) <= semantic
+            ):
+                raise ValueError("invalid pending_poor_fit_ids")
         json.dumps(asdict(self), allow_nan=False)
         return self
 
@@ -510,6 +533,7 @@ def build_hierarchy(
                 config,
                 reference["poor_fit_similarity"],
                 sorted((semantic_set - unchanged) | set(carried)),
+                pending_ids=carried,
             )
             structure_operations.extend(result.operations)
             forced_description_ids.update(result.forced_description_ids)
@@ -550,6 +574,15 @@ def build_hierarchy(
         )
     else:
         semantic_groups = []
+        structure_operations.extend(
+            dict(
+                op="remove",
+                group_ids=[],
+                source_ids=[g["id"]],
+                reason="no semantic documents remain",
+            )
+            for g in sorted(old_semantic, key=lambda g: g["id"])
+        )
     if degenerate:
         notices.append("Degenerate semantic vectors reduced distinct clusters.")
     semantic_groups, level_operations, new_level_ids = balance_levels(

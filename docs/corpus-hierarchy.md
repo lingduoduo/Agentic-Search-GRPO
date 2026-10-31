@@ -204,11 +204,20 @@ proportional to change:
   - `spawn`: new/edited documents, plus earlier poor fits carried in
     `pending_poor_fit_ids`, that fit their leaf poorly form a new leaf when at
     least `min_cluster_size` of them are coherent (mean similarity to their
-    own centroid at or above the reference). Established members never spawn.
-    Candidates are clustered with increasing cluster counts until a coherent
-    bucket appears, so unrelated poor fits do not hide a new topic. Poor fits
-    that do not spawn, and spawned members that still fit their new leaf below
-    the reference, are carried to the next update.
+    own centroid at or above the reference) and their centroid is not close to
+    any existing leaf (similarity to the nearest leaf centroid, over that
+    leaf's members that are not candidates, below the reference). The second
+    test keeps the poor-fit tail of an existing topic, which every batch of
+    ordinary on-topic additions produces, from spawning fragments. Established
+    members never spawn. Candidates are clustered with increasing cluster
+    counts until a bucket passes, so unrelated poor fits do not hide a new
+    topic. Poor fits that do not spawn, and spawned members that still fit
+    their new leaf below the reference, are carried to the next update; each
+    planner run first moves every carried poor fit to its nearest leaf
+    centroid (ties broken by leaf ID), and it stops being carried once it fits
+    that leaf at or above the reference. Since the reference is a low quantile,
+    roughly that fraction of on-topic additions stays carried as tail
+    documents.
   - `split`: a leaf above `max_cluster_size`, or one of at least twice the
     minimum size whose poor-fit fraction reaches `split_poor_fit_fraction`
     (default 0.3), is re-clustered into children.
@@ -216,7 +225,8 @@ proportional to change:
     (mean member similarity to that centroid at or above the reference) and
     that stays within `max_cluster_size`, preferring siblings; otherwise it
     stays.
-  - `remove`: emptied leaves are dropped.
+  - `remove`: emptied leaves are dropped; when every semantic document is
+    deleted, each previous semantic group is reported removed.
   - `insert_level`: with `--max-fanout N` (default off), a parent with more
     than N children gets an intermediate level.
   - `collapse_level`: an intermediate group left with one child or none is
@@ -261,7 +271,13 @@ the calls a real run would make, while `description_model_calls` is 0.
 `capped_description_calls`, `deferred_descriptions` and `reused_descriptions`.
 `rebuild_recommended` (with a warning) is set when the fraction of semantic
 documents that fit their leaf poorly after maintenance reaches
-`split_poor_fit_fraction`; `churn` still records the changed fraction.
+`split_poor_fit_fraction`; `churn` still records the changed fraction. In
+practice this signal rarely fires: a leaf whose poor-fit fraction reaches the
+same threshold is split first, so the corpus-wide fraction reaches it only when
+leaves holding many poor fits could not be split: too small (below twice
+`min_cluster_size`), spawned in the same update, or degenerate. Do not rely
+on it as the only cue to rebuild; compare `poor_fit_documents` across updates
+or rebuild periodically.
 
 Updates inherit the previous configuration. Changing the encoder, description
 model, clustering or maintenance settings, or extraction policy requires a

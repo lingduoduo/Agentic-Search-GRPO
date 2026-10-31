@@ -583,3 +583,72 @@ def test_lowest_overlap_refreshed_first_under_cap():
     assert cost["deferred_descriptions"] == 1
     assert_cost_consistent(new, describer)
     new.validate()
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {"quantile": 0.05, "computed_at": "build"},
+        {"poor_fit_similarity": "0.9", "quantile": 0.05, "computed_at": "build"},
+        {"poor_fit_similarity": float("nan"), "quantile": 0.05, "computed_at": "build"},
+        {"poor_fit_similarity": True, "quantile": 0.05, "computed_at": "build"},
+        {"poor_fit_similarity": 0.9, "quantile": "low", "computed_at": "build"},
+        {"poor_fit_similarity": 0.9, "computed_at": "build"},
+        {"poor_fit_similarity": 0.9, "quantile": 0.05, "computed_at": "later"},
+        [0.9],
+    ],
+)
+def test_invalid_structure_reference_rejected(reference):
+    artifact = build_hierarchy(
+        two_topics(), HierarchyConfig(mode="cluster"), embedder=TopicEmbedder()
+    )
+    artifact.diagnostics["structure_reference"] = reference
+    with pytest.raises(ValueError, match="structure_reference"):
+        artifact.validate()
+
+
+def test_absent_or_null_structure_reference_accepted():
+    artifact = build_hierarchy(
+        two_topics(), HierarchyConfig(mode="cluster"), embedder=TopicEmbedder()
+    )
+    artifact.diagnostics["structure_reference"] = None
+    artifact.validate()
+    del artifact.diagnostics["structure_reference"]
+    artifact.validate()
+
+
+@pytest.mark.parametrize(
+    "pending",
+    ["alpha-000", ["alpha-000", "alpha-000"], [1], ["missing"], ["s-structural"]],
+)
+def test_invalid_pending_poor_fit_ids_rejected(pending):
+    structural = dict(
+        id="s-structural",
+        title="Manual 0",
+        contents="Body.",
+        metadata={"hierarchy_path": ["Guides", "Setup"]},
+    )
+    artifact = build_hierarchy(
+        two_topics() + [structural],
+        HierarchyConfig(mode="auto", n_clusters=2),
+        embedder=TopicEmbedder(),
+    )
+    assert "centroid" not in next(
+        g for g in artifact.groups if "s-structural" in g["document_ids"]
+    )
+    artifact.diagnostics["pending_poor_fit_ids"] = pending
+    with pytest.raises(ValueError, match="pending_poor_fit_ids"):
+        artifact.validate()
+    artifact.diagnostics["pending_poor_fit_ids"] = ["alpha-000"]
+    artifact.validate()
+
+
+def test_deleting_every_semantic_document_reports_removed_groups():
+    embedder = TopicEmbedder()
+    config = HierarchyConfig(mode="cluster", n_clusters=3, max_fanout=2)
+    base = build_hierarchy(two_topics() + docs("gamma", 20), config, embedder=embedder)
+    semantic = sorted(g["id"] for g in base.groups if "centroid" in g)
+    updated = build_hierarchy([], config, embedder=embedder, previous=base)
+    removed = ops(updated, "remove")
+    assert sorted(i for o in removed for i in o["source_ids"]) == semantic
+    assert all(o["group_ids"] == [] for o in removed)

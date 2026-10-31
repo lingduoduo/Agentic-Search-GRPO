@@ -36,13 +36,15 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
     """K-means, then split buckets over ``max_size`` into balanced chunks.
 
     Returns ``(buckets, degenerate, oversized)``; ``degenerate`` means sklearn
-    warned, typically because duplicate vectors produced fewer distinct
-    clusters; ``oversized`` means some k-means cluster exceeded ``max_size``.
+    raised a ``ConvergenceWarning``, typically because duplicate vectors
+    produced fewer distinct clusters; ``oversized`` means some k-means cluster
+    exceeded ``max_size``. Other warnings are re-emitted, never counted.
     """
     members = sorted(member_ids)
     if not members:
         return [], False, False
     from sklearn.cluster import KMeans
+    from sklearn.exceptions import ConvergenceWarning
 
     with warnings.catch_warnings(record=True) as caught:
         # Record even under -W error so degeneracy is reported, not raised.
@@ -50,6 +52,12 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
         labels = KMeans(
             n_clusters=min(count, len(members)), random_state=random_state, n_init=10
         ).fit_predict(np.array([vectors[i] for i in members]))
+    degenerate = False
+    for w in caught:
+        if issubclass(w.category, ConvergenceWarning):
+            degenerate = True
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
     bucket_map = {}
     for member, label in zip(members, labels):
         bucket_map.setdefault(int(label), []).append(member)
@@ -63,7 +71,7 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
             part.tolist()
             for part in np.array_split(np.array(bucket, dtype=object), parts)
         )
-    return chunks, bool(caught), oversized
+    return chunks, degenerate, oversized
 
 
 def centroid(member_ids, vectors):
@@ -104,11 +112,15 @@ def _nearest(center, candidates):
     return max(candidates, key=lambda g: float(np.dot(center, g["centroid"])))
 
 
-def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_ids):
+def maintain_leaves(
+    leaves, vectors, assignments, config, reference, candidate_ids, pending_ids=()
+):
     """Plan spawn, split, merge and remove operations over semantic leaves.
 
     ``assignments`` maps each semantic document to its already chosen leaf ID;
     only ``candidate_ids`` (new or previously pending poor fits) may spawn.
+    ``pending_ids`` (previously pending poor fits) are first moved to their
+    nearest leaf centroid, so they stop being pending once a leaf fits them.
     """
     min_size = min(config.min_cluster_size, config.max_cluster_size)
     max_size = config.max_cluster_size
@@ -116,7 +128,22 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
     forced = set()
     degenerate = False
 
-    # 1. Rebuild memberships from assignments.
+    # 1. Move pending poor fits to the nearest leaf centroid over non-pending
+    # members (ties keep the smallest ID), then rebuild memberships.
+    moving = set(pending_ids) & set(assignments)
+    members = {g["id"]: [] for g in leaves}
+    for doc_id in sorted(set(assignments) - moving):
+        members[assignments[doc_id]].append(doc_id)
+    anchors = [
+        dict(id=gid, centroid=centroid(ids, vectors))
+        for gid, ids in sorted(members.items())
+        if ids
+    ]
+    if moving and anchors:
+        assignments = {
+            **assignments,
+            **{i: _nearest(vectors[i], anchors)["id"] for i in moving},
+        }
     members = {g["id"]: [] for g in leaves}
     for doc_id in sorted(assignments):
         members[assignments[doc_id]].append(doc_id)
@@ -141,9 +168,21 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
         existing = sorted(
             (g for g in current if g["document_ids"]), key=lambda g: g["id"]
         )
+        # A bucket spawns only if it is coherent (mean fit to its own centroid
+        # >= reference) and its centroid is not near any existing leaf's
+        # established centroid, over members that are not poor-fit candidates
+        # (similarity < reference): coherent tails of an existing topic, which
+        # the poor-fit quantile produces on every update, fail the second test.
+        poor_set = set(poor)
+        established = [
+            centroid(kept, vectors)
+            for g in existing
+            for kept in [[i for i in g["document_ids"] if i not in poor_set]]
+            if kept
+        ]
         # Poor fits from unrelated regions can share one cluster with a new
         # topic and fail the fit check, so retry with doubling cluster counts
-        # until some bucket is coherent; at most len(poor) - min_size + 1
+        # until some bucket is accepted; at most len(poor) - min_size + 1
         # clusters, the most that still leaves room for one min_size bucket.
         count = math.ceil(len(poor) / config.target_cluster_size)
         while True:
@@ -156,7 +195,10 @@ def maintain_leaves(leaves, vectors, assignments, config, reference, candidate_i
                     continue
                 center = centroid(bucket, vectors)
                 fit = np.mean([float(np.dot(vectors[i], center)) for i in bucket])
-                if fit >= reference:
+                near = max(
+                    (float(np.dot(center, c)) for c in established), default=-1.0
+                )
+                if fit >= reference and near < reference:
                     accepted.append(bucket)
             limit = len(poor) - min_size + 1
             if accepted or count >= limit:

@@ -69,3 +69,37 @@ class CountingDescriber:
             generation_version="test",
             warnings=[],
         )
+
+
+class SpreadTopicEmbedder:
+    """Random topic centers with wide per-document noise and a shared direction.
+
+    Unlike ``TopicEmbedder``, members spread far from their centroid and every
+    vector shares an anisotropic component, as with real embedding models, so
+    ordinary on-topic additions produce tail (poor-fit) documents.
+    """
+
+    model_name = HierarchyConfig().embedding_model
+
+    def __init__(self, dims=64, spread=0.6, common=2.0, seed=0):
+        rng = np.random.default_rng(seed)
+        shared = rng.normal(size=dims)
+        self.shared = common * shared / np.linalg.norm(shared)
+        self.centers = rng.normal(size=(len(TOPICS), dims))
+        self.spread = spread
+        self.seed = seed
+        self.calls = []
+
+    def encode(self, texts):
+        self.calls.append(len(texts))
+        rows = []
+        for text in texts:
+            words = text.split("\n")[0].split()
+            topic = TOPICS.index(words[0])
+            noise = np.random.default_rng([self.seed, topic, int(words[-1])])
+            rows.append(
+                self.centers[topic]
+                + self.spread * noise.normal(size=len(self.shared))
+                + self.shared
+            )
+        return np.array(rows)

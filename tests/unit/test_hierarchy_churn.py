@@ -7,8 +7,14 @@ import sys
 from examples.simulate_hierarchy_churn import simulate
 from src.internal.document_index.decision_retriever import DecisionRetrieverConfig
 from src.internal.document_index.description_eval import evaluate_descriptions
-from src.internal.document_index.hierarchy import HierarchyConfig
-from tests.unit.hierarchy_fakes import CountingDescriber, TopicEmbedder, docs
+from src.internal.document_index.hierarchy import HierarchyConfig, build_hierarchy
+from tests.unit.hierarchy_fakes import (
+    TOPICS,
+    CountingDescriber,
+    SpreadTopicEmbedder,
+    TopicEmbedder,
+    docs,
+)
 
 EXISTING = ("alpha", "beta", "delta")
 
@@ -203,3 +209,56 @@ def test_simulation_cli_writes_counts_and_skips_absent_gold(tmp_path, monkeypatc
     assert cumulative["rebuild"]["embedded_documents"] == 52 + 54 + 56
     for track in ("incremental", "rebuild"):
         assert report["evaluation"][track] == {"skipped": ["gone"], "report": None}
+
+
+def spread_churn(days, new_topic_day=None):
+    """On-topic daily additions over spread topics; optionally one new topic."""
+    existing = TOPICS[:5]
+    config = HierarchyConfig(
+        mode="cluster", target_cluster_size=40, max_cluster_size=150
+    )
+    embedder = SpreadTopicEmbedder()
+    source = sum((docs(t, 40) for t in existing), [])
+    artifact = build_hierarchy(source, config, embedder=embedder)
+    history = []
+    for day in range(1, days + 1):
+        for t in existing:
+            source += docs(t, 4, start=40 + 4 * (day - 1))
+        if day == new_topic_day:
+            source += docs(TOPICS[5], 10)
+        artifact = build_hierarchy(source, config, embedder=embedder, previous=artifact)
+        history.append(artifact)
+    return history
+
+
+def spawns_of(history):
+    return [
+        (day, op)
+        for day, artifact in enumerate(history, start=1)
+        for op in artifact.diagnostics["structure_operations"]
+        if op["op"] == "spawn"
+    ]
+
+
+def test_on_topic_churn_over_spread_topics_never_spawns_and_bounds_pending():
+    history = spread_churn(20)
+    assert spawns_of(history) == []
+    final = history[-1]
+    assert len(final.groups) == 5
+    # Pending holds only tail documents that fit no leaf: bounded by the
+    # fit quantile's share of the corpus, not an ever-growing backlog.
+    for artifact in history:
+        pending = artifact.diagnostics["pending_poor_fit_ids"]
+        assert len(pending) <= 2 * 0.05 * len(artifact.assignments)
+
+
+def test_real_new_topic_spawns_once_amid_spread_on_topic_churn():
+    history = spread_churn(12, new_topic_day=6)
+    spawns = spawns_of(history)
+    assert len(spawns) == 1 and spawns[0][0] == 6
+    final = history[-1]
+    new = {d["id"] for d in docs(TOPICS[5], 10)}
+    spawned = spawns[0][1]["group_ids"][0]
+    members = set(next(g for g in final.groups if g["id"] == spawned)["document_ids"])
+    assert members <= new and len(members) >= 8
+    assert len(final.groups) == 6
