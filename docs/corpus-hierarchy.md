@@ -209,9 +209,13 @@ proportional to change:
     leaf's members that are not candidates, below the reference). The second
     test keeps the poor-fit tail of an existing topic, which every batch of
     ordinary on-topic additions produces, from spawning fragments. Established
-    members never spawn. Candidates are clustered with increasing cluster
-    counts until a bucket passes, so unrelated poor fits do not hide a new
-    topic. Poor fits that do not spawn, and spawned members that still fit
+    members never spawn. A spawn search runs only when the update brings new
+    poor fits, and covers those plus the carried poor fits similar to one of
+    them (similarity at or above the reference), so its cost follows the
+    change rather than the carried backlog; a topic arriving over several
+    updates still accumulates. Candidates are clustered with increasing
+    cluster counts until a bucket passes, so unrelated poor fits do not hide a
+    new topic. Poor fits that do not spawn, and spawned members that still fit
     their new leaf below the reference, are carried to the next update; each
     planner run first moves every carried poor fit to its nearest leaf
     centroid (ties broken by leaf ID), and it stops being carried once it fits

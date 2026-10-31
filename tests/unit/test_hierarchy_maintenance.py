@@ -646,3 +646,97 @@ def test_unrelated_kmeans_warning_is_not_degeneracy(monkeypatch):
         sorted(topic(0, "a", 6)),
         sorted(topic(1, "b", 6)),
     ]
+
+
+def _recording_kmeans(monkeypatch):
+    import src.internal.document_index.hierarchy_maintenance as module
+
+    calls = []
+    original = module.kmeans_partition
+
+    def wrapper(member_ids, *args, **kwargs):
+        calls.append(sorted(member_ids))
+        return original(member_ids, *args, **kwargs)
+
+    monkeypatch.setattr(module, "kmeans_partition", wrapper)
+    return calls
+
+
+def test_pending_only_update_runs_no_spawn_search(monkeypatch):
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    pending = topic(2, "n", 6)
+    vectors.update(pending)
+    assignments = {**assign(leaves), **{i: "A" for i in pending}}
+    calls = _recording_kmeans(monkeypatch)
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(pending),
+        pending_ids=set(pending),
+    )
+    assert calls == []
+    assert not [o for o in r.operations if o["op"] == "spawn"]
+    assert r.pending_poor_fit_ids == sorted(pending)
+
+
+def test_topic_arriving_over_two_updates_spawns():
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    config = HierarchyConfig(min_cluster_size=5)
+    arrivals = topic(2, "n", 6)
+    vectors.update(arrivals)
+    first, second = sorted(arrivals)[:3], sorted(arrivals)[3:]
+    r1 = maintain_leaves(
+        leaves,
+        vectors,
+        {**assign(leaves), **{i: "A" for i in first}},
+        config,
+        reference,
+        set(first),
+    )
+    assert r1.pending_poor_fit_ids == first
+    r2 = maintain_leaves(
+        r1.leaves,
+        vectors,
+        {**assign(r1.leaves), **{i: "A" for i in second}},
+        config,
+        reference,
+        set(first) | set(second),
+        pending_ids=set(first),
+    )
+    spawned = [g for g in r2.leaves if g["id"] not in {"A", "B"}]
+    assert [o["op"] for o in r2.operations] == ["spawn"]
+    assert set(spawned[0]["document_ids"]) == set(arrivals)
+
+
+def test_spawn_search_ignores_unrelated_pending(monkeypatch):
+    vectors, leaves = two_leaves()
+    reference = fit_reference(leaves, vectors, 0.05)
+    unrelated = topic(3, "u", 6)
+    new = topic(2, "n", 6)
+    vectors.update(unrelated)
+    vectors.update(new)
+    assignments = {
+        **assign(leaves),
+        **{i: "A" for i in unrelated},
+        **{i: "B" for i in new},
+    }
+    calls = _recording_kmeans(monkeypatch)
+    r = maintain_leaves(
+        leaves,
+        vectors,
+        assignments,
+        HierarchyConfig(min_cluster_size=5),
+        reference,
+        set(unrelated) | set(new),
+        pending_ids=set(unrelated),
+    )
+    # The first k-means call is the spawn search; later calls are drift splits.
+    assert calls[0] == sorted(new)
+    spawns = [o for o in r.operations if o["op"] == "spawn"]
+    by_id = {g["id"]: g for g in r.leaves}
+    assert [set(by_id[o["group_ids"][0]]["document_ids"]) for o in spawns] == [set(new)]
