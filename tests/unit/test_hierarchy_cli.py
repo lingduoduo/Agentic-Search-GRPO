@@ -157,3 +157,30 @@ def test_build_exposes_description_sample_budget(tmp_path):
     artifact = HierarchyArtifact.load(output)
     assert artifact.config["description_sample_size"] == 2
     assert len(artifact.groups[0]["description_provenance"]["document_ids"]) == 2
+
+
+def test_build_stores_maintenance_flags(tmp_path):
+    source = tmp_path / "docs.jsonl"
+    output = tmp_path / "tree.json"
+    corpus(source)
+    assert (
+        main(
+            [
+                "build",
+                "--mode",
+                "structure",
+                "--corpus-path",
+                str(source),
+                "--output",
+                str(output),
+                "--min-cluster-size",
+                "3",
+                "--max-fanout",
+                "4",
+            ]
+        )
+        == 0
+    )
+    config = HierarchyArtifact.load(output).config
+    assert config["min_cluster_size"] == 3
+    assert config["max_fanout"] == 4

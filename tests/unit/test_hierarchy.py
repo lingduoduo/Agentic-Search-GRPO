@@ -59,7 +59,9 @@ def test_structure_roundtrip_and_corruption(tmp_path):
 
 def test_semantic_incremental_reuse_and_overflow():
     encoder = Encoder()
-    config = HierarchyConfig(target_cluster_size=2, max_cluster_size=2)
+    config = HierarchyConfig(
+        target_cluster_size=2, max_cluster_size=2, min_cluster_size=1
+    )
     artifact = build_hierarchy(docs(), config, embedder=encoder)
     assert all(len(g["document_ids"]) <= 2 for g in artifact.groups)
     snapshot = copy.deepcopy(artifact)
@@ -101,7 +103,9 @@ def test_identical_vectors_hard_bound():
             return np.ones((len(texts), 2))
 
     artifact = build_hierarchy(
-        docs(9), HierarchyConfig(max_cluster_size=2), embedder=Same()
+        docs(9),
+        HierarchyConfig(max_cluster_size=2, min_cluster_size=1),
+        embedder=Same(),
     )
     assert max(len(g["document_ids"]) for g in artifact.groups) <= 2
     assert artifact.diagnostics["warnings"]
@@ -128,7 +132,9 @@ def test_edit_embeds_only_changed_and_does_not_mutate_inputs():
     source = docs(4)
     original = copy.deepcopy(source)
     encoder = Encoder()
-    config = HierarchyConfig(max_cluster_size=2, target_cluster_size=2)
+    config = HierarchyConfig(
+        max_cluster_size=2, target_cluster_size=2, min_cluster_size=1
+    )
     artifact = build_hierarchy(source, config, embedder=encoder)
     assert source == original
     source[0]["contents"] = "Edited content. Extra."
@@ -317,3 +323,41 @@ def test_generation_settings_record_config_sample_size_and_null_provenance_updat
     old.validate()
     refreshed = build_hierarchy(docs, config, describer=Describer(), previous=old)
     assert all(g["description_provenance"] for g in refreshed.groups)
+
+
+MAINTENANCE_FIELDS = (
+    "min_cluster_size",
+    "max_fanout",
+    "fit_quantile",
+    "split_poor_fit_fraction",
+    "description_refresh_overlap",
+)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("min_cluster_size", 0),
+        ("min_cluster_size", 201),
+        ("max_fanout", 1),
+        ("max_fanout", True),
+        ("fit_quantile", 0.0),
+        ("fit_quantile", 0.5),
+        ("split_poor_fit_fraction", 0.0),
+        ("split_poor_fit_fraction", 1.5),
+        ("description_refresh_overlap", -0.1),
+        ("description_refresh_overlap", 1.1),
+    ],
+)
+def test_maintenance_config_validation(field, value):
+    with pytest.raises(ValueError, match=field):
+        HierarchyConfig(**{field: value})
+
+
+def test_old_config_without_maintenance_fields_still_updates():
+    artifact = build_hierarchy(docs(path=["A", "B"]), HierarchyConfig(mode="structure"))
+    for name in MAINTENANCE_FIELDS:
+        artifact.config.pop(name)
+    updated = build_hierarchy(docs(7, ["A", "B"]), previous=artifact)
+    assert len(updated.assignments) == 7
+    assert set(MAINTENANCE_FIELDS) <= set(updated.config)

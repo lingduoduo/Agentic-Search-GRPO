@@ -44,6 +44,8 @@ def _parser():
     build.add_argument("--description-sample-size", type=int, default=12)
     build.add_argument("--target-cluster-size", type=int, default=100)
     build.add_argument("--max-cluster-size", type=int, default=200)
+    build.add_argument("--min-cluster-size", type=int, default=5)
+    build.add_argument("--max-fanout", type=int, default=None)
     build.add_argument(
         "--clusters",
         type=int,
@@ -119,6 +121,8 @@ def main(argv=None):
                 description_sample_size=args.description_sample_size,
                 target_cluster_size=args.target_cluster_size,
                 max_cluster_size=args.max_cluster_size,
+                min_cluster_size=args.min_cluster_size,
+                max_fanout=args.max_fanout,
                 n_clusters=args.clusters,
                 infer_layout=args.infer_layout,
                 random_state=args.random_state,

@@ -34,6 +34,11 @@ class HierarchyConfig:
     embedding_model: str = "intfloat/multilingual-e5-base"
     description_model: str | None = None
     description_sample_size: int = 12
+    min_cluster_size: int = 5
+    max_fanout: int | None = None
+    fit_quantile: float = 0.05
+    split_poor_fit_fraction: float = 0.3
+    description_refresh_overlap: float = 0.5
 
     def __post_init__(self):
         if self.mode not in ("auto", "structure", "cluster"):
@@ -61,6 +66,23 @@ class HierarchyConfig:
             or not self.description_model.strip()
         ):
             raise ValueError("description_model must be nonempty or None")
+        if (
+            type(self.min_cluster_size) is not int
+            or not 1 <= self.min_cluster_size <= self.max_cluster_size
+        ):
+            raise ValueError("min_cluster_size must be between 1 and max_cluster_size")
+        if self.max_fanout is not None and (
+            type(self.max_fanout) is not int or self.max_fanout < 2
+        ):
+            raise ValueError("max_fanout must be None or an integer >= 2")
+        for name, valid in (
+            ("fit_quantile", lambda v: 0 < v < 0.5),
+            ("split_poor_fit_fraction", lambda v: 0 < v <= 1),
+            ("description_refresh_overlap", lambda v: 0 <= v <= 1),
+        ):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not valid(value):
+                raise ValueError(f"{name} is out of range")
 
 
 def _hash(value):
