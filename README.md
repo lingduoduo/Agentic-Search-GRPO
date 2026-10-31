@@ -186,13 +186,6 @@ Install the optional MCP dependencies when needed:
 pip install -e ".[mcp]"
 ```
 
-The web UI lives in a separate repository. Clone it next to this one and install its dependencies:
-
-```bash
-git clone https://github.com/lingduoduo/Agentic-Search-UI ../Agentic-Search-UI
-cd ../Agentic-Search-UI && npm install
-```
-
 ## Configure
 
 Copy the example environment file, then provide the model settings required by your LLM provider:
@@ -265,15 +258,9 @@ The FastAPI backend runs on port **7860**:
 PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
 
-### 3. Start the frontend
+### 3. Web UI (optional)
 
-The live Vite development UI, from the [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI) checkout, runs on port **5173** and proxies backend requests to port 7860:
-
-```bash
-cd ../Agentic-Search-UI && npm run dev
-```
-
-Open <http://127.0.0.1:5173>. The header links to the four pages: **Assistant** (`/assist`), **Search** (`/search`), **Chat** (`/chat`), and **Tools** (`/tools`). Each has its own URL, so pages can be linked to and survive a refresh.
+The web UI is a separate repository, [Agentic-Search-UI](https://github.com/lingduoduo/Agentic-Search-UI). Its README covers installing and running it against this backend on port 7860.
 
 ## Verify the stack
 
