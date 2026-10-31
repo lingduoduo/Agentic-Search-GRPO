@@ -11,8 +11,6 @@ __pycache__
 dist
 build
 node_modules
-web/node_modules
-web/dist
 # Exclude data/'s contents and re-include the two files the demo stack serves.
 # `data` + these negations also works with buildkit -- measured -- so this form
 # is a preference, not a fix. What does NOT work is `data` with no negations at

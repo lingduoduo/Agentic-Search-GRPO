@@ -2,8 +2,6 @@ version: 2
 
 # Paths excluded from GitGuardian secret scanning.
 # go.sum contains SHA-256 h1: hashes of Go module versions — these are not secrets.
-# web/package-lock.json contains npm sha512 integrity hashes — these are not secrets.
 ignored_paths:
   - "**/*.sum"
   - "**/go.sum"
-  - "**/package-lock.json"

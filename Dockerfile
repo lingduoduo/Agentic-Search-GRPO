@@ -1,12 +1,5 @@
-# --- Stage 1: build the React frontend ---
-FROM node:24-slim AS frontend-builder
-WORKDIR /app/web
-COPY web/package*.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build
-
-# --- Stage 2: Python application ---
+# API-only image. The frontend lives in its own repository (Agentic-Search-UI)
+# and ships as a separate nginx image that proxies the API to this one.
 FROM python:3.12-slim AS app
 
 WORKDIR /app
@@ -33,9 +26,6 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-# Bring in the pre-built frontend bundle. src/internal/servers/web/app.py
-# resolves it as parents[4]/"web"/"dist", which is /app/web/dist here.
-COPY --from=frontend-builder /app/web/dist ./web/dist
 
 # The package is installed only now, after the source exists. `pip install -e .`
 # before COPY discovers zero packages under [tool.setuptools.packages.find], so
