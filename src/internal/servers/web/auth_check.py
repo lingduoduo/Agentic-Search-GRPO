@@ -33,6 +33,9 @@ PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
     ("/search", {"GET"}),
     ("/chat", {"GET"}),
     ("/tools", {"GET"}),
+    ("/home", {"GET"}),
+    ("/account", {"GET"}),
+    ("/admin", {"GET"}),
     ("/assets/app.css", {"GET"}),
     ("/assets/app.js", {"GET"}),
     ("/assets", {"GET", "HEAD"}),
@@ -43,7 +46,10 @@ PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
     ("/redoc", {"GET", "HEAD"}),
     # Credentials are established here; login verifies the supplied password.
     ("/auth/register", {"POST"}),
-    ("/auth/login", {"POST"}),
+    # GET serves the sign-in page; POST verifies the supplied password.
+    ("/auth/login", {"GET", "POST"}),
+    # Logout only clears the browser cookie, including expired sessions.
+    ("/auth/logout", {"POST"}),
     # Local research supports anonymous conversations. Existing owned sessions
     # still require their owner; history lists are empty for anonymous callers.
     ("/api/sessions", {"POST"}),
