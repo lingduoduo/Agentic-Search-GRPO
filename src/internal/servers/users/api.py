@@ -286,6 +286,13 @@ def create_users_router(
         )
         return _user_response(record)
 
+    @router.post("/auth/logout", status_code=204)
+    def logout() -> Response:
+        # Clearing the browser cookie also works after the session has expired.
+        response = Response(status_code=204)
+        response.delete_cookie(_COOKIE_NAME, path="/", httponly=True, samesite="lax")
+        return response
+
     # ------------------------------------------------------------------
     # GET /me
     # ------------------------------------------------------------------

@@ -1756,6 +1756,11 @@ def create_web_app(
     @app.get("/search", response_class=HTMLResponse)
     @app.get("/chat", response_class=HTMLResponse)
     @app.get("/tools", response_class=HTMLResponse)
+    @app.get("/home", response_class=HTMLResponse)
+    # GET is the sign-in page; POST /auth/login (users router) signs in.
+    @app.get("/auth/login", response_class=HTMLResponse)
+    @app.get("/account", response_class=HTMLResponse)
+    @app.get("/admin", response_class=HTMLResponse)
     def spa_page() -> str:
         return _app_shell()
 
