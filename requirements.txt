@@ -39,7 +39,8 @@ redis>=6.2.0
 # Qwen3.5 requires transformers>=5.3, which requires torch>=2.4.
 torch>=2.4.0
 transformers>=5.3.0,<6
-accelerate
+# Match Transformers 5.x serving dependencies, including PEFT cache utilities.
+accelerate>=1.1.0,<2
 
 # Retrieval / data utilities used on the serving path.
 # scikit-learn backs the demo TF-IDF server; sentence-transformers backs the
