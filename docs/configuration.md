@@ -33,11 +33,13 @@ Set `SEARCH_AGENT_MODEL` before starting the web API to enable the UI's “Searc
 
 ```bash
 # 8 GB RAM
-SEARCH_AGENT_MODEL=Qwen/Qwen2.5-0.5B-Instruct PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
+SEARCH_AGENT_MODEL=Qwen/Qwen3.5-0.8B PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 
 # 16 GB RAM (better quality)
-SEARCH_AGENT_MODEL=Qwen/Qwen2.5-1.5B-Instruct PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
+SEARCH_AGENT_MODEL=Qwen/Qwen3.5-2B PYTHONPATH=src:. uvicorn src.internal.servers.web.app:app --host 127.0.0.1 --port 7860
 ```
+
+Qwen3.5 requires `transformers>=5.3.0` and the app’s multimodal checkpoint loader, even for text-only prompts. Download the selected model before starting: `hf download Qwen/Qwen3.5-0.8B`. The local web loader uses cached files only. On an 8 GB Mac, start with 0.8B; memory use also grows with prompt length.
 
 `bin/run_web_stack.sh` reads `SEARCH_AGENT_MODEL` from `.env` and starts all three processes in one command (~30–60 seconds for the first response on MPS).
 

@@ -230,3 +230,37 @@ def test_closing_in_one_loop_leaves_another_loops_session_open():
         thread.join(timeout=10)
 
     assert result["b_session_closed"] is False
+
+
+@pytest.mark.parametrize("model_type", ["qwen3", "qwen3_5", "qwen3_5_text"])
+def test_new_qwen_generation_configs_are_accepted(model_type):
+    from types import SimpleNamespace
+    from src.model.serving import _validate_local_generation_config
+
+    _validate_local_generation_config(
+        "Qwen/new-model", SimpleNamespace(model_type=model_type)
+    )
+
+
+@pytest.mark.parametrize(
+    "model_type,expected",
+    [("qwen3_5", "multimodal"), ("qwen3_5_text", "causal"), ("qwen2", "causal")],
+)
+def test_local_loader_matches_checkpoint_architecture(
+    monkeypatch, model_type, expected
+):
+    import sys
+    from types import SimpleNamespace
+    from src.model import serving
+
+    causal, multimodal = object(), object()
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoModelForCausalLM=causal,
+            AutoModelForImageTextToText=multimodal,
+        ),
+    )
+    loader = serving._local_model_loader(SimpleNamespace(model_type=model_type))
+    assert loader is {"causal": causal, "multimodal": multimodal}[expected]
