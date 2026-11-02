@@ -101,12 +101,26 @@ _GENERATIVE_MODEL_TYPES = {
     "phi3",
     "qwen2",
     "qwen2_moe",
+    "qwen3",
+    "qwen3_5",
+    "qwen3_5_text",
     "recurrent_gemma",
     "smolvlm",
     "stablelm",
     "starcoder2",
     "xglm",
 }
+
+
+def _local_model_loader(config: Any) -> Any:
+    """Select the auto class matching the checkpoint's configuration."""
+    if getattr(config, "model_type", "") == "qwen3_5":
+        from transformers import AutoModelForImageTextToText
+
+        return AutoModelForImageTextToText
+    from transformers import AutoModelForCausalLM
+
+    return AutoModelForCausalLM
 
 
 def _validate_local_generation_config(model_path: str, config: Any) -> None:
@@ -614,7 +628,7 @@ class LocalServerManager:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoConfig, AutoTokenizer
         import torch
 
         _validate_local_runtime_device(
@@ -638,7 +652,7 @@ class LocalServerManager:
         torch_dtype = getattr(torch, dtype_name)
         print(f"Status  : using dtype {dtype_name}")
         model_kwargs = self._build_model_load_kwargs(torch_dtype)
-        self._model = AutoModelForCausalLM.from_pretrained(
+        self._model = _local_model_loader(config).from_pretrained(
             self.model_path,
             **model_kwargs,
         )
