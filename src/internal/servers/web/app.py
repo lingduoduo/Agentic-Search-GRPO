@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from itertools import islice
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.routing import APIRoute
@@ -177,7 +178,7 @@ from src.internal.observability.stage_metrics import STAGE_LATENCY
 from src.internal.observability.prometheus import observe_readiness
 from src.internal.observability.prometheus import observe_stages
 from src.internal.observability.prometheus import render_latest
-from src.internal.servers.web.readiness import check_readiness
+from src.internal.servers.web.readiness import _check_retrieval, check_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -1809,6 +1810,22 @@ def create_web_app(
                 }
                 for name, entry in DOMAIN_REGISTRY.items()
             ]
+        }
+
+    @app.get("/api/retrieval/status")
+    async def retrieval_status(http_request: Request) -> dict[str, object]:
+        """Which retrieval server answers queries, and whether it is reachable.
+
+        Only scheme, host and port: the configured URL may carry credentials.
+        """
+        _require_auth(http_request, db)
+        parts = urlsplit(settings.search_url)
+        port = f":{parts.port}" if parts.port else ""
+        check = await _check_retrieval(settings.search_url)
+        return {
+            "url": f"{parts.scheme}://{parts.hostname}{port}",
+            "embedded": bool(resolved.services.embedded_retrieval),
+            "ok": check["ok"],
         }
 
     @app.get("/api/sessions/{session_id}")
