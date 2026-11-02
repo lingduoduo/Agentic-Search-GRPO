@@ -32,7 +32,7 @@ async def _run_plain_chat(
     ]
     output = await loop.run(
         messages,
-        sampling_params={"temperature": 0.7, "max_tokens": 512},
+        sampling_params={"temperature": 0.7, "max_tokens": 256},
         on_turn=on_turn,
         on_token=on_token,
     )
