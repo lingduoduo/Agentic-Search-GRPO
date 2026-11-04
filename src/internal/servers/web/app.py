@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets as _secrets
 import uuid as _uuid
 from collections.abc import AsyncIterator, Callable
@@ -15,6 +16,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
@@ -1500,6 +1502,18 @@ async def _run_auto_routed(
         )
 
 
+def _cors_origins() -> list[str]:
+    """Origins allowed to call this API cross-origin with the session cookie."""
+    raw = os.environ.get("AGENTIC_SEARCH_CORS_ORIGINS", "")
+    origins = [
+        origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()
+    ]
+    if "*" in origins:
+        # With credentials, Starlette would echo any caller's origin back.
+        raise ValueError("AGENTIC_SEARCH_CORS_ORIGINS must list origins, not '*'")
+    return origins
+
+
 def create_web_app(
     settings: SearchExperienceSettings | None = None,
     *,
@@ -1669,6 +1683,19 @@ def create_web_app(
     # Cheap enough to run everywhere: one monotonic pair and a bounded deque
     # append per request. /api/debug/latency reads what it records.
     add_latency_logging_middleware(app, logging.LoggerAdapter(logger, {}))
+    # The bundled UI calls the backend same-origin (the Vite dev server and nginx
+    # proxy it), so CORS stays off unless a frontend on another origin is listed.
+    # Added last so it is outermost: preflights and gate rejections carry headers.
+    cors_origins = _cors_origins()
+    if cors_origins:
+        logger.info("CORS origins: %s", cors_origins)
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     if resolved.services.embedded_retrieval:
         # A static corpus needs no process of its own: serve the demo TF-IDF

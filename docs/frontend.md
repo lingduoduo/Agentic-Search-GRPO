@@ -36,6 +36,21 @@ The build context defaults to `../../Agentic-Search-UI` relative to `docker/`.
 Override it with `AGENTIC_SEARCH_FRONTEND_CONTEXT`, or set
 `AGENTIC_SEARCH_FRONTEND_IMAGE` to run a published image.
 
+### Calling the backend cross-origin
+
+CORS is off by default. To let a frontend on another origin call the API with
+the session cookie, list its exact origins, comma-separated:
+
+```bash
+AGENTIC_SEARCH_CORS_ORIGINS=http://127.0.0.1:5173,https://ui.example.com
+```
+
+`*` is refused, since a credentialed wildcard would trust every site. The
+frontend opts in with `VITE_API_BASE_URL=http://127.0.0.1:7860`. The session
+cookie stays `SameSite=Lax`, so this works across ports on one host
+(`127.0.0.1:5173` → `127.0.0.1:7860`, not `localhost` → `127.0.0.1`). A
+frontend on a different site cannot sign in this way.
+
 The backend image itself is API-only. On `/`, `/assist`, `/search`, `/chat` and
 `/tools` it serves a minimal inline shell, unless `AGENTIC_SEARCH_FRONTEND_DIST`
 points at a built `dist/` (with `index.html` and `assets/`). In that case it
