@@ -150,6 +150,16 @@
         "python"
       ],
       "allowedVersions": "<3.13"
+    },
+    {
+      "description": "PROTECTED: node in workflows runs only the Renovate config validator, and Renovate 44 declares engines node ^24.11.0. Lift this when renovate-version moves to a release supporting a newer Node.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "allowedVersions": "<25"
     }
   ],
   "logLevelRemap": [
