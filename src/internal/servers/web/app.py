@@ -1677,7 +1677,7 @@ def create_web_app(
     app = FastAPI(title="Agentic Search Web", lifespan=lifespan)
     app.state.auth_store = db
     lifecycle_hooks = LifecycleHooks()
-    register_memory_hooks(lifecycle_hooks, resolved)
+    register_memory_hooks(lifecycle_hooks, settings)
     app.state.lifecycle_hooks = lifecycle_hooks
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
@@ -1979,6 +1979,12 @@ def create_web_app(
         )
         user_memory = (await lifecycle_hooks.before_turn(turn_ctx)) or None
 
+        def _finalize_tracked(*args, **kwargs):
+            response = _finalize_response(*args, **kwargs)
+            turn_ctx.answer = kwargs.get("answer")
+            turn_ctx.route = (kwargs.get("extra") or {}).get("route")
+            return response
+
         async def _after_tool_call(tool_name, arguments, response_text):
             await lifecycle_hooks.after_tool_call(
                 ToolCallContext(
@@ -2098,7 +2104,7 @@ def create_web_app(
                     if _cap is not None:
                         _cap.route = extra.get("route")
                         _cap.route_degraded = extra.get("route_degraded")
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2140,7 +2146,7 @@ def create_web_app(
                         documents=documents,
                         source_provider=source_provider,
                     )
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2183,7 +2189,7 @@ def create_web_app(
                         documents=search_result.documents,
                         source_provider=source_provider,
                     )
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2227,7 +2233,7 @@ def create_web_app(
                         retrieval_query=retrieval_query,
                     )
                     extra.update(follow_up_meta)
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2277,7 +2283,7 @@ def create_web_app(
                     # documents it came back with are checked here.
                     documents = _enforce_access(documents, filters)
                     citations = [doc.citation for doc in documents]
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2317,7 +2323,7 @@ def create_web_app(
                     # Explicit mode falls back to the last assistant message on an
                     # empty final answer (the auto-route instead degrades to RAG).
                     answer = answer or extra.pop("_assistant_fallback", "")
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2383,7 +2389,7 @@ def create_web_app(
                 _cap = _capture.active()
                 if _cap is not None:
                     _cap.route_degraded = extra.get("route_degraded")
-                return _finalize_response(
+                return _finalize_tracked(
                     db,
                     session_id,
                     query=query,
@@ -2409,7 +2415,7 @@ def create_web_app(
                 )
                 for document in result.context.documents
             ]
-            return _finalize_response(
+            return _finalize_tracked(
                 db,
                 session_id,
                 query=query,
@@ -2435,6 +2441,11 @@ def create_web_app(
                 _capture.reset_capture(capture_token)
             # Last: a failure to schedule compression must never mask the
             # request result above or skip the metrics/capture teardown.
+            # Per-turn capture (after_turn) supersedes compression-time curation.
+            try:
+                lifecycle_hooks.after_turn(turn_ctx)
+            except Exception:  # noqa: BLE001 - never mask the result
+                logger.warning("after_turn hooks failed to schedule", exc_info=True)
             schedule_compression(
                 working,
                 session_id=session_id,
@@ -2442,7 +2453,7 @@ def create_web_app(
                 enabled=settings.memory_compression,
                 store=db,
                 user_id=user_id,
-                auto_curate=settings.memory_auto_curate,
+                auto_curate=False,
             )
 
     @app.post("/api/agent")

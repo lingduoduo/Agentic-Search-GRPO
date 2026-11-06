@@ -206,3 +206,58 @@ def test_lifespan_builds_the_memory_encoder_once(monkeypatch):
     with TestClient(app):
         assert app.state.memory_encoder is sentinel
     assert calls == [1]
+
+
+def _after_turn_app(monkeypatch, *, auto_curate=True):
+    from src.internal.hooks.lifecycle import LifecycleHooks
+
+    store = AgenticSearchStore(":memory:")
+    store.upsert_user(UserRecord(id="u1"))
+    monkeypatch.setattr(web_app, "answer_with_retrieval", _capturing_awr({}))
+    compress_calls: list[dict] = []
+    monkeypatch.setattr(
+        web_app, "schedule_compression", lambda *a, **kw: compress_calls.append(kw)
+    )
+    seen: list = []
+
+    async def spy(ctx):
+        seen.append((ctx.user_id, ctx.answer))
+
+    orig = LifecycleHooks.__init__
+
+    def init(self, *a, **kw):
+        orig(self, *a, **kw)
+        self.on_after_turn(spy)
+
+    monkeypatch.setattr(LifecycleHooks, "__init__", init)
+    app = create_web_app(
+        SearchExperienceSettings(memory_auto_curate=auto_curate), store=store
+    )
+    return app, store, seen, compress_calls
+
+
+def test_after_turn_runs_once_and_disables_compression_curation(monkeypatch):
+    app, store, seen, compress_calls = _after_turn_app(monkeypatch)
+    client = TestClient(app)
+    client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
+    resp = client.post(
+        "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
+    )
+    assert resp.status_code == 200
+    assert seen == [("u1", "ok")]
+    assert compress_calls and compress_calls[0]["auto_curate"] is False
+    store.close()
+
+
+def test_after_turn_anonymous_schedules_no_capture(monkeypatch):
+    app, store, seen, _ = _after_turn_app(monkeypatch)
+    resp = TestClient(app).post(
+        "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
+    )
+    assert resp.status_code == 200
+    from src.internal.memory.lifecycle import capture_handler
+
+    assert capture_handler in app.state.lifecycle_hooks._after_turn
+    assert seen == [(None, "ok")]  # hook fires, but capture_handler no-ops (u=None)
+    assert store.get_user_memory_records("u1") == []
+    store.close()
