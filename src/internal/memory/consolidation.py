@@ -1,7 +1,8 @@
 """Memory consolidation and the per-category index summaries.
 
 Order: exact dedup -> near-duplicate merge -> contradictions -> reclassify
-``general`` -> summaries. ``constraints`` memories are protected: only exact
+``general`` -> summaries. Constraints are protected (``is_protected``: by
+label or by text, so an LLM mislabel cannot unprotect one): only exact
 duplicates of one collapse; nothing else here deletes, merges or moves one.
 LLM output is untrusted: only ids from the batch that was sent are honored,
 and unparseable replies change nothing.
@@ -17,18 +18,48 @@ from typing import Any
 
 from src.internal.db.models import UserMemoryRecord
 from src.internal.memory.capture import is_near_duplicate
-from src.internal.memory.categories import CATEGORIES, ROOT_NODE, normalize_category
+from src.internal.memory.categories import (
+    CATEGORIES,
+    ROOT_NODE,
+    is_protected,
+    normalize_category,
+)
 from src.internal.memory.search import _QUERY_STOPWORDS, _tokenize, ensure_embeddings
 from src.internal.memory.service import _attribute, _count_line
 
 logger = logging.getLogger(__name__)
 
-CONSOLIDATE_EVERY = int(os.getenv("AGENTIC_SEARCH_MEMORY_CONSOLIDATE_EVERY", "10"))
+_CONSOLIDATE_EVERY_DEFAULT = 10
+
+
+def _parse_consolidate_every(raw: str) -> int:
+    """Clamp to >= 1; a non-integer logs a warning and uses the default."""
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning(
+            "AGENTIC_SEARCH_MEMORY_CONSOLIDATE_EVERY=%r is not an integer; using %d",
+            raw,
+            _CONSOLIDATE_EVERY_DEFAULT,
+        )
+        return _CONSOLIDATE_EVERY_DEFAULT
+
+
+CONSOLIDATE_EVERY = _parse_consolidate_every(
+    os.getenv(
+        "AGENTIC_SEARCH_MEMORY_CONSOLIDATE_EVERY", str(_CONSOLIDATE_EVERY_DEFAULT)
+    )
+)
 # Index node whose memory_count is the active count at the last consolidation.
 CONSOLIDATED_NODE = "__consolidated__"
 LLM_BATCH_MAX = 30
 _SUMMARY_MAX_CHARS = 200
 _PROTECTED = "constraints"
+
+
+def _protected(r: UserMemoryRecord) -> bool:
+    return is_protected(r.memory_text, normalize_category(r.category))
+
 
 _CONTRADICTION_PROMPT = (
     "These are long-term memories about one user, category '{category}', oldest "
@@ -123,18 +154,13 @@ def _dedup(store, user_id, records, report) -> list[UserMemoryRecord]:
 
 
 def _merge(store, user_id, records, report, llm, encoder) -> list[UserMemoryRecord]:
-    vectors = _vectors(
-        store,
-        user_id,
-        [r for r in records if normalize_category(r.category) != _PROTECTED],
-        encoder,
-    )
-    keep: list[UserMemoryRecord] = []
+    keep: list[UserMemoryRecord] = [r for r in records if _protected(r)]
+    mergeable = [r for r in records if not _protected(r)]
+    vectors = _vectors(store, user_id, mergeable, encoder)
     for category in CATEGORIES:
-        group = [r for r in records if normalize_category(r.category) == category]
         if category == _PROTECTED:
-            keep.extend(group)
             continue
+        group = [r for r in mergeable if normalize_category(r.category) == category]
         clusters: list[list[UserMemoryRecord]] = []
         for r in _newest_first(group):  # each cluster's seed is its newest
             for cluster in clusters:
@@ -176,7 +202,7 @@ def _contradictions(store, user_id, records, report, llm) -> list[UserMemoryReco
         by_attr: dict[str, list[UserMemoryRecord]] = {}
         for r in records:
             attr = _attribute(r)
-            if attr is not None and normalize_category(r.category) != _PROTECTED:
+            if attr is not None and not _protected(r):
                 by_attr.setdefault(attr, []).append(r)
         for attr, group in by_attr.items():
             ordered = _newest_first(group)
@@ -198,7 +224,11 @@ def _contradictions(store, user_id, records, report, llm) -> list[UserMemoryReco
         if category == _PROTECTED:
             continue
         batch = _newest_first(
-            [r for r in records if normalize_category(r.category) == category]
+            [
+                r
+                for r in records
+                if normalize_category(r.category) == category and not _protected(r)
+            ]
         )[:LLM_BATCH_MAX]
         if len(batch) < 2:
             continue
@@ -234,7 +264,11 @@ def _reclassify(store, user_id, records, report, llm) -> None:
     if llm is None:
         return
     batch = _newest_first(
-        [r for r in records if normalize_category(r.category) == "general"]
+        [
+            r
+            for r in records
+            if normalize_category(r.category) == "general" and not _protected(r)
+        ]
     )[:LLM_BATCH_MAX]
     if not batch:
         return
@@ -247,7 +281,7 @@ def _reclassify(store, user_id, records, report, llm) -> None:
     assigned = reply.get("categories")
     if not isinstance(assigned, dict):
         return
-    for r in batch:  # only general rows were sent, so constraints never move out
+    for r in batch:  # only unprotected general rows were sent
         new = normalize_category(assigned.get(r.id))
         if new != "general" and store.set_user_memory_category(user_id, r.id, new):
             report["reclassified"] += 1
@@ -358,12 +392,18 @@ def rebuild_index_summaries(
 def run_due(store, user_id: str, *, llm=None, encoder=None) -> str:
     """Consolidate when memory grew by CONSOLIDATE_EVERY, else refresh dirty summaries.
 
+    A missing marker (first turn after upgrade) is seeded at the current active
+    count without consolidating, so only later growth counts toward the trigger.
     Returns ``"consolidated"``, ``"summaries"`` or ``"idle"``.
     """
     active = len(store.get_user_memory_records(user_id))
     nodes = {n.node: n for n in store.get_memory_index_nodes(user_id)}
     marker = nodes.pop(CONSOLIDATED_NODE, None)
-    if active - (marker.memory_count if marker else 0) >= CONSOLIDATE_EVERY:
+    if marker is None:
+        store.upsert_memory_index_node(
+            user_id, CONSOLIDATED_NODE, summary="", memory_count=active
+        )
+    elif active - marker.memory_count >= CONSOLIDATE_EVERY:
         consolidate_memories(store, user_id, llm=llm, encoder=encoder)
         return "consolidated"
     if any(n.dirty for n in nodes.values()):

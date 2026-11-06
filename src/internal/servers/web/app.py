@@ -1939,10 +1939,10 @@ def create_web_app(
         # single-use token, so there is nothing on the socket to resolve.
         auth_user = caller or _optional_user_from_request(http_request, db)
         # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
-        # needs user_id, which comes from capabilities; memory selection
-        # therefore sees the raw query.
-        # Memory is recalled later through the before_turn lifecycle hook, once
-        # the query is rewritten and the session exists.
+        # needs user_id, which comes from capabilities. Memory is not loaded
+        # here: it is recalled later through the before_turn lifecycle hook,
+        # once the query is rewritten and the session exists, so recall sees
+        # the rewritten query.
         capabilities = await asyncio.to_thread(
             resolve_capabilities, auth_user, db, include_memory=False
         )

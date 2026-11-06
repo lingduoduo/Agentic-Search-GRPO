@@ -260,3 +260,42 @@ def test_memory_preamble_above_cap_deduplicates_identical_texts():
     assert bullets.count("User is allergic to peanuts") == 1
     assert bullets[0] == "User is allergic to peanuts"  # first occurrence position
     store.close()
+
+
+async def test_recall_falls_back_to_lexical_when_encoder_is_slow(monkeypatch):
+    import threading
+
+    from src.internal.hooks.lifecycle import TurnContext
+    from src.internal.memory import lifecycle
+
+    monkeypatch.setattr(lifecycle, "RECALL_ENCODER_BUDGET_SECONDS", 0.05)
+    release = threading.Event()
+
+    def slow_encoder(texts):
+        release.wait(5)
+        raise RuntimeError("encoder released")
+
+    store = AgenticSearchStore(":memory:")
+    store.add_user_memory("u1", "User is allergic to peanuts")
+    for i in range(MEMORY_INJECTION_MAX + 5):
+        store.add_user_memory("u1", f"memory number {i}")
+    try:
+        pre = await lifecycle.recall_handler(
+            TurnContext("u1", None, "dinner ideas", store, encoder=slow_encoder)
+        )
+    finally:
+        release.set()
+    assert "User is allergic to peanuts" in pre
+
+
+def test_root_line_is_computed_live_not_read_from_a_stale_node():
+    store = AgenticSearchStore(":memory:")
+    store.add_user_memory("u1", "User is allergic to peanuts")
+    store.upsert_memory_index_node(
+        "u1", "__root__", summary="stale 99", memory_count=99
+    )
+    store.add_user_memory("u1", "Prefers arXiv")
+    pre = memory_preamble(store, "u1")
+    assert "Memory index: constraints 1 · preferences 1" in pre
+    assert "stale 99" not in pre
+    store.close()

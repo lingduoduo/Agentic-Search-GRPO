@@ -240,3 +240,17 @@ def test_consolidate_passes_llm_and_app_encoder(monkeypatch):
     c.post("/api/memory/consolidate", json={"resolve_conflicts": False})
     assert seen == {"llm": llm, "encoder": enc, "resolve": False}
     db.close()
+
+
+def test_index_root_summary_is_live_not_stale():
+    db = AgenticSearchStore(":memory:")
+    c = _client(db)
+    c.post("/api/memory/save", json={"text": "I'm allergic to peanuts"})
+    db.upsert_memory_index_node(
+        "default_user", "__root__", summary="stale", memory_count=9
+    )
+    c.post("/api/memory/save", json={"text": "User prefers concise answers"})
+    assert c.get("/api/memory/index").json()["root"]["summary"] == (
+        "constraints 1 · preferences 1"
+    )
+    db.close()
