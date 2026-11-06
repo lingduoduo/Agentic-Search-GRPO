@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from src.agents.search import SearchAgentLoop, SearchAgentLoopConfig
 from src.agents.tool import ToolAgentLoop, ToolAgentLoopConfig
+from src.agents.tool.tool_calling import ApprovalDecision
 from src.agents.core.state import PerformanceMetrics, TaskStatus, ToolExecutionResult
 from src.context.search import SearchResult
 from src.internal.tools.parsers import FunctionCall
@@ -183,3 +184,82 @@ async def test_tool_agent_on_turn_called_after_tool_execution(monkeypatch):
         "on_turn should be called once after the tool execution batch"
     )
     assert called[0][1] == "my_tool"
+
+
+@pytest.mark.asyncio
+async def test_tool_agent_on_tool_call_receives_name_args_and_response(monkeypatch):
+    final_answer = "Done."
+
+    class _ToolTok:
+        chat_template = "dummy"
+
+        def apply_chat_template(
+            self, messages, add_generation_prompt=True, tokenize=True, tools=None
+        ):
+            return [1, 2, 3] if tokenize else "DUMMY"
+
+        def encode(self, text):
+            return list(text.encode("utf-8"))
+
+        def decode(self, ids, skip_special_tokens=True):
+            return final_answer
+
+    class _Mgr:
+        async def generate(self, request_id, prompt_ids, sampling_params):
+            return list(final_answer.encode("utf-8"))
+
+    loop = ToolAgentLoop(
+        tokenizer=_ToolTok(),
+        server_manager=_Mgr(),
+        tools=[],
+        config=ToolAgentLoopConfig(max_assistant_turns=3),
+    )
+    parse_count = 0
+
+    async def fake_extract(response_ids):
+        nonlocal parse_count
+        parse_count += 1
+        if parse_count == 1:
+            return ("", [FunctionCall(name="my_tool", arguments='{"q": 1}')])
+        return (final_answer, [])
+
+    loop.tool_parser.extract_tool_calls = fake_extract
+
+    async def fake_call_tool(tool_call, *args, **kwargs):
+        return ToolExecutionResult(
+            tool_name=tool_call.name,
+            status=TaskStatus.COMPLETED,
+            result="tool output",
+            arguments={"q": 1},
+            performance=PerformanceMetrics(execution_time=0.01),
+        )
+
+    monkeypatch.setattr(loop, "_call_tool", fake_call_tool)
+
+    calls: list[tuple] = []
+
+    async def spy(name, args, text):
+        calls.append((name, args, text))
+
+    async def boom(name, args, text):
+        raise RuntimeError("callback failure must not fail the turn")
+
+    async def approve(request):
+        return ApprovalDecision.APPROVE
+
+    await loop.run(
+        [{"role": "user", "content": "q"}],
+        {},
+        on_tool_call=spy,
+        on_approval=approve,
+    )
+    assert calls == [("my_tool", {"q": 1}, "tool output")]
+
+    parse_count = 0
+    out = await loop.run(
+        [{"role": "user", "content": "q"}],
+        {},
+        on_tool_call=boom,
+        on_approval=approve,
+    )
+    assert out is not None
