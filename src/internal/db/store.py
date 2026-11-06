@@ -613,6 +613,7 @@ class AgenticSearchStore:
                 self._conn.execute(ddl)
             except sqlite3.OperationalError:
                 pass
+        category_added = True
         for ddl in [
             "ALTER TABLE user_memories ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
             "ALTER TABLE user_memories ADD COLUMN embedding BLOB",
@@ -621,22 +622,21 @@ class AgenticSearchStore:
             try:
                 self._conn.execute(ddl)
             except sqlite3.OperationalError:
-                pass
-        self._backfill_memory_categories()
+                if "category" in ddl:
+                    category_added = False
+        if category_added:
+            self._backfill_memory_categories()
         self._conn.commit()
 
     def _backfill_memory_categories(self) -> None:
-        """Classify pre-category memories once; the metadata flag stops a redo."""
+        """Classify pre-category memories; runs only on the open that adds the column."""
         rows = self._conn.execute(
-            "SELECT id, memory_text, metadata_json FROM user_memories "
-            "WHERE category = 'general' AND metadata_json NOT LIKE '%\"category_backfilled\"%'"
+            "SELECT id, memory_text FROM user_memories"
         ).fetchall()
         for row in rows:
-            meta = _json_loads(row["metadata_json"])
-            meta["category_backfilled"] = True
             self._conn.execute(
-                "UPDATE user_memories SET category = ?, metadata_json = ? WHERE id = ?",
-                (classify_memory(row["memory_text"]), _json_dumps(meta), row["id"]),
+                "UPDATE user_memories SET category = ? WHERE id = ?",
+                (classify_memory(row["memory_text"]), row["id"]),
             )
 
     def register_user(self, *, email: str, name: str, password_hash: str) -> UserRecord:

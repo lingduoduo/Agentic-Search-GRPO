@@ -76,6 +76,13 @@ def test_migrates_legacy_db_and_backfills_categories(tmp_path):
     s = AgenticSearchStore(str(path))
     assert s.get_user_memory_records("u1")[0].category == "constraints"
     s2 = AgenticSearchStore(str(path))
-    assert (
-        s2.get_user_memory_records("u1")[0].metadata.get("category_backfilled") is True
-    )
+    assert s2.get_user_memory_records("u1")[0].category == "constraints"
+
+
+def test_explicit_general_survives_reopen(tmp_path):
+    path = str(tmp_path / "m.db")
+    s = AgenticSearchStore(path)
+    s.add_user_memory("u1", "User is allergic to peanuts", category="general")
+    s._conn.close()
+    s2 = AgenticSearchStore(path)
+    assert s2.get_user_memory_records("u1")[0].category == "general"
