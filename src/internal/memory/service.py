@@ -203,8 +203,10 @@ def maybe_build_encoder() -> Encoder | None:
         return None
 
 
-def save_memory(store, user_id: str, text: str) -> str | None:
-    record = store.add_user_memory(user_id, text)
+def save_memory(
+    store, user_id: str, text: str, *, category: str | None = None
+) -> str | None:
+    record = store.add_user_memory(user_id, text, category=category)
     return record.id if record is not None else None
 
 
@@ -235,57 +237,19 @@ def _attribute(record: UserMemoryRecord) -> str | None:
 
 
 def consolidate_memories(
-    store, user_id: str, resolve_conflicts: bool = True
+    store,
+    user_id: str,
+    resolve_conflicts: bool = True,
+    *,
+    llm=None,
+    encoder: Encoder | None = None,
 ) -> dict[str, Any]:
-    records = store.get_user_memory_records(user_id)
-    report: dict[str, Any] = {
-        "initial": len(records),
-        "duplicates_removed": 0,
-        "conflicts_resolved": [],
-        "final": 0,
-    }
+    """See ``src.internal.memory.consolidation.consolidate_memories``."""
+    from src.internal.memory import consolidation  # consolidation imports this module
 
-    def newest_first(rs: list[UserMemoryRecord]) -> list[UserMemoryRecord]:
-        return sorted(rs, key=lambda r: (r.updated_at or "", r.id), reverse=True)
-
-    # Exact-content dedup, keeping the newest.
-    seen: set[str] = set()
-    keep: list[UserMemoryRecord] = []
-    remove: list[UserMemoryRecord] = []
-    for r in newest_first(records):
-        key = r.memory_text.strip().lower()
-        if key in seen:
-            remove.append(r)
-            report["duplicates_removed"] += 1
-            continue
-        seen.add(key)
-        keep.append(r)
-
-    if resolve_conflicts:
-        by_attr: dict[str, list[UserMemoryRecord]] = {}
-        untagged: list[UserMemoryRecord] = []
-        for r in keep:
-            attr = _attribute(r)
-            (untagged if attr is None else by_attr.setdefault(attr, [])).append(r)
-        resolved = list(untagged)
-        for attr, group in by_attr.items():
-            ordered = newest_first(group)
-            resolved.append(ordered[0])
-            if len(ordered) > 1:
-                remove.extend(ordered[1:])
-                report["conflicts_resolved"].append(
-                    {
-                        "attribute": attr,
-                        "kept": ordered[0].memory_text,
-                        "superseded": [r.memory_text for r in ordered[1:]],
-                    }
-                )
-        keep = resolved
-
-    for r in remove:
-        store.delete_user_memory(user_id, r.id)
-    report["final"] = len(keep)
-    return report
+    return consolidation.consolidate_memories(
+        store, user_id, resolve_conflicts, llm=llm, encoder=encoder
+    )
 
 
 _CURATION_SYSTEM = (

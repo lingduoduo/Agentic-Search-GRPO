@@ -349,6 +349,104 @@ curl -s http://localhost:7860/search/search-history
 
 `GET /query/standard-answer` exists but is an Enterprise-gated stub — it returns `501` ("Standard Answers is an Enterprise feature … not available in this deployment") in the open-source build.
 
+## Memory API
+
+Per-user long-term memory on the web backend (`:7860`), under `/api/memory`
+(`src/internal/memory/router.py`). The caller's bucket is their signed-in user;
+an anonymous caller shares the `default_user` bucket, or gets `401` when
+`AGENTIC_SEARCH_MEMORY_REQUIRE_AUTH` is on. Every memory belongs to one of six
+categories, in this fixed order: `constraints`, `preferences`, `profile`,
+`projects`, `decisions`, `general`. An unknown category name is treated as
+`general`.
+
+**Save** (`POST /api/memory/save`). `category` is optional. Omitted, the text is
+classified by keyword (for example "allergic" files it under `constraints`):
+```bash
+curl -s -X POST http://localhost:7860/api/memory/save \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Moved to Munich", "category": "profile"}'
+# → {"memory_id": "mem_..."}
+```
+
+**List** (`GET /api/memory/list`). Each item carries its `category`, and the
+optional `?category=` filter returns one category:
+```bash
+curl -s "http://localhost:7860/api/memory/list?category=profile"
+# → {"memories": [{"id": "mem_...", "text": "Moved to Munich", "category": "profile", "updated_at": "..."}]}
+```
+
+**Search** (`POST /api/memory/search`). The optional `category` restricts the
+hits to that category. Scoring uses the app's memory encoder when
+`AGENTIC_SEARCH_MEMORY_SEMANTIC` loaded one, and BM25 alone otherwise:
+```bash
+curl -s -X POST http://localhost:7860/api/memory/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "where does the user live", "max_results": 5, "category": "profile"}'
+# → {"results": [{"id": "mem_...", "text": "Moved to Munich", "score": 0.83}]}
+```
+
+**Index** (`GET /api/memory/index`) returns the caller's memory hierarchy. The
+root holds the overall summary and the total count. Categories come in the fixed
+order above, and empty ones are omitted. A summary is whatever the last
+consolidation or summary refresh stored, so it can lag a write that came after
+it. A category that was never summarized has `""`. With no stored root summary,
+the root shows the category-count line:
+```bash
+curl -s http://localhost:7860/api/memory/index
+# → {"root": {"summary": "constraints 1 · preferences 1", "memory_count": 2},
+#    "categories": [
+#      {"name": "constraints", "summary": "1 memories; key terms: allergic, peanuts; latest: I'm allergic to peanuts",
+#       "memory_count": 1, "memories": [{"id": "mem_...", "text": "I'm allergic to peanuts", "updated_at": "..."}]},
+#      {"name": "preferences", "summary": "", "memory_count": 1, "memories": [...]}]}
+```
+
+**Consolidate** (`POST /api/memory/consolidate`). The request is unchanged
+(`resolve_conflicts`, default `true`). It uses the backend's LLM and memory
+encoder when they are configured, and deterministic rules when they are not. The
+steps run in this order:
+
+1. Exact duplicates within a category collapse to the newest copy. The match
+   ignores case and whitespace.
+2. Near-duplicates within a category are merged. The test is token Jaccard
+   ≥ 0.6, and with an encoder the cosine must also be ≥ 0.9. With an LLM the
+   newest copy is rewritten as one merged sentence. Without one, the newest copy
+   is kept.
+3. Contradictions are resolved when `resolve_conflicts` is true. With an LLM,
+   each category (its newest 30 memories) is checked for memories that a newer
+   one makes obsolete. Without an LLM, the newest memory wins among those that
+   share `metadata.tags[0]`. A superseded row is soft-deleted and records
+   `metadata.superseded_by`.
+4. With an LLM, `general` memories are reassigned to a better-fitting
+   category.
+5. Dirty category summaries and the root summary are rebuilt. With an LLM,
+   each category gets one short sentence. Without one, the summary is
+   deterministic: the count, the top 5 key terms, and the 2 newest memories.
+   The root is always the category-count line.
+
+`constraints` memories are protected. Steps 2 to 4 never delete, merge, supersede
+or move one, so only an exact duplicate of a constraint is removed. LLM replies
+are untrusted: only ids from the batch that was sent are honored, and an
+unparseable reply changes nothing. The report:
+```bash
+curl -s -X POST http://localhost:7860/api/memory/consolidate \
+  -H "Content-Type: application/json" -d '{"resolve_conflicts": true}'
+# → {"report": {"initial": 12, "duplicates_removed": 1, "merged": 2,
+#     "conflicts_resolved": [{"category": "profile", "kept": "Moved to Munich", "superseded": ["Lives in Berlin"]}],
+#     "reclassified": 1, "summaries_rebuilt": 4, "final": 8}}
+```
+A `conflicts_resolved` entry carries `category` when an LLM made the call, and
+`attribute` (the shared tag) when the tag rule did.
+
+Consolidation also runs on its own after a signed-in turn. It runs in the
+background, once the user's active memory count has grown by
+`AGENTIC_SEARCH_MEMORY_CONSOLIDATE_EVERY` (default `10`) since the last
+consolidation. On other turns, only the dirty summaries are refreshed. It shares
+a per-user guard with per-turn capture, so the two never interleave.
+
+`GET /api/memory/profile`, `POST /api/memory/profile/generate` and
+`POST /api/memory/curate` are unchanged. The last two return `503` without an
+LLM.
+
 ## API health checks
 
 Web backend: `http://localhost:7860` · Retrieval server: `http://localhost:8001`

@@ -8,6 +8,7 @@ import logging
 import threading
 
 from src.internal.hooks.lifecycle import LifecycleHooks, TurnContext
+from src.internal.memory import consolidation
 from src.internal.memory.capture import capture_turn
 from src.internal.memory.service import memory_preamble
 
@@ -15,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 _busy: set[str] = set()
 _busy_lock = threading.Lock()
+
+# after_turn starts capture and consolidation together, and capture takes the
+# user's guard first, so consolidation waits for it (bounded) instead of
+# skipping every turn that captures.
+CONSOLIDATION_WAIT_SECONDS = 30.0
+_GUARD_POLL_SECONDS = 0.5
 
 
 @contextlib.contextmanager
@@ -66,7 +73,35 @@ async def capture_handler(ctx: TurnContext) -> None:
             logger.warning("per-turn memory capture failed", exc_info=True)
 
 
+async def consolidation_handler(ctx: TurnContext) -> None:
+    """Consolidate or refresh index summaries in the background (never raises)."""
+    if ctx.user_id is None:
+        return
+    waited = 0.0
+    while True:
+        with user_guard(ctx.user_id) as free:
+            if free:
+                try:
+                    await asyncio.to_thread(
+                        consolidation.run_due,
+                        ctx.store,
+                        ctx.user_id,
+                        llm=ctx.llm,
+                        encoder=ctx.encoder,
+                    )
+                except Exception:  # noqa: BLE001 - memory never fails a request
+                    logger.warning("memory consolidation failed", exc_info=True)
+                return
+        if waited >= CONSOLIDATION_WAIT_SECONDS:
+            return
+        await asyncio.sleep(_GUARD_POLL_SECONDS)
+        waited += _GUARD_POLL_SECONDS
+
+
 def register_memory_hooks(hooks: LifecycleHooks, settings) -> None:
     hooks.on_before_turn(recall_handler)
     if getattr(settings, "memory_auto_curate", False):
         hooks.on_after_turn(capture_handler)
+    # Memory also grows via /api/memory/save and curation, so this does not
+    # depend on the capture flag.
+    hooks.on_after_turn(consolidation_handler)

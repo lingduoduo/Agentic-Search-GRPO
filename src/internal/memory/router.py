@@ -9,11 +9,13 @@ from pydantic import BaseModel, Field
 
 from src.internal.auth import user_from_headers
 from src.internal.memory import service
+from src.internal.memory.categories import CATEGORIES, ROOT_NODE, normalize_category
 from src.internal.memory.service import DEFAULT_MEMORY_USER_ID
 
 
 class _SaveRequest(BaseModel):
     text: str = Field(..., min_length=1)
+    category: str | None = None
 
 
 class _SearchRequest(BaseModel):
@@ -62,16 +64,51 @@ def create_memory_router(
 
     @router.post("/save")
     def save(body: _SaveRequest, request: Request) -> dict:
-        return {"memory_id": service.save_memory(db, _uid(request), body.text)}
+        memory_id = service.save_memory(
+            db, _uid(request), body.text, category=body.category
+        )
+        return {"memory_id": memory_id}
 
     @router.get("/list")
-    def list_memories(request: Request) -> dict:
-        records = db.get_user_memory_records(_uid(request))
+    def list_memories(request: Request, category: str | None = None) -> dict:
+        records = db.get_user_memory_records(_uid(request), category=category)
         return {
             "memories": [
-                {"id": r.id, "text": r.memory_text, "updated_at": r.updated_at}
+                {
+                    "id": r.id,
+                    "text": r.memory_text,
+                    "category": normalize_category(r.category),
+                    "updated_at": r.updated_at,
+                }
                 for r in records
             ]
+        }
+
+    @router.get("/index")
+    def memory_index(request: Request) -> dict:
+        uid = _uid(request)
+        records = db.get_user_memory_records(uid)
+        summaries = {n.node: n.summary or "" for n in db.get_memory_index_nodes(uid)}
+        categories = []
+        for name in CATEGORIES:
+            group = [r for r in records if normalize_category(r.category) == name]
+            if not group:
+                continue
+            categories.append(
+                {
+                    "name": name,
+                    "summary": summaries.get(name, ""),
+                    "memory_count": len(group),
+                    "memories": [
+                        {"id": r.id, "text": r.memory_text, "updated_at": r.updated_at}
+                        for r in group
+                    ],
+                }
+            )
+        root = summaries.get(ROOT_NODE) or service._count_line(records)
+        return {
+            "root": {"summary": root, "memory_count": len(records)},
+            "categories": categories,
         }
 
     @router.post("/search")
@@ -94,7 +131,11 @@ def create_memory_router(
     def consolidate(body: _ConsolidateRequest, request: Request) -> dict:
         return {
             "report": service.consolidate_memories(
-                db, _uid(request), resolve_conflicts=body.resolve_conflicts
+                db,
+                _uid(request),
+                resolve_conflicts=body.resolve_conflicts,
+                llm=llm,
+                encoder=getattr(request.app.state, "memory_encoder", None),
             )
         }
 
