@@ -124,3 +124,39 @@ def test_default_mode_leaves_the_anonymous_bucket_reachable():
     assert c.post("/api/memory/save", json={"text": "anon fact"}).status_code == 200
     assert c.get("/api/memory/list").json()["memories"][0]["text"] == "anon fact"
     db.close()
+
+
+def test_search_category_filter_and_app_state_encoder(monkeypatch):
+    import numpy as np
+
+    import src.internal.memory.service as svc
+
+    def _boom():
+        raise AssertionError("maybe_build_encoder must not be called per request")
+
+    monkeypatch.setattr(svc, "maybe_build_encoder", _boom)
+    db = AgenticSearchStore(":memory:")
+    db.add_user_memory("default_user", "User prefers concise answers")
+    db.add_user_memory("default_user", "User is allergic to peanuts")
+    calls = []
+
+    def fake_encoder(texts):
+        calls.append(texts)
+        return np.ones((len(texts), 2), dtype=np.float32)
+
+    app = FastAPI()
+    app.state.memory_encoder = fake_encoder
+    app.include_router(create_memory_router(db, None))
+    c = TestClient(app)
+    cats = {r.category for r in db.get_user_memory_records("default_user")}
+    cat = db.get_user_memory_records("default_user")[0].category
+    res = c.post(
+        "/api/memory/search", json={"query": "answers peanuts", "category": cat}
+    ).json()["results"]
+    assert calls
+    expected = {
+        r.id for r in db.get_user_memory_records("default_user") if r.category == cat
+    }
+    assert res and {h["id"] for h in res} <= expected
+    assert len(cats) >= 1
+    db.close()

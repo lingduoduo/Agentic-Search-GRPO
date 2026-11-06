@@ -40,7 +40,12 @@ ANONYMOUS = RequestCapabilities(
 
 
 def resolve_capabilities(
-    user, store, *, query: str | None = None, encoder=None
+    user,
+    store,
+    *,
+    query: str | None = None,
+    encoder=None,
+    include_memory: bool = True,
 ) -> RequestCapabilities:
     """Map a resolved user (or ``None``) to its capabilities.
 
@@ -52,6 +57,8 @@ def resolve_capabilities(
     ``query`` and ``encoder`` let the preamble favor memories relevant to the
     current request once the user is above the injection cap; both are
     optional and the anonymous short-circuit runs before either is used.
+    ``include_memory=False`` skips the preamble (the web path recalls memory
+    through the ``before_turn`` lifecycle hook instead).
     """
     if user is None or getattr(user, "is_anonymous", False):
         return ANONYMOUS
@@ -62,8 +69,10 @@ def resolve_capabilities(
         email=getattr(user, "email", None),
         group_ids=getattr(user, "group_ids", None),
     )
+    preamble = ""
     try:
-        preamble = memory_preamble(store, user_id, query=query, encoder=encoder)
+        if include_memory:
+            preamble = memory_preamble(store, user_id, query=query, encoder=encoder)
     except Exception as exc:  # noqa: BLE001 — memory must never fail a request
         logger.warning("memory preamble unavailable for %s: %s", user_id, exc)
         preamble = ""

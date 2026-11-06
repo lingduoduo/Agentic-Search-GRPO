@@ -27,6 +27,12 @@ and [Frontend development](frontend.md).
   `/api/agent` only; `/chat` and `/tool` answer with the local model and need
   `AGENTIC_SEARCH_MEMORY_COMPRESSION=1`. Deleting a chat session also drops its
   summary. See [Configuration](configuration.md#application-and-authentication).
+- **Per-user memory** — a signed-in caller's stored memories are injected on
+  every route (chat, search, tool), as a constraint-pinned preamble. On the
+  search and tool routes the preamble joins the system prompt, and signed-in
+  tool runs also get a `search_memory` tool bound to that one user for the
+  request (it replaces the MCP `search_memories` tool). Anonymous callers get
+  neither memory text nor the tool.
 - **React chat UI** — streaming responses, source inspection, and observability
   surfaces in the development frontend.
 

@@ -1863,7 +1863,7 @@ def test_run_agent_schedules_compression_after_reply(monkeypatch, tmp_path):
         json={"query": "follow up", "mode": "chat_once", "session_id": session_id},
     )
 
-    assert scheduled == [(5, True, sentinel_llm, store, None, True)]
+    assert scheduled == [(5, True, sentinel_llm, store, None, False)]
 
 
 @pytest.mark.parametrize("agent,direct", [(True, False), (False, True)])

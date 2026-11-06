@@ -71,6 +71,8 @@ from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
 from src.internal.hooks import HookSoftFailed
 from src.internal.hooks import execute_hook
+from src.internal.hooks.lifecycle import LifecycleHooks, ToolCallContext, TurnContext
+from src.internal.memory.lifecycle import register_memory_hooks
 from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
@@ -802,6 +804,7 @@ async def _run_search_agent(
     allow_internal_knowledge_answer: bool = True,
     on_turn=None,
     on_trace=None,
+    user_memory: str | None = None,
 ) -> tuple:
     """Run the multi-turn SearchAgentLoop. Assumes a local model is configured."""
     from src import get_registered_agent_loop, resolve_agent_name
@@ -816,14 +819,18 @@ async def _run_search_agent(
         summary = history.pop(0).content
     max_turns = 3
     system_prompt = None
-    if summary:
-        system_prompt = (
-            build_search_agent_instruction(
-                max_search_limit=max_turns,
-                max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+    if summary or user_memory:
+        system_prompt = "\n\n".join(
+            part
+            for part in (
+                build_search_agent_instruction(
+                    max_search_limit=max_turns,
+                    max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+                ),
+                summary,
+                user_memory,
             )
-            + "\n\n"
-            + summary
+            if part
         )
 
     loop_cls = get_registered_agent_loop(resolve_agent_name("search_agent"))
@@ -1100,6 +1107,7 @@ async def _run_search_direct_or_escalate(
     domain: "str | tuple[str, ...]" = "web",
     on_turn=None,
     retrieval_query: str | None = None,
+    user_memory: str | None = None,
 ) -> tuple:
     """Direct retrieval first; return docs when the query matches, else escalate.
 
@@ -1144,6 +1152,7 @@ async def _run_search_direct_or_escalate(
                 allow_internal_knowledge_answer=False,
                 on_turn=on_turn,
                 on_trace=None,
+                user_memory=user_memory,
             )
             run_extra.update(escalate_extra)
             docs = _enforce_access(docs, filters)
@@ -1362,6 +1371,7 @@ async def _run_auto_routed(
     user_present: bool = False,
     forced_route: RouteStrategy | None = None,
     retrieval_query: str | None = None,
+    tool_agent_kwargs: dict | None = None,
 ) -> tuple:
     """3-way agentic routing. Returns (answer, citations, documents, intent, extra).
 
@@ -1426,6 +1436,8 @@ async def _run_auto_routed(
                     with_search_tool=True,
                     user_present=user_present,
                     filters=filters,
+                    user_memory=user_memory,
+                    **(tool_agent_kwargs or {}),
                 )
             except Exception as exc:
                 logger.warning("ToolAgentLoop failed, degrading to RAG: %s", exc)
@@ -1463,13 +1475,12 @@ async def _run_auto_routed(
             domain=domain,
             on_turn=on_turn,
             retrieval_query=retrieval_query,
+            user_memory=user_memory,
         )
         extra.update(run_extra)
         return answer, citations, documents, intent, extra
 
     # ---- CHAT: grounded synthesis via AgenticRAGLoop (degrade to pipeline) ----
-    # Memory injection is intentionally scoped to this CHAT/AgenticRAG path (and
-    # the classic RAG path); SEARCH/TOOL routes do not receive user_memory.
     if strategy is RouteStrategy.CHAT:
         if llm is not None:
             answer, citations, documents, intent, run_extra = await _run_agentic_rag(
@@ -1665,6 +1676,9 @@ def create_web_app(
 
     app = FastAPI(title="Agentic Search Web", lifespan=lifespan)
     app.state.auth_store = db
+    lifecycle_hooks = LifecycleHooks()
+    register_memory_hooks(lifecycle_hooks, settings)
+    app.state.lifecycle_hooks = lifecycle_hooks
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
@@ -1927,20 +1941,13 @@ def create_web_app(
         # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
         # needs user_id, which comes from capabilities; memory selection
         # therefore sees the raw query.
-        # Memory recall may run the e5 encoder over every stored memory; keep
-        # that off the event loop, matching the direct-gate embedder above.
+        # Memory is recalled later through the before_turn lifecycle hook, once
+        # the query is rewritten and the session exists.
         capabilities = await asyncio.to_thread(
-            resolve_capabilities,
-            auth_user,
-            db,
-            query=query,
-            encoder=getattr(http_request.app.state, "memory_encoder", None),
+            resolve_capabilities, auth_user, db, include_memory=False
         )
         # Attribution and entitlement both come from the authenticated caller.
         user_id = capabilities.user_id
-        # Memory-augmented generation: a signed-in caller's stored memories are
-        # injected because they are signed in. Anonymous callers have none.
-        user_memory = capabilities.memory_preamble or None
         hook_result = execute_hook(
             hook_point=HookPoint.QUERY_PROCESSING,
             payload={"query": query, "user_id": user_id},
@@ -1960,6 +1967,43 @@ def create_web_app(
 
         session_request = _copy_agent_request(request, user_id=user_id)
         session_id = _ensure_session(db, session_request, auth_user)
+        # Memory-augmented generation: a signed-in caller's stored memories are
+        # injected because they are signed in. Anonymous callers have none.
+        turn_ctx = TurnContext(
+            user_id=user_id,
+            session_id=session_id,
+            query=query,
+            store=db,
+            llm=llm,
+            encoder=getattr(http_request.app.state, "memory_encoder", None),
+        )
+        user_memory = (await lifecycle_hooks.before_turn(turn_ctx)) or None
+
+        def _finalize_tracked(*args, **kwargs):
+            response = _finalize_response(*args, **kwargs)
+            turn_ctx.answer = kwargs.get("answer")
+            turn_ctx.route = (kwargs.get("extra") or {}).get("route")
+            return response
+
+        async def _after_tool_call(tool_name, arguments, response_text):
+            await lifecycle_hooks.after_tool_call(
+                ToolCallContext(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result_summary=response_text,
+                    user_id=turn_ctx.user_id,
+                    session_id=turn_ctx.session_id,
+                )
+            )
+
+        # Signed-in callers only: the search_memory tool is bound to this one
+        # user for this one request.
+        tool_agent_kwargs = {
+            "memory_store": db if user_id is not None else None,
+            "memory_user_id": user_id,
+            "memory_encoder": getattr(http_request.app.state, "memory_encoder", None),
+            "on_tool_call": _after_tool_call,
+        }
         working = load_working_memory(
             db,
             session_id,
@@ -2053,13 +2097,14 @@ def create_web_app(
                         user_present=capabilities.user_present,
                         forced_route=forced_route,
                         retrieval_query=retrieval_query,
+                        tool_agent_kwargs=tool_agent_kwargs,
                     )
                     extra.update(follow_up_meta)
                     _cap = _capture.active()
                     if _cap is not None:
                         _cap.route = extra.get("route")
                         _cap.route_degraded = extra.get("route_degraded")
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2101,7 +2146,7 @@ def create_web_app(
                         documents=documents,
                         source_provider=source_provider,
                     )
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2144,7 +2189,7 @@ def create_web_app(
                         documents=search_result.documents,
                         source_provider=source_provider,
                     )
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2188,7 +2233,7 @@ def create_web_app(
                         retrieval_query=retrieval_query,
                     )
                     extra.update(follow_up_meta)
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2231,13 +2276,14 @@ def create_web_app(
                         filters=filters,
                         on_turn=on_turn,
                         on_trace=on_trace,
+                        user_memory=user_memory,
                     )
                     # Same pairing as above: the loop's retrieval went out with
                     # a filters payload the server is free to ignore, so the
                     # documents it came back with are checked here.
                     documents = _enforce_access(documents, filters)
                     citations = [doc.citation for doc in documents]
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2271,11 +2317,13 @@ def create_web_app(
                         with_search_tool=True,
                         user_present=capabilities.user_present,
                         filters=filters,
+                        user_memory=user_memory,
+                        **tool_agent_kwargs,
                     )
                     # Explicit mode falls back to the last assistant message on an
                     # empty final answer (the auto-route instead degrades to RAG).
                     answer = answer or extra.pop("_assistant_fallback", "")
-                    return _finalize_response(
+                    return _finalize_tracked(
                         db,
                         session_id,
                         query=query,
@@ -2341,7 +2389,7 @@ def create_web_app(
                 _cap = _capture.active()
                 if _cap is not None:
                     _cap.route_degraded = extra.get("route_degraded")
-                return _finalize_response(
+                return _finalize_tracked(
                     db,
                     session_id,
                     query=query,
@@ -2367,7 +2415,7 @@ def create_web_app(
                 )
                 for document in result.context.documents
             ]
-            return _finalize_response(
+            return _finalize_tracked(
                 db,
                 session_id,
                 query=query,
@@ -2393,6 +2441,11 @@ def create_web_app(
                 _capture.reset_capture(capture_token)
             # Last: a failure to schedule compression must never mask the
             # request result above or skip the metrics/capture teardown.
+            # Per-turn capture (after_turn) supersedes compression-time curation.
+            try:
+                lifecycle_hooks.after_turn(turn_ctx)
+            except Exception:  # noqa: BLE001 - never mask the result
+                logger.warning("after_turn hooks failed to schedule", exc_info=True)
             schedule_compression(
                 working,
                 session_id=session_id,
@@ -2400,7 +2453,7 @@ def create_web_app(
                 enabled=settings.memory_compression,
                 store=db,
                 user_id=user_id,
-                auto_curate=settings.memory_auto_curate,
+                auto_curate=False,
             )
 
     @app.post("/api/agent")

@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from typing import Any, Callable
 
 from src.internal.db.models import (
@@ -14,6 +13,8 @@ from src.internal.db.models import (
     UserMemoryRecord,
     UserProfileEntryRecord,
 )
+from src.internal.memory.categories import CATEGORIES, ROOT_NODE, normalize_category
+from src.internal.memory.search import _QUERY_STOPWORDS, _tokenize, hybrid_search
 from src.internal.memory.tools import build_memory_registry
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ DEFAULT_MEMORY_USER_ID = "default_user"
 MAX_CURATION_TURNS = 6
 MEMORY_GATHER_CHAR_BUDGET = 12000
 MEMORY_INJECTION_MAX = 20
+# Cap on the preamble body (index line, headings, bullets), excluding the header.
+MEMORY_PREAMBLE_CHAR_BUDGET = 4000
 
 # Above the cap, this many preamble slots go to relevance hits for the
 # current query; the rest stay the most recent memories.
@@ -44,36 +47,88 @@ def memory_preamble(
     query: str | None = None,
     encoder: Encoder | None = None,
 ) -> str:
-    """Format the user's active memories as a system-prompt preamble.
+    """Format the user's active memories as a hierarchical system-prompt preamble.
 
-    Returns an instructional block (leading blank line included) listing up to
-    *max_items* memories, or ``""`` when the user has none. The instructional
-    wording is what drives proactive use (e.g. warn about a stored allergy).
+    Returns an instructional block (leading blank line included) with a
+    ``Memory index:`` root line, then memories grouped under ``[category]``
+    headings (``: summary`` appended when the category node has one), or ``""``
+    when the user has none. The instructional wording is what drives proactive
+    use (e.g. warn about a stored allergy).
 
-    At or below the cap every memory is listed. Above it, and given a
-    *query*, half the slots go to the memories most relevant to that query
-    (``search_memories``) and the rest to the most recent ones, so an old but
-    relevant fact still reaches the model while the 10 most recent stay always
-    present. Without a query the most recent *max_items* are listed.
-
-    Above the cap with a query, duplicate texts collapse to one bullet; the
-    plain recency path lists rows as stored.
+    At or below the cap every memory is listed. Above it the selection is, in
+    order: every ``constraints`` memory (never trimmed), then the hits most
+    relevant to *query* (up to ``MEMORY_RELEVANT_SLOTS``), then the newest
+    memories up to *max_items*. The body is capped at
+    ``MEMORY_PREAMBLE_CHAR_BUDGET`` chars by dropping recency fill first, then
+    relevance hits; constraints stay. Duplicate texts collapse to one bullet.
     """
-    memories = store.get_user_memories(user_id)
-    if not memories:
+    records = store.get_user_memory_records(user_id)
+    if not records:
         return ""
-    if len(memories) <= max_items or not (query or "").strip():
-        chosen = memories[-max_items:]
+    if len(records) <= max_items:
+        tiers = [
+            (r.memory_text, 0 if normalize_category(r.category) == "constraints" else 2)
+            for r in records
+        ]
     else:
-        chosen = _select_relevant(store, user_id, query, memories, max_items, encoder)
-    return _MEMORY_PREAMBLE_HEADER + "\n".join(f"- {m}" for m in chosen)
+        tiers = _select_tiers(store, user_id, query, records, max_items, encoder)
+    keep = {text: tier for text, tier in tiers}
+    selected = [r for r in records if r.memory_text in keep]
+
+    summaries, root = _index_summaries(store, user_id)
+    root_line = "Memory index: " + (root or _count_line(records))
+
+    while True:
+        body = _render(selected, summaries, root_line)
+        if len(body) <= MEMORY_PREAMBLE_CHAR_BUDGET:
+            break
+        droppable = [r for r in selected if keep[r.memory_text] > 0]
+        if not droppable:
+            break
+        # Highest tier first (recency fill before hits); within it, the oldest.
+        victim = max(droppable, key=lambda r: (keep[r.memory_text], -selected.index(r)))
+        selected = [r for r in selected if r.memory_text != victim.memory_text]
+    return _MEMORY_PREAMBLE_HEADER + body
 
 
-_QUERY_STOPWORDS = frozenset(
-    "a an and are as at be but by can do for from has have how i if in is it "
-    "its me my of on or our so that the their them they this to was we what "
-    "when where which who will with would you your".split()
-)
+def _render(
+    selected: list[UserMemoryRecord], summaries: dict[str, str], root_line: str
+) -> str:
+    lines = [root_line]
+    seen: set[str] = set()
+    for category in CATEGORIES:
+        group = [r for r in selected if normalize_category(r.category) == category]
+        texts = []
+        for r in group:
+            if r.memory_text not in seen:
+                seen.add(r.memory_text)
+                texts.append(r.memory_text)
+        if not texts:
+            continue
+        heading = f"[{category}]"
+        if summaries.get(category):
+            heading += f": {summaries[category]}"
+        lines.append(heading)
+        lines.extend(f"- {t}" for t in texts)
+    return "\n".join(lines)
+
+
+def _count_line(records: list[UserMemoryRecord]) -> str:
+    counts: dict[str, int] = {}
+    for r in records:
+        c = normalize_category(r.category)
+        counts[c] = counts.get(c, 0) + 1
+    return " · ".join(f"{c} {counts[c]}" for c in CATEGORIES if c in counts)
+
+
+def _index_summaries(store, user_id: str) -> tuple[dict[str, str], str]:
+    try:
+        nodes = store.get_memory_index_nodes(user_id)
+    except Exception as exc:  # noqa: BLE001 — the index is decoration
+        logger.warning("memory index read failed for %s: %s", user_id, exc)
+        return {}, ""
+    summaries = {n.node: (n.summary or "").strip() for n in nodes}
+    return summaries, summaries.pop(ROOT_NODE, "")
 
 
 def _content_query(query: str) -> str:
@@ -87,45 +142,45 @@ def _content_query(query: str) -> str:
     return " ".join(tokens)
 
 
-def _select_relevant(
+def _select_tiers(
     store,
     user_id: str,
-    query: str,
-    memories: list[str],
+    query: str | None,
+    records: list[UserMemoryRecord],
     max_items: int,
     encoder: Encoder | None,
-) -> list[str]:
-    """Relevance hits first, then newest-first fill, returned in chronological order."""
-    search_query = query if encoder is not None else _content_query(query)
-    if not search_query:
-        return memories[-max_items:]
-    try:
-        hits = search_memories(
-            store,
-            user_id,
-            search_query,
-            max_results=min(MEMORY_RELEVANT_SLOTS, max_items // 2),
-            encoder=encoder,
-        )
-    except Exception as exc:  # noqa: BLE001 — recall is best-effort
-        logger.warning("relevant memory recall failed for %s: %s", user_id, exc)
-        return memories[-max_items:]
-    selected: list[str] = []
-    for record, _score in hits:
-        if record.memory_text not in selected:
-            selected.append(record.memory_text)
-    for text in reversed(memories):
+) -> list[tuple[str, int]]:
+    """(text, tier) pairs: 0 constraints, 1 relevance hits, 2 recency fill."""
+    selected: dict[str, int] = {}
+    for r in reversed(records):  # newest constraints win when over the cap
         if len(selected) >= max_items:
             break
-        if text not in selected:
-            selected.append(text)
-    keep = set(selected)
-    ordered: list[str] = []
-    for text in memories:
-        if text in keep:
-            ordered.append(text)
-            keep.discard(text)
-    return ordered
+        if normalize_category(r.category) == "constraints":
+            selected.setdefault(r.memory_text, 0)
+    search_query = ""
+    if (query or "").strip():
+        search_query = query if encoder is not None else _content_query(query)
+    if search_query:
+        try:
+            hits = search_memories(
+                store,
+                user_id,
+                search_query,
+                max_results=min(MEMORY_RELEVANT_SLOTS, max_items // 2),
+                encoder=encoder,
+            )
+        except Exception as exc:  # noqa: BLE001 — recall is best-effort
+            logger.warning("relevant memory recall failed for %s: %s", user_id, exc)
+            hits = []
+        for record, _score in hits:
+            if len(selected) >= max_items:
+                break
+            selected.setdefault(record.memory_text, 1)
+    for r in reversed(records):
+        if len(selected) >= max_items:
+            break
+        selected.setdefault(r.memory_text, 2)
+    return list(selected.items())
 
 
 def maybe_build_encoder() -> Encoder | None:
@@ -153,39 +208,23 @@ def save_memory(store, user_id: str, text: str) -> str | None:
     return record.id if record is not None else None
 
 
-def _tokenize(text: str) -> list[str]:
-    return [t for t in re.split(r"[^0-9a-z]+", text.lower()) if t]
-
-
 def search_memories(
     store,
     user_id: str,
     query: str,
     max_results: int = 5,
     encoder: Encoder | None = None,
+    *,
+    category: str | None = None,
 ) -> list[tuple[UserMemoryRecord, float]]:
-    records = store.get_user_memory_records(user_id)
-    if not records or not query.strip():
-        return []
-    if encoder is not None:
-        import numpy as np
-
-        matrix = encoder([f"passage: {r.memory_text}" for r in records])
-        qvec = encoder([f"query: {query}"])
-        sims = (np.asarray(qvec) @ np.asarray(matrix).T)[0]
-        ranked = sorted(zip(records, sims), key=lambda x: float(x[1]), reverse=True)
-        return [(r, float(s)) for r, s in ranked[:max_results]]
-    # Lexical fallback: token-overlap, normalized by query length.
-    q_tokens = set(_tokenize(query))
-    if not q_tokens:
-        return []
-    scored: list[tuple[UserMemoryRecord, float]] = []
-    for r in records:
-        overlap = len(q_tokens & set(_tokenize(r.memory_text)))
-        if overlap:
-            scored.append((r, overlap / len(q_tokens)))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:max_results]
+    return hybrid_search(
+        store,
+        user_id,
+        query,
+        max_results=max_results,
+        encoder=encoder,
+        category=category,
+    )
 
 
 def _attribute(record: UserMemoryRecord) -> str | None:

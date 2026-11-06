@@ -680,6 +680,7 @@ class ToolAgentLoop(AgentLoopBase):
         on_turn: "OnTurnCallback | None" = None,
         on_approval: ToolApprovalCallback | None = None,
         on_escalation: ToolEscalationCallback | None = None,
+        on_tool_call: Callable[[str, dict, str], Awaitable[None]] | None = None,
     ) -> AgentLoopOutput:
         metrics: dict[str, float] = {
             "tool_approvals_requested": 0,
@@ -778,6 +779,18 @@ class ToolAgentLoop(AgentLoopBase):
             if on_turn is not None:
                 for r in tool_execution_results:
                     await on_turn(assistant_turns, r.tool_name, 0)
+            if on_tool_call is not None:
+                for r in tool_execution_results:
+                    try:
+                        await on_tool_call(
+                            r.tool_name, r.arguments, self._tool_message_content(r)
+                        )
+                    except Exception:  # noqa: BLE001 - a callback never fails the turn
+                        logger.warning(
+                            "on_tool_call callback failed for %s",
+                            r.tool_name,
+                            exc_info=True,
+                        )
 
             tool_responses = [
                 {

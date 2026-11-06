@@ -32,6 +32,19 @@ class UserMemoryRecord:
     metadata: JsonObject = field(default_factory=dict)
     created_at: str | None = None
     updated_at: str | None = None
+    category: str = "general"
+
+
+@dataclass(slots=True)
+class MemoryIndexNodeRecord:
+    """Summary of one memory category (or the root) for one user."""
+
+    user_id: str
+    node: str
+    summary: str
+    memory_count: int
+    dirty: bool
+    updated_at: str | None = None
 
 
 @dataclass(slots=True)

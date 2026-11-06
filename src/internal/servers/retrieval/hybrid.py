@@ -98,6 +98,7 @@ def build_e5_encoder(
             texts, normalize_embeddings=True, convert_to_numpy=True
         ).astype(np.float32)
 
+    encode.model_id = model_name  # type: ignore[attr-defined]
     return encode
 
 
