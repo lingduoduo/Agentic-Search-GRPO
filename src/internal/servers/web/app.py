@@ -71,6 +71,8 @@ from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
 from src.internal.hooks import HookSoftFailed
 from src.internal.hooks import execute_hook
+from src.internal.hooks.lifecycle import LifecycleHooks, TurnContext
+from src.internal.memory.lifecycle import register_memory_hooks
 from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
 from src.internal.search.models import GeneratedAnswer
@@ -1665,6 +1667,9 @@ def create_web_app(
 
     app = FastAPI(title="Agentic Search Web", lifespan=lifespan)
     app.state.auth_store = db
+    lifecycle_hooks = LifecycleHooks()
+    register_memory_hooks(lifecycle_hooks, resolved)
+    app.state.lifecycle_hooks = lifecycle_hooks
     app.state.tool_approval_broker = ToolApprovalBroker(
         resolved.tool_approval_timeout_seconds
     )
@@ -1927,20 +1932,13 @@ def create_web_app(
         # Resolved before the QUERY_PROCESSING hook on purpose: the hook payload
         # needs user_id, which comes from capabilities; memory selection
         # therefore sees the raw query.
-        # Memory recall may run the e5 encoder over every stored memory; keep
-        # that off the event loop, matching the direct-gate embedder above.
+        # Memory is recalled later through the before_turn lifecycle hook, once
+        # the query is rewritten and the session exists.
         capabilities = await asyncio.to_thread(
-            resolve_capabilities,
-            auth_user,
-            db,
-            query=query,
-            encoder=getattr(http_request.app.state, "memory_encoder", None),
+            resolve_capabilities, auth_user, db, include_memory=False
         )
         # Attribution and entitlement both come from the authenticated caller.
         user_id = capabilities.user_id
-        # Memory-augmented generation: a signed-in caller's stored memories are
-        # injected because they are signed in. Anonymous callers have none.
-        user_memory = capabilities.memory_preamble or None
         hook_result = execute_hook(
             hook_point=HookPoint.QUERY_PROCESSING,
             payload={"query": query, "user_id": user_id},
@@ -1960,6 +1958,17 @@ def create_web_app(
 
         session_request = _copy_agent_request(request, user_id=user_id)
         session_id = _ensure_session(db, session_request, auth_user)
+        # Memory-augmented generation: a signed-in caller's stored memories are
+        # injected because they are signed in. Anonymous callers have none.
+        turn_ctx = TurnContext(
+            user_id=user_id,
+            session_id=session_id,
+            query=query,
+            store=db,
+            llm=llm,
+            encoder=getattr(http_request.app.state, "memory_encoder", None),
+        )
+        user_memory = (await lifecycle_hooks.before_turn(turn_ctx)) or None
         working = load_working_memory(
             db,
             session_id,

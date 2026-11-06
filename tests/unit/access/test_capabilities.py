@@ -97,3 +97,17 @@ def test_anonymous_never_reaches_the_preamble_even_with_a_query(monkeypatch):
 
     monkeypatch.setattr("src.internal.access.capabilities.memory_preamble", boom)
     assert resolve_capabilities(None, _Store(), query="thai").memory_preamble == ""
+
+
+def test_include_memory_false_skips_memory(monkeypatch):
+    from src.internal.access import capabilities
+
+    def boom(*a, **k):
+        raise AssertionError("memory_preamble must not be called")
+
+    monkeypatch.setattr(capabilities, "memory_preamble", boom)
+    caps = capabilities.resolve_capabilities(
+        AuthenticatedUser(id="u1"), object(), include_memory=False
+    )
+    assert caps.memory_preamble == ""
+    assert caps.user_id == "u1"

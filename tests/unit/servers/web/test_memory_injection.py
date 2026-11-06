@@ -111,28 +111,84 @@ def test_client_supplied_user_id_without_auth_gets_no_memory_or_acl(monkeypatch)
     store.close()
 
 
-def test_assist_passes_query_and_app_state_encoder_to_capabilities(monkeypatch):
+def test_recall_sees_rewritten_query_session_and_app_state_encoder(
+    monkeypatch, tmp_path
+):
+    import json
+
+    from src.internal.hooks import HookConfig, HookPoint, HookRegistry
+
+    class FakeHookResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"query": "rewritten question"}).encode()
+
     store = AgenticSearchStore(":memory:")
     store.upsert_user(UserRecord(id="u1"))
     captured: dict = {}
     monkeypatch.setattr(web_app, "answer_with_retrieval", _capturing_awr(captured))
-    seen: dict = {}
-    real = web_app.resolve_capabilities
-
-    def recording(user, db, *, query=None, encoder=None):
-        seen.update(query=query, encoder=encoder)
-        return real(user, db, query=query, encoder=encoder)
-
-    monkeypatch.setattr(web_app, "resolve_capabilities", recording)
-    app = create_web_app(SearchExperienceSettings(), store=store)
+    monkeypatch.setattr(
+        "src.internal.hooks.executor.urllib.request.urlopen",
+        lambda request, timeout: FakeHookResponse(),
+    )
+    registry = HookRegistry(
+        [
+            HookConfig(
+                hook_point=HookPoint.QUERY_PROCESSING,
+                endpoint_url="https://hooks.test/query",
+            )
+        ]
+    )
+    app = create_web_app(
+        SearchExperienceSettings(), store=store, hook_registry=registry
+    )
     sentinel = object()
     app.state.memory_encoder = sentinel
+    seen: list = []
+
+    async def recording(ctx):
+        seen.append((ctx.query, ctx.session_id, ctx.encoder, ctx.user_id))
+        return None
+
+    app.state.lifecycle_hooks.on_before_turn(recording)
     client = TestClient(app)
     client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
-    client.post(
+    resp = client.post(
         "/api/agent", json={"query": "Recommend Thai food", "mode": "chat_once"}
     )
-    assert seen == {"query": "Recommend Thai food", "encoder": sentinel}
+    assert resp.status_code == 200
+    assert len(seen) == 1
+    query, session_id, encoder, user_id = seen[0]
+    assert query == "rewritten question"
+    assert session_id is not None
+    assert encoder is sentinel
+    assert user_id == "u1"
+    store.close()
+
+
+def test_raising_before_turn_hook_does_not_fail_the_request(monkeypatch):
+    store = AgenticSearchStore(":memory:")
+    captured: dict = {}
+    monkeypatch.setattr(web_app, "answer_with_retrieval", _capturing_awr(captured))
+    app = create_web_app(SearchExperienceSettings(), store=store)
+
+    async def boom(ctx):
+        raise RuntimeError("hook exploded")
+
+    app.state.lifecycle_hooks.on_before_turn(boom)
+    resp = TestClient(app).post(
+        "/api/agent", json={"query": "Recommend Thai food", "mode": "chat_once"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == "ok"
+    store.close()
 
 
 def test_lifespan_builds_the_memory_encoder_once(monkeypatch):
