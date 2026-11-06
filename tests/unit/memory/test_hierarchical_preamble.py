@@ -59,3 +59,17 @@ def test_constraints_survive_the_char_budget():
 
 def test_empty_user_is_empty_string():
     assert memory_preamble(AgenticSearchStore(":memory:"), "nobody") == ""
+
+
+def test_constraints_capped_at_max_items_keeping_newest():
+    store = _store_with([f"User is allergic to item{i}" for i in range(8)])
+    pre = memory_preamble(store, "u1", max_items=5, query="allergic")
+    bullets = [ln for ln in pre.split("\n") if ln.startswith("- ")]
+    assert len(bullets) == 5
+    assert "item7" in pre and "item3" in pre and "item2" not in pre
+
+
+def test_below_cap_long_memories_still_bounded():
+    store = _store_with([f"fact {i} " + "x" * 300 for i in range(MEMORY_INJECTION_MAX)])
+    pre = memory_preamble(store, "u1")
+    assert len(pre) - len(_MEMORY_PREAMBLE_HEADER) <= 4000

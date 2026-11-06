@@ -66,7 +66,10 @@ def memory_preamble(
     if not records:
         return ""
     if len(records) <= max_items:
-        tiers = [(r.memory_text, 0) for r in records]
+        tiers = [
+            (r.memory_text, 0 if normalize_category(r.category) == "constraints" else 2)
+            for r in records
+        ]
     else:
         tiers = _select_tiers(store, user_id, query, records, max_items, encoder)
     keep = {text: tier for text, tier in tiers}
@@ -149,7 +152,9 @@ def _select_tiers(
 ) -> list[tuple[str, int]]:
     """(text, tier) pairs: 0 constraints, 1 relevance hits, 2 recency fill."""
     selected: dict[str, int] = {}
-    for r in records:
+    for r in reversed(records):  # newest constraints win when over the cap
+        if len(selected) >= max_items:
+            break
         if normalize_category(r.category) == "constraints":
             selected.setdefault(r.memory_text, 0)
     search_query = ""
