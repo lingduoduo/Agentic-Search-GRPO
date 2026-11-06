@@ -71,7 +71,7 @@ from src.internal.hooks import HookPoint
 from src.internal.hooks import HookRegistry
 from src.internal.hooks import HookSoftFailed
 from src.internal.hooks import execute_hook
-from src.internal.hooks.lifecycle import LifecycleHooks, TurnContext
+from src.internal.hooks.lifecycle import LifecycleHooks, ToolCallContext, TurnContext
 from src.internal.memory.lifecycle import register_memory_hooks
 from src.internal.memory.service import maybe_build_encoder
 from src.internal.search.models import CandidateSet
@@ -804,6 +804,7 @@ async def _run_search_agent(
     allow_internal_knowledge_answer: bool = True,
     on_turn=None,
     on_trace=None,
+    user_memory: str | None = None,
 ) -> tuple:
     """Run the multi-turn SearchAgentLoop. Assumes a local model is configured."""
     from src import get_registered_agent_loop, resolve_agent_name
@@ -818,14 +819,18 @@ async def _run_search_agent(
         summary = history.pop(0).content
     max_turns = 3
     system_prompt = None
-    if summary:
-        system_prompt = (
-            build_search_agent_instruction(
-                max_search_limit=max_turns,
-                max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+    if summary or user_memory:
+        system_prompt = "\n\n".join(
+            part
+            for part in (
+                build_search_agent_instruction(
+                    max_search_limit=max_turns,
+                    max_url_fetch=SearchAgentLoopConfig().max_url_fetch,
+                ),
+                summary,
+                user_memory,
             )
-            + "\n\n"
-            + summary
+            if part
         )
 
     loop_cls = get_registered_agent_loop(resolve_agent_name("search_agent"))
@@ -1102,6 +1107,7 @@ async def _run_search_direct_or_escalate(
     domain: "str | tuple[str, ...]" = "web",
     on_turn=None,
     retrieval_query: str | None = None,
+    user_memory: str | None = None,
 ) -> tuple:
     """Direct retrieval first; return docs when the query matches, else escalate.
 
@@ -1146,6 +1152,7 @@ async def _run_search_direct_or_escalate(
                 allow_internal_knowledge_answer=False,
                 on_turn=on_turn,
                 on_trace=None,
+                user_memory=user_memory,
             )
             run_extra.update(escalate_extra)
             docs = _enforce_access(docs, filters)
@@ -1364,6 +1371,7 @@ async def _run_auto_routed(
     user_present: bool = False,
     forced_route: RouteStrategy | None = None,
     retrieval_query: str | None = None,
+    tool_agent_kwargs: dict | None = None,
 ) -> tuple:
     """3-way agentic routing. Returns (answer, citations, documents, intent, extra).
 
@@ -1428,6 +1436,8 @@ async def _run_auto_routed(
                     with_search_tool=True,
                     user_present=user_present,
                     filters=filters,
+                    user_memory=user_memory,
+                    **(tool_agent_kwargs or {}),
                 )
             except Exception as exc:
                 logger.warning("ToolAgentLoop failed, degrading to RAG: %s", exc)
@@ -1465,13 +1475,12 @@ async def _run_auto_routed(
             domain=domain,
             on_turn=on_turn,
             retrieval_query=retrieval_query,
+            user_memory=user_memory,
         )
         extra.update(run_extra)
         return answer, citations, documents, intent, extra
 
     # ---- CHAT: grounded synthesis via AgenticRAGLoop (degrade to pipeline) ----
-    # Memory injection is intentionally scoped to this CHAT/AgenticRAG path (and
-    # the classic RAG path); SEARCH/TOOL routes do not receive user_memory.
     if strategy is RouteStrategy.CHAT:
         if llm is not None:
             answer, citations, documents, intent, run_extra = await _run_agentic_rag(
@@ -1969,6 +1978,26 @@ def create_web_app(
             encoder=getattr(http_request.app.state, "memory_encoder", None),
         )
         user_memory = (await lifecycle_hooks.before_turn(turn_ctx)) or None
+
+        async def _after_tool_call(tool_name, arguments, response_text):
+            await lifecycle_hooks.after_tool_call(
+                ToolCallContext(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result_summary=response_text,
+                    user_id=turn_ctx.user_id,
+                    session_id=turn_ctx.session_id,
+                )
+            )
+
+        # Signed-in callers only: the search_memory tool is bound to this one
+        # user for this one request.
+        tool_agent_kwargs = {
+            "memory_store": db if user_id is not None else None,
+            "memory_user_id": user_id,
+            "memory_encoder": getattr(http_request.app.state, "memory_encoder", None),
+            "on_tool_call": _after_tool_call,
+        }
         working = load_working_memory(
             db,
             session_id,
@@ -2062,6 +2091,7 @@ def create_web_app(
                         user_present=capabilities.user_present,
                         forced_route=forced_route,
                         retrieval_query=retrieval_query,
+                        tool_agent_kwargs=tool_agent_kwargs,
                     )
                     extra.update(follow_up_meta)
                     _cap = _capture.active()
@@ -2240,6 +2270,7 @@ def create_web_app(
                         filters=filters,
                         on_turn=on_turn,
                         on_trace=on_trace,
+                        user_memory=user_memory,
                     )
                     # Same pairing as above: the loop's retrieval went out with
                     # a filters payload the server is free to ignore, so the
@@ -2280,6 +2311,8 @@ def create_web_app(
                         with_search_tool=True,
                         user_present=capabilities.user_present,
                         filters=filters,
+                        user_memory=user_memory,
+                        **tool_agent_kwargs,
                     )
                     # Explicit mode falls back to the last assistant message on an
                     # empty final answer (the auto-route instead degrades to RAG).

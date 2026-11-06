@@ -164,6 +164,11 @@ async def _run_tool_agent(
     with_search_tool: bool,
     user_present: bool = True,
     filters=None,
+    user_memory: str | None = None,
+    memory_store=None,
+    memory_user_id: str | None = None,
+    memory_encoder=None,
+    on_tool_call=None,
 ) -> tuple:
     """Run the ToolAgentLoop. Assumes a local model is configured.
 
@@ -202,6 +207,14 @@ async def _run_tool_agent(
             filters=filters,
         )
         tools = [corpus_search] + tools
+    if memory_store is not None and memory_user_id is not None:
+        from src.internal.memory.agent_tool import build_search_memory_tool
+
+        # Bound to this request's user, never registered globally. The local
+        # tool replaces the MCP one of the same purpose.
+        tools = [
+            build_search_memory_tool(memory_store, memory_user_id, memory_encoder)
+        ] + [t for t in tools if t.name != "search_memories"]
     # Derived from the tools actually offered this turn, so a rename or a
     # withheld tool cannot leave a stale name behind.
     citeable_tool_names = frozenset(t.name for t in tools if t.citeable)
@@ -225,19 +238,19 @@ async def _run_tool_agent(
     # turns that fell off the tail), not a replacement for the tool-use
     # prompt: the loop's instructions come first, the summary follows in
     # the same system message.
+    system_content = TOOL_AGENT_SYSTEM_PROMPT
     if messages and messages[0]["role"] == "system":
-        messages[0] = {
-            "role": "system",
-            "content": f"{TOOL_AGENT_SYSTEM_PROMPT}\n\n{messages[0]['content']}",
-        }
-    else:
-        messages.insert(0, {"role": "system", "content": TOOL_AGENT_SYSTEM_PROMPT})
+        system_content = f"{system_content}\n\n{messages.pop(0)['content']}"
+    if user_memory:
+        system_content = f"{system_content}\n\n{user_memory}"
+    messages.insert(0, {"role": "system", "content": system_content})
     output = await loop.run(
         messages,
         sampling_params={"temperature": 0.0, "max_tokens": max_tokens},
         on_turn=on_turn,
         on_approval=on_approval,
         on_escalation=on_escalation,
+        **({"on_tool_call": on_tool_call} if on_tool_call is not None else {}),
     )
     tool_calls, documents = _extract_tool_calls_and_docs(output, citeable_tool_names)
     fallback = next(
