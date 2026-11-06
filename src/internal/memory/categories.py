@@ -54,3 +54,8 @@ def normalize_category(value: object) -> str:
         if cleaned in CATEGORIES:
             return cleaned
     return DEFAULT_CATEGORY
+
+
+def is_protected(text: str, category: str) -> bool:
+    """A constraint by label or by text; the LLM's label alone never unprotects."""
+    return category == "constraints" or classify_memory(text) == "constraints"

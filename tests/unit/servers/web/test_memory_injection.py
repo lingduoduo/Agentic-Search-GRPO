@@ -255,13 +255,15 @@ def _wait_for(pred, timeout=5.0):
 def test_after_turn_captures_for_signed_in_user(monkeypatch):
     llm = _ScriptedLLM(_EXTRACTION)
     app, store, compress_calls = _after_turn_app(monkeypatch, llm)
-    client = TestClient(app)
-    client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
-    resp = client.post(
-        "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
-    )
-    assert resp.status_code == 200
-    assert _wait_for(lambda: store.get_user_memory_records("u1"))
+    # The context manager keeps the portal (and its event loop) alive, so the
+    # after_turn tasks are not cancelled when the request returns.
+    with TestClient(app) as client:
+        client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
+        resp = client.post(
+            "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
+        )
+        assert resp.status_code == 200
+        assert _wait_for(lambda: store.get_user_memory_records("u1"))
     assert [r.memory_text for r in store.get_user_memory_records("u1")] == [
         "User prefers tea"
     ]

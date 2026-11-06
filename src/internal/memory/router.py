@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from src.internal.auth import user_from_headers
 from src.internal.memory import service
-from src.internal.memory.categories import CATEGORIES, ROOT_NODE, normalize_category
+from src.internal.memory.categories import CATEGORIES, normalize_category
 from src.internal.memory.service import DEFAULT_MEMORY_USER_ID
 
 
@@ -105,7 +105,8 @@ def create_memory_router(
                     ],
                 }
             )
-        root = summaries.get(ROOT_NODE) or service._count_line(records)
+        # Computed live: a stored root summary goes stale between rebuilds.
+        root = service._count_line(records)
         return {
             "root": {"summary": root, "memory_count": len(records)},
             "categories": categories,

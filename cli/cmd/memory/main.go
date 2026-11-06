@@ -31,7 +31,7 @@ Commands:
   add <text...>            Save a memory
   list                     List stored memories
   search <query...>        Search memories (--top-k N)
-  consolidate              Deduplicate + resolve conflicts (--no-conflict)
+  consolidate              Deduplicate, merge, resolve conflicts (--no-conflict skips conflicts)
   profile                  Show the user profile (--generate to rebuild via LLM)
   curate                   Reconcile memories from conversation (--session-id S)
 
@@ -53,7 +53,7 @@ func run(args []string) int {
 	secretFlag := fs.String("secret", "", "JWT signing secret (else AGENTIC_SEARCH_AUTH_SECRET / AUTH_SECRET)")
 	jsonFlag := fs.Bool("json", false, "output the raw response as JSON")
 	topK := fs.Int("top-k", 5, "search: max results")
-	noConflict := fs.Bool("no-conflict", false, "consolidate: dedup only")
+	noConflict := fs.Bool("no-conflict", false, "consolidate: skip conflict resolution (dedup, near-dup merge and summaries still run)")
 	generate := fs.Bool("generate", false, "profile: rebuild via the LLM")
 	sessionID := fs.String("session-id", "", "curate: restrict to one session")
 

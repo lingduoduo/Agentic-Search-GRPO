@@ -275,16 +275,63 @@ async def test_auto_trigger_threshold(store, monkeypatch):
     ctx = TurnContext("u1", None, "q", store)
     store.add_user_memory("u1", "Prefers arXiv")
     store.add_user_memory("u1", "Works on retrieval project")
-    await consolidation_handler(ctx)
+    await consolidation_handler(ctx)  # no marker yet: seed it at 2, refresh only
     nodes = {x.node: x for x in store.get_memory_index_nodes("u1")}
     assert calls == [] and not nodes["preferences"].dirty
-    assert CONSOLIDATED_NODE not in nodes
+    assert nodes[CONSOLIDATED_NODE].memory_count == 2
 
     store.add_user_memory("u1", "Decided to use Postgres")
+    store.add_user_memory("u1", "User lives in Munich")
+    await consolidation_handler(ctx)
+    assert calls == []  # grew by 2 < 3
+    store.add_user_memory("u1", "User likes tea")
     await consolidation_handler(ctx)
     assert len(calls) == 1
     await consolidation_handler(ctx)  # nothing grew since: no second run
     assert len(calls) == 1
+
+
+async def test_first_turn_after_upgrade_seeds_marker_without_consolidating(
+    store, monkeypatch
+):
+    monkeypatch.setattr(consolidation, "CONSOLIDATE_EVERY", 10)
+    calls = []
+    monkeypatch.setattr(
+        consolidation, "consolidate_memories", lambda *a, **k: calls.append(a)
+    )
+    for i in range(15):
+        store.add_user_memory("u1", f"User fact number {i}")
+    await consolidation_handler(TurnContext("u1", None, "q", store))
+    nodes = {x.node: x for x in store.get_memory_index_nodes("u1")}
+    assert calls == []
+    assert nodes[CONSOLIDATED_NODE].memory_count == 15
+    assert len(store.get_user_memory_records("u1")) == 15
+
+
+def _registered_consolidation(flag: bool):
+    hooks = LifecycleHooks()
+    register_memory_hooks(hooks, SimpleNamespace(memory_auto_curate=flag))
+    found = [
+        h for h in hooks._after_turn if getattr(h, "func", h) is consolidation_handler
+    ]
+    assert len(found) == 1
+    return found[0]
+
+
+@pytest.mark.parametrize("flag", [False, True])
+async def test_background_consolidation_uses_llm_only_when_opted_in(
+    store, monkeypatch, flag
+):
+    seen = {}
+
+    def spy(store_, user_id, *, llm=None, encoder=None):
+        seen["llm"] = llm
+        return "idle"
+
+    monkeypatch.setattr(consolidation, "run_due", spy)
+    llm = _FakeLLM()
+    await _registered_consolidation(flag)(TurnContext("u1", None, "q", store, llm=llm))
+    assert seen["llm"] is (llm if flag else None)
 
 
 async def test_consolidation_handler_anonymous_and_busy(store, monkeypatch):
@@ -302,6 +349,7 @@ async def test_consolidation_handler_anonymous_and_busy(store, monkeypatch):
 async def test_consolidation_waits_for_a_concurrent_capture(store, monkeypatch):
     """Capture holds the guard when after_turn starts consolidation; it must wait."""
     monkeypatch.setattr(consolidation, "CONSOLIDATE_EVERY", 1)
+    monkeypatch.setattr(lifecycle, "CONSOLIDATION_WAIT_SECONDS", 1.0)
     monkeypatch.setattr(lifecycle, "_GUARD_POLL_SECONDS", 0.01)
     store.add_user_memory("u1", "Prefers arXiv")
 
@@ -326,11 +374,8 @@ async def test_consolidation_handler_never_raises(store, monkeypatch):
 
 
 def test_register_consolidation_regardless_of_capture_flag():
-    on, off = LifecycleHooks(), LifecycleHooks()
-    register_memory_hooks(on, SimpleNamespace(memory_auto_curate=True))
-    register_memory_hooks(off, SimpleNamespace(memory_auto_curate=False))
-    assert consolidation_handler in on._after_turn
-    assert consolidation_handler in off._after_turn
+    _registered_consolidation(True)
+    _registered_consolidation(False)
 
 
 def _capture_ctx(store):
@@ -369,3 +414,59 @@ async def test_capture_skips_and_logs_when_wait_expires(store, monkeypatch, capl
         "capture_handler" in r.getMessage() and "u1" in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_protected_profile_row_not_merged_or_superseded_by_llm(store):
+    """A constraint mislabeled 'profile' is still protected from LLM rewrites."""
+    store.add_user_memory(
+        "u1", "User is severely allergic to peanuts", category="profile"
+    )
+    store.add_user_memory(
+        "u1", "User is severely allergic to peanuts and walnuts", category="profile"
+    )
+    store.add_user_memory("u1", "User lives in Munich", category="profile")
+    llm = _FakeLLM(supersede_all=True, merge_all=True)
+    consolidate_memories(store, "u1", llm=llm)
+    texts = _texts(store)
+    assert "User is severely allergic to peanuts" in texts
+    assert "User is severely allergic to peanuts and walnuts" in texts
+    decisions = [p for p in llm.prompts if '"superseded"' in p or '"text"' in p]
+    assert not any("allergic" in p for p in decisions)
+
+
+def test_protected_profile_rows_skip_tag_rule(store):
+    store.add_user_memory(
+        "u1", "User is allergic to peanuts", {"tags": ["diet"]}, category="profile"
+    )
+    store.add_user_memory(
+        "u1", "User is allergic to shellfish", {"tags": ["diet"]}, category="profile"
+    )
+    rep = consolidate_memories(store, "u1")
+    assert rep["conflicts_resolved"] == []
+    assert len(store.get_user_memory_records("u1")) == 2
+
+
+def test_protected_general_row_not_reclassified(store):
+    rec = store.add_user_memory("u1", "User never eats pork", category="general")
+    other = store.add_user_memory("u1", "Something about tea", category="general")
+    llm = _FakeLLM(categories={rec.id: "preferences", other.id: "preferences"})
+    consolidate_memories(store, "u1", llm=llm)
+    cats = {r.memory_text: r.category for r in store.get_user_memory_records("u1")}
+    assert cats["User never eats pork"] == "general"
+    assert cats["Something about tea"] == "preferences"
+
+
+def test_protected_exact_duplicate_still_collapses(store):
+    store.add_user_memory("u1", "User is allergic to peanuts", category="profile")
+    store.add_user_memory("u1", "user is allergic to peanuts", category="profile")
+    assert consolidate_memories(store, "u1")["duplicates_removed"] == 1
+
+
+@pytest.mark.parametrize(
+    "raw,expected", [("5", 5), ("0", 1), ("-3", 1), ("abc", 10), ("", 10)]
+)
+def test_consolidate_every_parsed_defensively(raw, expected, caplog):
+    with caplog.at_level("WARNING", logger=consolidation.__name__):
+        assert consolidation._parse_consolidate_every(raw) == expected
+    if raw in ("abc", ""):
+        assert caplog.records
