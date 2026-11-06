@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from src.internal.access.capabilities import RequestCapabilities, resolve_capabilities
 from src.internal.auth.users import AuthenticatedUser
 
@@ -12,8 +14,14 @@ class _Store:
     def __init__(self, memories=None):
         self._memories = memories or {}
 
-    def get_user_memories(self, user_id):
-        return self._memories.get(user_id, [])
+    def get_user_memory_records(self, user_id, *, category=None):
+        return [
+            SimpleNamespace(memory_text=text, category="general")
+            for text in self._memories.get(user_id, [])
+        ]
+
+    def get_memory_index_nodes(self, user_id):
+        return []
 
 
 def test_anonymous_is_public_only():

@@ -129,8 +129,13 @@ def test_memory_preamble_above_cap_without_query_is_recency():
     _seed_above_cap(store)
     for q in (None, "", "   "):
         pre = memory_preamble(store, "u1", query=q)
-        assert "User is allergic to peanuts" not in pre
+        # the constraint is pinned; the other slots are the newest memories
+        assert "User is allergic to peanuts" in pre
         assert pre.count("\n- ") == MEMORY_INJECTION_MAX
+        newest = MEMORY_INJECTION_MAX + 4
+        for i in range(newest - (MEMORY_INJECTION_MAX - 1) + 1, newest + 1):
+            assert f"memory number {i}\n" in pre + "\n"
+        assert "memory number 1\n" not in pre + "\n"
     store.close()
 
 
@@ -167,7 +172,7 @@ def test_memory_preamble_search_failure_degrades_to_recency(monkeypatch):
     monkeypatch.setattr(service, "search_memories", boom)
     pre = memory_preamble(store, "u1", query="thai food with peanuts")
     assert pre.count("\n- ") == MEMORY_INJECTION_MAX
-    assert "User is allergic to peanuts" not in pre
+    assert "User is allergic to peanuts" in pre  # pinned constraint, no search needed
     store.close()
 
 
