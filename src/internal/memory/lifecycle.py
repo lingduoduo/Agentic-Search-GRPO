@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 _busy: set[str] = set()
 _busy_lock = threading.Lock()
 
-# after_turn starts capture and consolidation together, and capture takes the
-# user's guard first, so consolidation waits for it (bounded) instead of
-# skipping every turn that captures.
+# after_turn starts capture and consolidation together, and either can hold the
+# user's guard for seconds of LLM calls, so each waits for it (bounded) instead
+# of skipping whenever the other is running.
 CONSOLIDATION_WAIT_SECONDS = 30.0
 _GUARD_POLL_SECONDS = 0.5
 
@@ -39,6 +39,31 @@ def user_guard(user_id: str):
                 _busy.discard(user_id)
 
 
+@contextlib.asynccontextmanager
+async def acquire_user_guard(user_id: str, *, handler: str):
+    """Hold ``user_guard``, polling up to CONSOLIDATION_WAIT_SECONDS for it.
+
+    Yields False (after logging a warning) when the wait expires.
+    """
+    waited = 0.0
+    while True:
+        with user_guard(user_id) as free:
+            if free:
+                yield True
+                return
+        if waited >= CONSOLIDATION_WAIT_SECONDS:
+            logger.warning(
+                "%s skipped: memory busy for user %s after %.1fs",
+                handler,
+                user_id,
+                waited,
+            )
+            yield False
+            return
+        await asyncio.sleep(_GUARD_POLL_SECONDS)
+        waited += _GUARD_POLL_SECONDS
+
+
 async def recall_handler(ctx: TurnContext) -> str | None:
     """Return the user's memory preamble; anonymous callers have none."""
     if ctx.user_id is None:
@@ -56,7 +81,7 @@ async def capture_handler(ctx: TurnContext) -> None:
     """Capture durable memories from a finished turn (background, never raises)."""
     if not ctx.user_id or ctx.llm is None or not ctx.answer:
         return
-    with user_guard(ctx.user_id) as free:
+    async with acquire_user_guard(ctx.user_id, handler="capture_handler") as free:
         if not free:
             return
         try:
@@ -77,25 +102,19 @@ async def consolidation_handler(ctx: TurnContext) -> None:
     """Consolidate or refresh index summaries in the background (never raises)."""
     if ctx.user_id is None:
         return
-    waited = 0.0
-    while True:
-        with user_guard(ctx.user_id) as free:
-            if free:
-                try:
-                    await asyncio.to_thread(
-                        consolidation.run_due,
-                        ctx.store,
-                        ctx.user_id,
-                        llm=ctx.llm,
-                        encoder=ctx.encoder,
-                    )
-                except Exception:  # noqa: BLE001 - memory never fails a request
-                    logger.warning("memory consolidation failed", exc_info=True)
-                return
-        if waited >= CONSOLIDATION_WAIT_SECONDS:
+    async with acquire_user_guard(ctx.user_id, handler="consolidation_handler") as free:
+        if not free:
             return
-        await asyncio.sleep(_GUARD_POLL_SECONDS)
-        waited += _GUARD_POLL_SECONDS
+        try:
+            await asyncio.to_thread(
+                consolidation.run_due,
+                ctx.store,
+                ctx.user_id,
+                llm=ctx.llm,
+                encoder=ctx.encoder,
+            )
+        except Exception:  # noqa: BLE001 - memory never fails a request
+            logger.warning("memory consolidation failed", exc_info=True)
 
 
 def register_memory_hooks(hooks: LifecycleHooks, settings) -> None:
