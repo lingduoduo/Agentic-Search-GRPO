@@ -23,11 +23,14 @@ logger = logging.getLogger(__name__)
 NEAR_DUP_MIN_SCORE = 0.6
 NEAR_DUP_MIN_COSINE = 0.9
 
+# First-person statements only. Bare adverbs (always/never/remember) and
+# "i want/need/am" fire on ordinary questions, so they are not triggers.
 _SIGNAL = re.compile(
-    r"\b(i'm|i am|i've|i have|i prefer|i like|i love|i hate|i dislike|i avoid|"
-    r"i need|i want|i always|i never|i work|i live|my \w+ is|allergic|allergy|"
-    r"vegetarian|vegan|we decided|i decided|we chose|we're using|we use|"
-    r"remember|from now on|always|never|don't like|do not like|prefer)\b",
+    r"\b(i prefer|i like|i love|i hate|i dislike|i avoid|i always|i never|"
+    r"i work|i live|i('m| am) (a|an) |i('m| am) allergic|allergic to|"
+    r"i('m| am) (vegetarian|vegan)|i have an? allergy|my \w+ is|"
+    r"we decided|i decided|we chose|we('re| are) using|remember that|"
+    r"from now on|don't like|do not like)\b",
     re.IGNORECASE,
 )
 
@@ -51,12 +54,11 @@ def _content_tokens(text: str) -> set[str]:
 
 
 def is_near_duplicate(text_a: str, text_b: str, *, cosine: float | None = None) -> bool:
-    if cosine is not None and cosine >= NEAR_DUP_MIN_COSINE:
-        return True
+    """Jaccard must match; a cosine, when given, can only veto (never match)."""
     a, b = _content_tokens(text_a), _content_tokens(text_b)
-    if not a or not b:
+    if not a or not b or len(a & b) / len(a | b) < NEAR_DUP_MIN_SCORE:
         return False
-    return len(a & b) / len(a | b) >= NEAR_DUP_MIN_SCORE
+    return cosine is None or cosine >= NEAR_DUP_MIN_COSINE
 
 
 def extract_memories(llm, user_message: str, answer: str) -> list[tuple[str, str]]:
@@ -87,7 +89,9 @@ def _cosines(encoder, text: str, others: list[str]) -> list[float | None]:
     try:
         import numpy as np
 
-        vecs = np.asarray(encoder([text, *others]), dtype=float)
+        vecs = np.asarray(
+            encoder([f"passage: {t}" for t in (text, *others)]), dtype=float
+        )
         norms = np.linalg.norm(vecs, axis=1)
         norms[norms == 0] = 1.0
         vecs = vecs / norms[:, None]
@@ -97,32 +101,56 @@ def _cosines(encoder, text: str, others: list[str]) -> list[float | None]:
         return [None] * len(others)
 
 
-def reconcile(store, user_id: str, items, *, encoder=None) -> dict[str, int]:
-    counts = {"added": 0, "updated": 0}
+def _norm(text: str) -> str:
+    return " ".join(text.lower().split()).rstrip(".!? ")
+
+
+def reconcile(store, user_id: str, items, *, encoder=None) -> dict:
+    """Add or refresh memories; never deletes and never rewrites a constraint.
+
+    ``stored`` lists the texts as persisted (redacted), for the trajectory.
+    """
+    counts: dict = {"added": 0, "updated": 0, "stored": []}
     records = list(store.get_user_memory_records(user_id))
     for text, category in items:
+        if category == "constraints":
+            if any(
+                r.category == "constraints" and _norm(r.memory_text) == _norm(text)
+                for r in records
+            ):
+                continue
+            rec = store.add_user_memory(user_id, text, category=category)
+            if rec is not None:
+                records.append(rec)
+                counts["added"] += 1
+                counts["stored"].append(rec.memory_text)
+            continue
+        pool = [r for r in records if r.category != "constraints"]
         cosines = (
-            _cosines(encoder, text, [r.memory_text for r in records])
-            if encoder is not None and records
-            else [None] * len(records)
+            _cosines(encoder, text, [r.memory_text for r in pool])
+            if encoder is not None and pool
+            else [None] * len(pool)
         )
         match = next(
             (
                 r
-                for r, c in zip(records, cosines)
+                for r, c in zip(pool, cosines)
                 if is_near_duplicate(text, r.memory_text, cosine=c)
             ),
             None,
         )
         if match is None:
-            records.append(store.add_user_memory(user_id, text, category=category))
-            counts["added"] += 1
-        elif match.memory_text.strip() != text:
-            updated = store.update_user_memory(
-                user_id, match.id, text, category=category
-            )
-            records[records.index(match)] = updated or match
-            counts["updated"] += 1
+            rec = store.add_user_memory(user_id, text, category=category)
+            if rec is not None:
+                records.append(rec)
+                counts["added"] += 1
+                counts["stored"].append(rec.memory_text)
+        elif _norm(match.memory_text) != _norm(text):
+            rec = store.update_user_memory(user_id, match.id, text, category=category)
+            if rec is not None:
+                records[records.index(match)] = rec
+                counts["updated"] += 1
+                counts["stored"].append(rec.memory_text)
     return counts
 
 
@@ -149,8 +177,9 @@ async def capture_turn(
         model=getattr(getattr(llm, "config", None), "model_name", ""),
         trajectory={
             "source": "auto_turn",
-            "memories": [{"text": t, "category": c} for t, c in items],
-            "counts": counts,
+            # Stored (redacted) texts, never the raw LLM strings.
+            "memories": counts["stored"],
+            "counts": {k: v for k, v in counts.items() if k != "stored"},
         },
     )
-    return counts
+    return {k: v for k, v in counts.items() if k != "stored"}
