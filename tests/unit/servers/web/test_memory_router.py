@@ -148,15 +148,95 @@ def test_search_category_filter_and_app_state_encoder(monkeypatch):
     app.state.memory_encoder = fake_encoder
     app.include_router(create_memory_router(db, None))
     c = TestClient(app)
-    cats = {r.category for r in db.get_user_memory_records("default_user")}
-    cat = db.get_user_memory_records("default_user")[0].category
+    by_cat = {r.category: r.id for r in db.get_user_memory_records("default_user")}
+    assert set(by_cat) == {"preferences", "constraints"}
     res = c.post(
-        "/api/memory/search", json={"query": "answers peanuts", "category": cat}
+        "/api/memory/search",
+        json={"query": "answers peanuts", "category": "preferences"},
     ).json()["results"]
     assert calls
-    expected = {
-        r.id for r in db.get_user_memory_records("default_user") if r.category == cat
+    assert [h["id"] for h in res] == [by_cat["preferences"]]
+    db.close()
+
+
+def test_save_with_category_and_list_filter():
+    db = AgenticSearchStore(":memory:")
+    c = _client(db)
+    c.post("/api/memory/save", json={"text": "Moved to Munich", "category": "profile"})
+    c.post("/api/memory/save", json={"text": "User prefers concise answers"})
+    listed = c.get("/api/memory/list").json()["memories"]
+    assert [(m["text"], m["category"]) for m in listed] == [
+        ("Moved to Munich", "profile"),
+        ("User prefers concise answers", "preferences"),
+    ]
+    only = c.get("/api/memory/list", params={"category": "profile"}).json()
+    assert [m["text"] for m in only["memories"]] == ["Moved to Munich"]
+    db.close()
+
+
+def test_index_shape_and_order():
+    db = AgenticSearchStore(":memory:")
+    c = _client(db)
+    c.post("/api/memory/save", json={"text": "User prefers concise answers"})
+    c.post("/api/memory/save", json={"text": "I'm allergic to peanuts"})
+    db.add_user_memory("someone_else", "User prefers long answers")
+    body = c.get("/api/memory/index").json()
+    assert body["root"] == {
+        "summary": "constraints 1 · preferences 1",
+        "memory_count": 2,
     }
-    assert res and {h["id"] for h in res} <= expected
-    assert len(cats) >= 1
+    assert [cat["name"] for cat in body["categories"]] == [
+        "constraints",
+        "preferences",
+    ]
+    first = body["categories"][0]
+    assert set(first) == {"name", "summary", "memory_count", "memories"}
+    assert first["memory_count"] == 1
+    assert [m["text"] for m in first["memories"]] == ["I'm allergic to peanuts"]
+    assert set(first["memories"][0]) == {"id", "text", "updated_at"}
+    assert all(not n.startswith("__") for n in (x["name"] for x in body["categories"]))
+    db.close()
+
+
+def test_index_uses_stored_summaries_after_consolidate():
+    db = AgenticSearchStore(":memory:")
+    c = _client(db)
+    c.post("/api/memory/save", json={"text": "User prefers concise answers"})
+    report = c.post("/api/memory/consolidate", json={}).json()["report"]
+    assert {
+        "initial",
+        "duplicates_removed",
+        "conflicts_resolved",
+        "merged",
+        "reclassified",
+        "summaries_rebuilt",
+        "final",
+    } <= set(report)
+    body = c.get("/api/memory/index").json()
+    assert body["categories"][0]["summary"].startswith("1 memories; key terms:")
+    db.close()
+
+
+def test_consolidate_passes_llm_and_app_encoder(monkeypatch):
+    import src.internal.memory.service as svc
+
+    seen = {}
+
+    def fake(store, user_id, resolve_conflicts=True, *, llm=None, encoder=None):
+        seen.update(llm=llm, encoder=encoder, resolve=resolve_conflicts)
+        return {"initial": 0}
+
+    monkeypatch.setattr(svc, "consolidate_memories", fake)
+    db = AgenticSearchStore(":memory:")
+    llm = _FakeLLM()
+
+    def enc(texts):
+        return None
+
+    app = FastAPI()
+    app.state.memory_encoder = enc
+    app.include_router(create_memory_router(db, llm))
+    c = TestClient(app)
+    c.post("/api/memory/consolidate", json={"resolve_conflicts": False})
+    assert seen == {"llm": llm, "encoder": enc, "resolve": False}
     db.close()
