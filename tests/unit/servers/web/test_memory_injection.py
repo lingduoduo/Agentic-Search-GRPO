@@ -208,9 +208,26 @@ def test_lifespan_builds_the_memory_encoder_once(monkeypatch):
     assert calls == [1]
 
 
-def _after_turn_app(monkeypatch, *, auto_curate=True):
-    from src.internal.hooks.lifecycle import LifecycleHooks
+class _ScriptedLLM:
+    """Fake LLM with a complete(); raises when it must not be reached."""
 
+    config = type("cfg", (), {"model_name": "fake"})()
+
+    def __init__(self, reply: str | None):
+        self.reply = reply
+        self.calls = 0
+
+    def complete(self, prompt, **kwargs):
+        self.calls += 1
+        if self.reply is None:
+            raise AssertionError("LLM must not be called")
+        return self.reply
+
+
+_EXTRACTION = '{"memories":[{"text":"User prefers tea","category":"preferences"}]}'
+
+
+def _after_turn_app(monkeypatch, llm, *, auto_curate=True):
     store = AgenticSearchStore(":memory:")
     store.upsert_user(UserRecord(id="u1"))
     monkeypatch.setattr(web_app, "answer_with_retrieval", _capturing_awr({}))
@@ -218,46 +235,51 @@ def _after_turn_app(monkeypatch, *, auto_curate=True):
     monkeypatch.setattr(
         web_app, "schedule_compression", lambda *a, **kw: compress_calls.append(kw)
     )
-    seen: list = []
-
-    async def spy(ctx):
-        seen.append((ctx.user_id, ctx.answer))
-
-    orig = LifecycleHooks.__init__
-
-    def init(self, *a, **kw):
-        orig(self, *a, **kw)
-        self.on_after_turn(spy)
-
-    monkeypatch.setattr(LifecycleHooks, "__init__", init)
     app = create_web_app(
-        SearchExperienceSettings(memory_auto_curate=auto_curate), store=store
+        SearchExperienceSettings(memory_auto_curate=auto_curate), store=store, llm=llm
     )
-    return app, store, seen, compress_calls
+    return app, store, compress_calls
 
 
-def test_after_turn_runs_once_and_disables_compression_curation(monkeypatch):
-    app, store, seen, compress_calls = _after_turn_app(monkeypatch)
+def _wait_for(pred, timeout=5.0):
+    import time
+
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return pred()
+
+
+def test_after_turn_captures_for_signed_in_user(monkeypatch):
+    llm = _ScriptedLLM(_EXTRACTION)
+    app, store, compress_calls = _after_turn_app(monkeypatch, llm)
     client = TestClient(app)
     client.cookies.set("fastapiusersauth", generate_user_jwt_token(user_id="u1"))
     resp = client.post(
         "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
     )
     assert resp.status_code == 200
-    assert seen == [("u1", "ok")]
+    assert _wait_for(lambda: store.get_user_memory_records("u1"))
+    assert [r.memory_text for r in store.get_user_memory_records("u1")] == [
+        "User prefers tea"
+    ]
+    assert llm.calls == 1
     assert compress_calls and compress_calls[0]["auto_curate"] is False
     store.close()
 
 
 def test_after_turn_anonymous_schedules_no_capture(monkeypatch):
-    app, store, seen, _ = _after_turn_app(monkeypatch)
+    llm = _ScriptedLLM(None)
+    app, store, _ = _after_turn_app(monkeypatch, llm)
     resp = TestClient(app).post(
         "/api/agent", json={"query": "I prefer tea", "mode": "chat_once"}
     )
     assert resp.status_code == 200
-    from src.internal.memory.lifecycle import capture_handler
+    import time
 
-    assert capture_handler in app.state.lifecycle_hooks._after_turn
-    assert seen == [(None, "ok")]  # hook fires, but capture_handler no-ops (u=None)
+    time.sleep(0.3)
+    assert llm.calls == 0
     assert store.get_user_memory_records("u1") == []
     store.close()
