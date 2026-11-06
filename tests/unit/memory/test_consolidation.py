@@ -331,3 +331,41 @@ def test_register_consolidation_regardless_of_capture_flag():
     register_memory_hooks(off, SimpleNamespace(memory_auto_curate=False))
     assert consolidation_handler in on._after_turn
     assert consolidation_handler in off._after_turn
+
+
+def _capture_ctx(store):
+    sid = store.create_chat_session(user_id="u1").id
+    llm = _FakeLLM(
+        raw='{"memories":[{"text":"User prefers tea","category":"preferences"}]}'
+    )
+    return llm, TurnContext("u1", sid, "I prefer tea", store, llm=llm, answer="ok")
+
+
+async def test_capture_waits_for_consolidation_holding_the_guard(store, monkeypatch):
+    monkeypatch.setattr(lifecycle, "CONSOLIDATION_WAIT_SECONDS", 1.0)
+    monkeypatch.setattr(lifecycle, "_GUARD_POLL_SECONDS", 0.01)
+    _llm, ctx = _capture_ctx(store)
+
+    async def consolidating():
+        with user_guard("u1"):
+            await asyncio.sleep(0.05)
+
+    holder = asyncio.create_task(consolidating())
+    await asyncio.sleep(0)
+    await lifecycle.capture_handler(ctx)
+    await holder
+    assert _texts(store) == ["User prefers tea"]
+
+
+async def test_capture_skips_and_logs_when_wait_expires(store, monkeypatch, caplog):
+    monkeypatch.setattr(lifecycle, "CONSOLIDATION_WAIT_SECONDS", 0.02)
+    monkeypatch.setattr(lifecycle, "_GUARD_POLL_SECONDS", 0.01)
+    llm, ctx = _capture_ctx(store)
+    with caplog.at_level("WARNING", logger=lifecycle.__name__):
+        with user_guard("u1"):
+            await lifecycle.capture_handler(ctx)
+    assert _texts(store) == [] and llm.prompts == []
+    assert any(
+        "capture_handler" in r.getMessage() and "u1" in r.getMessage()
+        for r in caplog.records
+    )

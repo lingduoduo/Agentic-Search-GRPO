@@ -440,8 +440,11 @@ A `conflicts_resolved` entry carries `category` when an LLM made the call, and
 Consolidation also runs on its own after a signed-in turn. It runs in the
 background, once the user's active memory count has grown by
 `AGENTIC_SEARCH_MEMORY_CONSOLIDATE_EVERY` (default `10`) since the last
-consolidation. On other turns, only the dirty summaries are refreshed. It shares
-a per-user guard with per-turn capture, so the two never interleave.
+consolidation. On other turns, only the dirty summaries are refreshed. The
+automatic path shares a per-user guard with per-turn capture, so the two never
+interleave: each waits up to 30 seconds for the other, then skips that turn and
+logs a warning. Manual `POST /api/memory/consolidate` does not take the guard,
+so it can overlap a background capture or consolidation for the same user.
 
 `GET /api/memory/profile`, `POST /api/memory/profile/generate` and
 `POST /api/memory/curate` are unchanged. The last two return `503` without an
