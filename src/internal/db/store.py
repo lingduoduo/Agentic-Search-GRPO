@@ -20,12 +20,18 @@ from .models import (
     ChatSessionRecord,
     GroupRecord,
     HookRecord,
+    MemoryIndexNodeRecord,
     MemoryTrajectoryRecord,
     UserMemoryRecord,
     UserProfileEntryRecord,
     UserRecord,
 )
 from src.internal.feedback.runtime import deterministic_capture
+from src.internal.memory.categories import (
+    ROOT_NODE,
+    classify_memory,
+    normalize_category,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -470,10 +476,22 @@ class AgenticSearchStore:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                embedding BLOB,
+                embedding_model TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_user_memories_user_active
                 ON user_memories(user_id, is_active, created_at, id);
+            CREATE TABLE IF NOT EXISTS memory_index_nodes (
+                user_id TEXT NOT NULL,
+                node TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                memory_count INTEGER NOT NULL DEFAULT 0,
+                dirty INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT,
+                PRIMARY KEY (user_id, node)
+            );
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -538,10 +556,22 @@ class AgenticSearchStore:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                embedding BLOB,
+                embedding_model TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_user_memories_user_active
                 ON user_memories(user_id, is_active, created_at, id);
+            CREATE TABLE IF NOT EXISTS memory_index_nodes (
+                user_id TEXT NOT NULL,
+                node TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                memory_count INTEGER NOT NULL DEFAULT 0,
+                dirty INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT,
+                PRIMARY KEY (user_id, node)
+            );
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -583,7 +613,31 @@ class AgenticSearchStore:
                 self._conn.execute(ddl)
             except sqlite3.OperationalError:
                 pass
+        for ddl in [
+            "ALTER TABLE user_memories ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
+            "ALTER TABLE user_memories ADD COLUMN embedding BLOB",
+            "ALTER TABLE user_memories ADD COLUMN embedding_model TEXT",
+        ]:
+            try:
+                self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        self._backfill_memory_categories()
         self._conn.commit()
+
+    def _backfill_memory_categories(self) -> None:
+        """Classify pre-category memories once; the metadata flag stops a redo."""
+        rows = self._conn.execute(
+            "SELECT id, memory_text, metadata_json FROM user_memories "
+            "WHERE category = 'general' AND metadata_json NOT LIKE '%\"category_backfilled\"%'"
+        ).fetchall()
+        for row in rows:
+            meta = _json_loads(row["metadata_json"])
+            meta["category_backfilled"] = True
+            self._conn.execute(
+                "UPDATE user_memories SET category = ?, metadata_json = ? WHERE id = ?",
+                (classify_memory(row["memory_text"]), _json_dumps(meta), row["id"]),
+            )
 
     def register_user(self, *, email: str, name: str, password_hash: str) -> UserRecord:
         """Create an account, atomically choosing the sole bootstrap admin.
@@ -1218,6 +1272,7 @@ class AgenticSearchStore:
             metadata=_json_loads(row["metadata_json"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            category=row["category"],
         )
 
     # ------------------------------------------------------------------
@@ -2086,12 +2141,22 @@ class AgenticSearchStore:
         user_id: str,
         memory_text: str,
         metadata: dict[str, Any] | None = None,
+        *,
+        category: str | None = None,
     ) -> UserMemoryRecord | None:
-        """Persist a sanitized memory for a user."""
+        """Persist a sanitized memory for a user.
+
+        ``category=None`` classifies the (redacted) text.
+        """
         if not memory_text.strip():
             return None
 
         captured, capture_meta = deterministic_capture(memory_text.strip())
+        resolved = (
+            classify_memory(captured)
+            if category is None
+            else normalize_category(category)
+        )
         now = _now()
         record_id = _new_id("mem")
         merged_meta = dict(metadata or {})
@@ -2099,11 +2164,21 @@ class AgenticSearchStore:
         self._conn.execute(
             """
             INSERT INTO user_memories
-                (id, user_id, memory_text, metadata_json, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
+                (id, user_id, memory_text, metadata_json, is_active, created_at, updated_at,
+                 category)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
             """,
-            (record_id, user_id, captured, _json_dumps(merged_meta), now, now),
+            (
+                record_id,
+                user_id,
+                captured,
+                _json_dumps(merged_meta),
+                now,
+                now,
+                resolved,
+            ),
         )
+        self._mark_nodes_dirty(user_id, [resolved])
         self._conn.commit()
         row = self._conn.execute(
             "SELECT * FROM user_memories WHERE id = ?", (record_id,)
@@ -2140,11 +2215,13 @@ class AgenticSearchStore:
         self._conn.execute(
             """
             UPDATE user_memories
-            SET memory_text = ?, metadata_json = ?, updated_at = ?
+            SET memory_text = ?, metadata_json = ?, updated_at = ?,
+                embedding = NULL, embedding_model = NULL
             WHERE id = ?
             """,
             (captured, _json_dumps(merged_meta), _now(), row["id"]),
         )
+        self._mark_nodes_dirty(user_id, [row["category"]])
         self._conn.commit()
         updated = self._conn.execute(
             "SELECT * FROM user_memories WHERE id = ?", (row["id"],)
@@ -2163,16 +2240,16 @@ class AgenticSearchStore:
         ).fetchall()
         return [str(row["memory_text"]) for row in rows]
 
-    def get_user_memory_records(self, user_id: str) -> list[UserMemoryRecord]:
+    def get_user_memory_records(
+        self, user_id: str, *, category: str | None = None
+    ) -> list[UserMemoryRecord]:
         """Return active memory records (with ids) for a user in display order."""
-        rows = self._conn.execute(
-            """
-            SELECT * FROM user_memories
-            WHERE user_id = ? AND is_active = 1
-            ORDER BY created_at, id
-            """,
-            (user_id,),
-        ).fetchall()
+        sql = "SELECT * FROM user_memories WHERE user_id = ? AND is_active = 1"
+        params: list[Any] = [user_id]
+        if category is not None:
+            sql += " AND category = ?"
+            params.append(normalize_category(category))
+        rows = self._conn.execute(sql + " ORDER BY created_at, id", params).fetchall()
         return [self._row_to_user_memory(row) for row in rows]
 
     def update_user_memory(
@@ -2181,8 +2258,14 @@ class AgenticSearchStore:
         memory_id: str,
         new_text: str,
         metadata: dict[str, Any] | None = None,
+        *,
+        category: str | None = None,
     ) -> UserMemoryRecord | None:
-        """Replace one active memory identified by id (scoped to user_id)."""
+        """Replace one active memory identified by id (scoped to user_id).
+
+        ``category=None`` keeps the existing category. The cached embedding is
+        cleared because the text changed.
+        """
         if not new_text.strip():
             return None
         row = self._conn.execute(
@@ -2195,10 +2278,15 @@ class AgenticSearchStore:
         merged_meta = _json_loads(row["metadata_json"])
         merged_meta.update(metadata or {})
         merged_meta.update(capture_meta)
-        self._conn.execute(
-            "UPDATE user_memories SET memory_text = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
-            (captured, _json_dumps(merged_meta), _now(), memory_id),
+        new_category = (
+            row["category"] if category is None else normalize_category(category)
         )
+        self._conn.execute(
+            "UPDATE user_memories SET memory_text = ?, metadata_json = ?, updated_at = ?, "
+            "category = ?, embedding = NULL, embedding_model = NULL WHERE id = ?",
+            (captured, _json_dumps(merged_meta), _now(), new_category, memory_id),
+        )
+        self._mark_nodes_dirty(user_id, [row["category"], new_category])
         self._conn.commit()
         updated = self._conn.execute(
             "SELECT * FROM user_memories WHERE id = ?", (memory_id,)
@@ -2207,13 +2295,118 @@ class AgenticSearchStore:
 
     def delete_user_memory(self, user_id: str, memory_id: str) -> bool:
         """Soft-delete one active memory by id (scoped to user_id)."""
+        row = self._conn.execute(
+            "SELECT category FROM user_memories "
+            "WHERE id = ? AND user_id = ? AND is_active = 1",
+            (memory_id, user_id),
+        ).fetchone()
         cur = self._conn.execute(
             "UPDATE user_memories SET is_active = 0, updated_at = ? "
             "WHERE id = ? AND user_id = ? AND is_active = 1",
             (_now(), memory_id, user_id),
         )
+        if row is not None:
+            self._mark_nodes_dirty(user_id, [row["category"]])
         self._conn.commit()
         return cur.rowcount > 0
+
+    def set_user_memory_category(
+        self, user_id: str, memory_id: str, category: str
+    ) -> bool:
+        """Move one active memory to *category* (scoped to user_id)."""
+        row = self._conn.execute(
+            "SELECT category FROM user_memories "
+            "WHERE id = ? AND user_id = ? AND is_active = 1",
+            (memory_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+        new_category = normalize_category(category)
+        self._conn.execute(
+            "UPDATE user_memories SET category = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (new_category, _now(), memory_id, user_id),
+        )
+        self._mark_nodes_dirty(user_id, [row["category"], new_category])
+        self._conn.commit()
+        return True
+
+    def get_memory_embeddings(self, user_id: str) -> dict[str, tuple[bytes, str]]:
+        """Return id -> (embedding blob, model) for the user's embedded active memories."""
+        rows = self._conn.execute(
+            "SELECT id, embedding, embedding_model FROM user_memories "
+            "WHERE user_id = ? AND is_active = 1 AND embedding IS NOT NULL",
+            (user_id,),
+        ).fetchall()
+        return {
+            row["id"]: (bytes(row["embedding"]), row["embedding_model"] or "")
+            for row in rows
+        }
+
+    def set_memory_embeddings(
+        self, user_id: str, rows: list[tuple[str, bytes, str]]
+    ) -> None:
+        """Cache embeddings; ids not owned by *user_id* are ignored."""
+        for memory_id, blob, model in rows:
+            self._conn.execute(
+                "UPDATE user_memories SET embedding = ?, embedding_model = ? "
+                "WHERE id = ? AND user_id = ?",
+                (blob, model, memory_id, user_id),
+            )
+        self._conn.commit()
+
+    def get_memory_index_nodes(self, user_id: str) -> list[MemoryIndexNodeRecord]:
+        """Return the user's category/root index nodes."""
+        rows = self._conn.execute(
+            "SELECT * FROM memory_index_nodes WHERE user_id = ? ORDER BY node",
+            (user_id,),
+        ).fetchall()
+        return [
+            MemoryIndexNodeRecord(
+                user_id=row["user_id"],
+                node=row["node"],
+                summary=row["summary"],
+                memory_count=row["memory_count"],
+                dirty=bool(row["dirty"]),
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    def upsert_memory_index_node(
+        self, user_id: str, node: str, *, summary: str, memory_count: int
+    ) -> None:
+        """Store a node summary and mark it clean."""
+        self._conn.execute(
+            """
+            INSERT INTO memory_index_nodes
+                (user_id, node, summary, memory_count, dirty, updated_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+            ON CONFLICT(user_id, node) DO UPDATE SET
+                summary = excluded.summary,
+                memory_count = excluded.memory_count,
+                dirty = 0,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, node, summary, memory_count, _now()),
+        )
+        self._conn.commit()
+
+    def mark_memory_nodes_dirty(self, user_id: str, categories: Iterable[str]) -> None:
+        """Mark category nodes (and always the root) for re-summarization."""
+        self._mark_nodes_dirty(user_id, categories)
+        self._conn.commit()
+
+    def _mark_nodes_dirty(self, user_id: str, categories: Iterable[str]) -> None:
+        """Uncommitted dirty-marking; callers commit with their own write."""
+        for node in {*categories, ROOT_NODE}:
+            self._conn.execute(
+                """
+                INSERT INTO memory_index_nodes (user_id, node, dirty)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, node) DO UPDATE SET dirty = 1
+                """,
+                (user_id, node),
+            )
 
     def replace_user_profile(
         self, user_id: str, entries: list[dict[str, Any]]
