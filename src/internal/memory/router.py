@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from src.internal.auth import user_from_headers
 from src.internal.memory import service
-from src.internal.memory.service import DEFAULT_MEMORY_USER_ID, maybe_build_encoder
+from src.internal.memory.service import DEFAULT_MEMORY_USER_ID
 
 
 class _SaveRequest(BaseModel):
@@ -19,6 +19,7 @@ class _SaveRequest(BaseModel):
 class _SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     max_results: int = Field(default=5, ge=1, le=100)
+    category: str | None = None
 
 
 class _ConsolidateRequest(BaseModel):
@@ -80,7 +81,8 @@ def create_memory_router(
             _uid(request),
             body.query,
             max_results=body.max_results,
-            encoder=maybe_build_encoder(),
+            encoder=getattr(request.app.state, "memory_encoder", None),
+            category=body.category,
         )
         return {
             "results": [

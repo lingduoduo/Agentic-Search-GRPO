@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from typing import Any, Callable
 
 from src.internal.db.models import (
@@ -14,6 +13,7 @@ from src.internal.db.models import (
     UserMemoryRecord,
     UserProfileEntryRecord,
 )
+from src.internal.memory.search import _QUERY_STOPWORDS, _tokenize, hybrid_search
 from src.internal.memory.tools import build_memory_registry
 
 logger = logging.getLogger(__name__)
@@ -67,13 +67,6 @@ def memory_preamble(
     else:
         chosen = _select_relevant(store, user_id, query, memories, max_items, encoder)
     return _MEMORY_PREAMBLE_HEADER + "\n".join(f"- {m}" for m in chosen)
-
-
-_QUERY_STOPWORDS = frozenset(
-    "a an and are as at be but by can do for from has have how i if in is it "
-    "its me my of on or our so that the their them they this to was we what "
-    "when where which who will with would you your".split()
-)
 
 
 def _content_query(query: str) -> str:
@@ -153,39 +146,23 @@ def save_memory(store, user_id: str, text: str) -> str | None:
     return record.id if record is not None else None
 
 
-def _tokenize(text: str) -> list[str]:
-    return [t for t in re.split(r"[^0-9a-z]+", text.lower()) if t]
-
-
 def search_memories(
     store,
     user_id: str,
     query: str,
     max_results: int = 5,
     encoder: Encoder | None = None,
+    *,
+    category: str | None = None,
 ) -> list[tuple[UserMemoryRecord, float]]:
-    records = store.get_user_memory_records(user_id)
-    if not records or not query.strip():
-        return []
-    if encoder is not None:
-        import numpy as np
-
-        matrix = encoder([f"passage: {r.memory_text}" for r in records])
-        qvec = encoder([f"query: {query}"])
-        sims = (np.asarray(qvec) @ np.asarray(matrix).T)[0]
-        ranked = sorted(zip(records, sims), key=lambda x: float(x[1]), reverse=True)
-        return [(r, float(s)) for r, s in ranked[:max_results]]
-    # Lexical fallback: token-overlap, normalized by query length.
-    q_tokens = set(_tokenize(query))
-    if not q_tokens:
-        return []
-    scored: list[tuple[UserMemoryRecord, float]] = []
-    for r in records:
-        overlap = len(q_tokens & set(_tokenize(r.memory_text)))
-        if overlap:
-            scored.append((r, overlap / len(q_tokens)))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:max_results]
+    return hybrid_search(
+        store,
+        user_id,
+        query,
+        max_results=max_results,
+        encoder=encoder,
+        category=category,
+    )
 
 
 def _attribute(record: UserMemoryRecord) -> str | None:
