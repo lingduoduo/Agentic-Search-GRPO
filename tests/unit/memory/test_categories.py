@@ -3,6 +3,7 @@ import pytest
 from src.internal.memory.categories import (
     CATEGORIES,
     classify_memory,
+    is_protected,
     normalize_category,
 )
 
@@ -35,3 +36,9 @@ def test_normalize_category():
         "decisions",
         "general",
     }
+
+
+def test_is_protected_by_label_or_by_text():
+    assert is_protected("anything", "constraints")
+    assert is_protected("User is severely allergic to peanuts", "profile")
+    assert not is_protected("Prefers arXiv", "preferences")

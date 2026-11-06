@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,11 @@ def _store(owner: str | None = "u1"):
         ("We decided to go with Postgres", True),
         ("What is FAISS?", False),
         ("compare dense and sparse retrieval", False),
+        ("I want to know what FAISS is", False),
+        ("I need a summary of the latest AI news", False),
+        ("Why do cats always land on their feet?", False),
+        ("I am curious how BM25 works", False),
+        ("Can you remember what RRF stands for?", False),
     ],
 )
 def test_has_durable_signal(msg, expected):
@@ -64,8 +70,14 @@ def test_is_near_duplicate():
         "User prefers peer reviewed sources", "User prefers peer-reviewed sources only"
     )
     assert not is_near_duplicate("User likes tea", "User works at Acme")
-    assert is_near_duplicate("a b", "totally different words", cosine=0.95)
-    assert not is_near_duplicate("User likes tea", "User works at Acme", cosine=0.5)
+    # cosine never matches on its own
+    assert not is_near_duplicate("a b", "totally different words", cosine=0.95)
+    # cosine can veto a lexical match
+    assert not is_near_duplicate(
+        "User prefers peer reviewed sources",
+        "User prefers peer-reviewed sources only",
+        cosine=0.5,
+    )
 
 
 def test_extract_parses_leniently_and_normalizes_category():
@@ -167,3 +179,179 @@ async def test_capture_handler_writes():
     assert [r.memory_text for r in store.get_user_memory_records("u1")] == [
         "User prefers tea"
     ]
+
+
+class _ConstEncoder:
+    """Every pair scores cosine ~0.95 (as e5 does for same-template facts)."""
+
+    def __call__(self, texts):
+        import numpy as np
+
+        return np.array([[1.0, 0.33 * (i % 2)] for i in range(len(texts))])
+
+
+def _add_via_capture(store, sid, reply, msg="I'm allergic to things", **kw):
+    return capture_turn(store, "u1", sid, _FakeLLM(reply), msg, "ok", **kw)
+
+
+async def test_distinct_allergies_not_merged_by_cosine():
+    store, sid = _store()
+    store.add_user_memory("u1", "User is allergic to peanuts", category="constraints")
+    enc = _ConstEncoder()
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User is allergic to shellfish","category":"constraints"}]}',
+        encoder=enc,
+    )
+    assert len(store.get_user_memory_records("u1")) == 2
+
+
+async def test_constraints_never_updated_on_high_jaccard():
+    store, sid = _store()
+    store.add_user_memory(
+        "u1", "User is allergic to peanuts and shellfish", category="constraints"
+    )
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User is allergic to peanuts and dairy","category":"constraints"}]}',
+    )
+    texts = sorted(r.memory_text for r in store.get_user_memory_records("u1"))
+    assert texts == [
+        "User is allergic to peanuts and dairy",
+        "User is allergic to peanuts and shellfish",
+    ]
+
+
+async def test_exact_duplicate_constraint_skipped():
+    store, sid = _store()
+    store.add_user_memory("u1", "User is allergic to peanuts", category="constraints")
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"user is allergic to peanuts.","category":"constraints"}]}',
+    )
+    assert len(store.get_user_memory_records("u1")) == 1
+
+
+async def test_cosine_veto_keeps_two_rows_for_non_constraint():
+    store, sid = _store()
+    store.add_user_memory(
+        "u1", "User prefers peer reviewed sources", category="preferences"
+    )
+
+    class _Orthogonal:
+        def __call__(self, texts):
+            import numpy as np
+
+            return np.array([[1.0, 0.0] if "only" in t else [0.0, 1.0] for t in texts])
+
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User prefers peer-reviewed sources only","category":"preferences"}]}',
+        msg="I prefer peer-reviewed sources only",
+        encoder=_Orthogonal(),
+    )
+    assert len(store.get_user_memory_records("u1")) == 2
+
+
+async def test_trajectory_records_redacted_text_not_raw_secret():
+    store, sid = _store()
+    secret = "hunter2hunter2"
+    from src.internal.feedback.runtime import deterministic_capture
+
+    assert secret not in deterministic_capture(f"password={secret}")[0]
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User prefers password=%s for tea","category":"preferences"}]}'
+        % secret,
+        msg="I prefer tea",
+    )
+    traj = store.list_memory_trajectories("u1")[0].trajectory
+    assert secret not in json.dumps(traj)
+    assert traj["memories"]
+
+
+async def test_profile_labeled_allergy_is_protected_on_capture():
+    """Regression: an LLM 'profile' label must not let one allergy overwrite another."""
+    store, sid = _store()
+    store.add_user_memory(
+        "u1", "User is severely allergic to peanuts", category="profile"
+    )
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User is severely allergic to shellfish","category":"profile"}]}',
+    )
+    rows = sorted(
+        (r.memory_text, r.category) for r in store.get_user_memory_records("u1")
+    )
+    assert rows == [
+        ("User is severely allergic to peanuts", "profile"),
+        ("User is severely allergic to shellfish", "constraints"),
+    ]
+
+
+class _CountingEncoder:
+    model_id = "counting"
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, texts):
+        import numpy as np
+
+        self.calls.append(list(texts))
+        return np.array([[1.0, float(len(t) % 7)] for t in texts])
+
+
+async def test_capture_embeds_only_jaccard_candidates_and_the_new_text():
+    store, sid = _store()
+    for i in range(12):
+        store.add_user_memory("u1", f"User works on unrelated topic number {i}")
+    store.add_user_memory(
+        "u1", "User prefers peer reviewed sources", category="preferences"
+    )
+    enc = _CountingEncoder()
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User prefers peer-reviewed sources only","category":"preferences"}]}',
+        msg="I prefer peer-reviewed sources only",
+        encoder=enc,
+    )
+    flat = [t for call in enc.calls for t in call]
+    assert flat.count("passage: User prefers peer-reviewed sources only") == 1
+    assert [c for c in enc.calls if len(c) == 1 and "only" in c[0]]
+    assert not any("unrelated" in t for t in flat)
+    assert set(flat) <= {
+        "passage: User prefers peer-reviewed sources only",
+        "passage: User prefers peer reviewed sources",
+    }
+
+
+async def test_capture_without_candidates_never_calls_encoder():
+    store, sid = _store()
+    store.add_user_memory("u1", "User works at Acme", category="profile")
+    enc = _CountingEncoder()
+    await _add_via_capture(
+        store,
+        sid,
+        '{"memories":[{"text":"User prefers tea","category":"preferences"}]}',
+        msg="I prefer tea",
+        encoder=enc,
+    )
+    assert enc.calls == []
+
+
+def test_extract_prompt_records_only_user_stated_facts():
+    llm = _FakeLLM('{"memories":[]}')
+    prompts = []
+    llm.complete = lambda prompt, **kw: prompts.append(prompt) or '{"memories":[]}'
+    extract_memories(llm, "I prefer tea", "The capital of France is Paris.")
+    lowered = prompts[0].lower()
+    assert "only facts the user stated about themselves" in lowered
+    assert "ignore" in lowered and "assistant" in lowered and "retrieved" in lowered

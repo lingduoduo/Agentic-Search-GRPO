@@ -69,6 +69,7 @@ PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
     # Each handler resolves its bucket and enforces that deployment switch.
     ("/api/memory/save", {"POST"}),
     ("/api/memory/list", {"GET"}),
+    ("/api/memory/index", {"GET"}),
     ("/api/memory/search", {"POST"}),
     ("/api/memory/consolidate", {"POST"}),
     ("/api/memory/profile", {"GET"}),

@@ -88,7 +88,7 @@ It hits `POST /api/agent` and renders the source cards, the answer, and the
 memory add "User prefers window seats"
 memory list
 memory search -top-k 5 "seating"   # flags BEFORE the query — see the note below
-memory consolidate                 # dedup + resolve tagged conflicts (-no-conflict to dedup only)
+memory consolidate                 # dedup, merge near-dups, resolve conflicts, rebuild summaries (-no-conflict skips conflicts)
 memory profile                     # show the stored profile
 memory profile -generate           # (re)build the profile via the LLM
 memory curate                      # LLM reconciles memories from the conversation

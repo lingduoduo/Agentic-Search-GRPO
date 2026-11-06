@@ -34,6 +34,9 @@ include = ["src*"]
 testpaths = ["tests/unit", "tests/regression"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+# Dump every thread's stack if a single test runs this long, instead of
+# stalling silently; above the slowest legitimate tests.
+faulthandler_timeout = 300
 norecursedirs = [
     ".git",
     ".pytest_cache",

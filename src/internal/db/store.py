@@ -2375,7 +2375,8 @@ class AgenticSearchStore:
     def upsert_memory_index_node(
         self, user_id: str, node: str, *, summary: str, memory_count: int
     ) -> None:
-        """Store a node summary and mark it clean."""
+        """Store a node summary (redacted like memory text) and mark it clean."""
+        summary = deterministic_capture(summary)[0] if summary else summary
         self._conn.execute(
             """
             INSERT INTO memory_index_nodes

@@ -55,12 +55,13 @@ def memory_preamble(
     when the user has none. The instructional wording is what drives proactive
     use (e.g. warn about a stored allergy).
 
-    At or below the cap every memory is listed. Above it the selection is, in
-    order: every ``constraints`` memory (never trimmed), then the hits most
-    relevant to *query* (up to ``MEMORY_RELEVANT_SLOTS``), then the newest
-    memories up to *max_items*. The body is capped at
+    At or below the cap every memory is a candidate. Above it the selection
+    is, in order: every ``constraints`` memory, then the hits most relevant to
+    *query* (up to ``MEMORY_RELEVANT_SLOTS``), then the newest memories up to
+    *max_items*. At any size the body is then capped at
     ``MEMORY_PREAMBLE_CHAR_BUDGET`` chars by dropping recency fill first, then
-    relevance hits; constraints stay. Duplicate texts collapse to one bullet.
+    relevance hits, so non-constraint memories can be dropped even below the
+    cap; constraints are always kept. Duplicate texts collapse to one bullet.
     """
     records = store.get_user_memory_records(user_id)
     if not records:
@@ -75,8 +76,9 @@ def memory_preamble(
     keep = {text: tier for text, tier in tiers}
     selected = [r for r in records if r.memory_text in keep]
 
-    summaries, root = _index_summaries(store, user_id)
-    root_line = "Memory index: " + (root or _count_line(records))
+    summaries = _index_summaries(store, user_id)
+    # Computed live: a stored root summary goes stale between rebuilds.
+    root_line = "Memory index: " + _count_line(records)
 
     while True:
         body = _render(selected, summaries, root_line)
@@ -121,14 +123,13 @@ def _count_line(records: list[UserMemoryRecord]) -> str:
     return " · ".join(f"{c} {counts[c]}" for c in CATEGORIES if c in counts)
 
 
-def _index_summaries(store, user_id: str) -> tuple[dict[str, str], str]:
+def _index_summaries(store, user_id: str) -> dict[str, str]:
     try:
         nodes = store.get_memory_index_nodes(user_id)
     except Exception as exc:  # noqa: BLE001 — the index is decoration
         logger.warning("memory index read failed for %s: %s", user_id, exc)
-        return {}, ""
-    summaries = {n.node: (n.summary or "").strip() for n in nodes}
-    return summaries, summaries.pop(ROOT_NODE, "")
+        return {}
+    return {n.node: (n.summary or "").strip() for n in nodes if n.node != ROOT_NODE}
 
 
 def _content_query(query: str) -> str:
@@ -203,8 +204,10 @@ def maybe_build_encoder() -> Encoder | None:
         return None
 
 
-def save_memory(store, user_id: str, text: str) -> str | None:
-    record = store.add_user_memory(user_id, text)
+def save_memory(
+    store, user_id: str, text: str, *, category: str | None = None
+) -> str | None:
+    record = store.add_user_memory(user_id, text, category=category)
     return record.id if record is not None else None
 
 
@@ -235,57 +238,19 @@ def _attribute(record: UserMemoryRecord) -> str | None:
 
 
 def consolidate_memories(
-    store, user_id: str, resolve_conflicts: bool = True
+    store,
+    user_id: str,
+    resolve_conflicts: bool = True,
+    *,
+    llm=None,
+    encoder: Encoder | None = None,
 ) -> dict[str, Any]:
-    records = store.get_user_memory_records(user_id)
-    report: dict[str, Any] = {
-        "initial": len(records),
-        "duplicates_removed": 0,
-        "conflicts_resolved": [],
-        "final": 0,
-    }
+    """See ``src.internal.memory.consolidation.consolidate_memories``."""
+    from src.internal.memory import consolidation  # consolidation imports this module
 
-    def newest_first(rs: list[UserMemoryRecord]) -> list[UserMemoryRecord]:
-        return sorted(rs, key=lambda r: (r.updated_at or "", r.id), reverse=True)
-
-    # Exact-content dedup, keeping the newest.
-    seen: set[str] = set()
-    keep: list[UserMemoryRecord] = []
-    remove: list[UserMemoryRecord] = []
-    for r in newest_first(records):
-        key = r.memory_text.strip().lower()
-        if key in seen:
-            remove.append(r)
-            report["duplicates_removed"] += 1
-            continue
-        seen.add(key)
-        keep.append(r)
-
-    if resolve_conflicts:
-        by_attr: dict[str, list[UserMemoryRecord]] = {}
-        untagged: list[UserMemoryRecord] = []
-        for r in keep:
-            attr = _attribute(r)
-            (untagged if attr is None else by_attr.setdefault(attr, [])).append(r)
-        resolved = list(untagged)
-        for attr, group in by_attr.items():
-            ordered = newest_first(group)
-            resolved.append(ordered[0])
-            if len(ordered) > 1:
-                remove.extend(ordered[1:])
-                report["conflicts_resolved"].append(
-                    {
-                        "attribute": attr,
-                        "kept": ordered[0].memory_text,
-                        "superseded": [r.memory_text for r in ordered[1:]],
-                    }
-                )
-        keep = resolved
-
-    for r in remove:
-        store.delete_user_memory(user_id, r.id)
-    report["final"] = len(keep)
-    return report
+    return consolidation.consolidate_memories(
+        store, user_id, resolve_conflicts, llm=llm, encoder=encoder
+    )
 
 
 _CURATION_SYSTEM = (

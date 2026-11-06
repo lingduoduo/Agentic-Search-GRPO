@@ -86,3 +86,14 @@ def test_explicit_general_survives_reopen(tmp_path):
     s._conn.close()
     s2 = AgenticSearchStore(path)
     assert s2.get_user_memory_records("u1")[0].category == "general"
+
+
+def test_upsert_index_node_redacts_summary():
+    from src.internal.feedback.runtime import deterministic_capture
+
+    s = AgenticSearchStore(":memory:")
+    raw = "User password=hunter2hunter2 for tea"
+    s.upsert_memory_index_node("u1", "preferences", summary=raw, memory_count=1)
+    node = {n.node: n for n in s.get_memory_index_nodes("u1")}["preferences"]
+    assert "hunter2hunter2" not in node.summary
+    assert node.summary == deterministic_capture(raw)[0]
