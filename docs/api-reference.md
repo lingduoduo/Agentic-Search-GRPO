@@ -285,7 +285,7 @@ are in [API request routing](request-routing.md).
 
 The request's optional `domain` (default `web`) adds a search-source hint to web
 provider queries; `GET /api/search-domains` lists the 20 accepted categories with
-their `description`, `typical_sources`, `source_sites` and `category` (the family
+their `description`, `typical_sources`, `source_sites`, `tools` (seeded public-data tool names) and `category` (the family
 the UI groups them under; empty for `web`), plus the ordered `categories`
 families as `{"category", "name"}`. Legacy topic identifiers are accepted
 as aliases. Instead of `domain`, `domains` takes up to three categories searched

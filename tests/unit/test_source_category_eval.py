@@ -52,7 +52,7 @@ def test_source_loader_requires_the_marker(tmp_path):
 def test_source_loader_rejects_categories_without_sites(tmp_path):
     payload = {
         "taxonomy": "source_categories",
-        "domains": {"product": [{"query": "q", "authority_hosts": ["a.com"]}]},
+        "domains": {"official": [{"query": "q", "authority_hosts": ["a.com"]}]},
     }
     with pytest.raises(ValueError, match="source_sites"):
         load_source_labels(_write(tmp_path, payload))

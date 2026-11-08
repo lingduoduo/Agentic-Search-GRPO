@@ -156,12 +156,12 @@ for MCP response metadata.
 
 ### Category source sites
 
-Sixteen categories carry `source_sites`: the hosts (or host/path prefixes) a web
+Eighteen categories carry `source_sites`: the hosts (or host/path prefixes) a web
 search for that category is scoped to first. It is distinct from the descriptive
 `typical_sources` column. Each list has at most five entries, is fixed in code
-like the rest of the registry, and is not operator-configurable. `web`,
-`official`, `product`, and `local` have no list and keep the suffix-only
-behavior; `official` has none because `site:gov` would be US-only.
+like the rest of the registry, and is not operator-configurable. `web` and
+`official` have no list and keep the suffix-only behavior: `official`
+documentation can live on any vendor's domain, and `site:gov` would be US-only.
 
 | Category | `source_sites` |
 | --- | --- |
@@ -173,12 +173,14 @@ behavior; `official` has none because `site:gov` would be US-only.
 | legal | law.cornell.edu, courtlistener.com, justia.com, govinfo.gov, eur-lex.europa.eu |
 | financial | sec.gov, nasdaq.com, finance.yahoo.com, marketwatch.com |
 | patent | patents.google.com, uspto.gov, wipo.int, epo.org |
-| business | opencorporates.com, crunchbase.com |
-| travel | tripadvisor.com, booking.com, lonelyplanet.com |
+| product | rtings.com, consumerreports.org, amazon.com, bestbuy.com, walmart.com |
+| business | opencorporates.com, crunchbase.com, linkedin.com/company, dnb.com |
+| local | yelp.com, yellowpages.com, foursquare.com, openstreetmap.org |
+| travel | tripadvisor.com, booking.com, lonelyplanet.com, wikivoyage.org, kayak.com |
 | media | youtube.com, commons.wikimedia.org, vimeo.com, podcasts.apple.com |
 | books | openlibrary.org, books.google.com, goodreads.com, worldcat.org |
 | education | coursera.org, edx.org, khanacademy.org, ocw.mit.edu |
-| events | eventbrite.com, meetup.com |
+| events | eventbrite.com, meetup.com, ticketmaster.com, lu.ma |
 | jobs | indeed.com, linkedin.com/jobs, glassdoor.com |
 | statistics | census.gov, data.worldbank.org, data.oecd.org, ourworldindata.org |
 
@@ -706,7 +708,8 @@ first, so `"finance"` arrives as `financial` and `"health"` as `web`.
 
 `GET /api/search-domains` returns each category's `name`, `description` (its
 primary topics), `typical_sources` and `source_sites` arrays and `category` in
-registry order, plus `categories`: the families (`{"category", "name"}`, from
+registry order, `tools` (the seeded public-data tools that answer inside the
+category, e.g. `search_arxiv` for `academic`), plus `categories`: the families (`{"category", "name"}`, from
 `DOMAIN_CATEGORIES`) the UI groups the picker under. Every category but `web`
 belongs to one family; `web` has an empty `category`.
 The Assist page uses it to populate the "Search source" checkbox group next to
