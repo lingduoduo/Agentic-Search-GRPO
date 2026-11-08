@@ -25,6 +25,7 @@ from src.internal.servers.web.app import (
 )
 from src.internal.tools.search import (
     AVAILABLE_DOMAINS,
+    DOMAIN_CATEGORIES,
     DOMAIN_REGISTRY,
     SearchPage,
     normalize_search_domain,
@@ -56,6 +57,17 @@ def test_registry_endpoint_carries_descriptions(client):
     body = client.get("/api/search-domains").json()
     by_name = {d["name"]: d["description"] for d in body["domains"]}
     assert by_name["financial"] == DOMAIN_REGISTRY["financial"].description
+
+
+def test_registry_endpoint_groups_domains_into_families(client):
+    body = client.get("/api/search-domains").json()
+    assert body["categories"] == [
+        {"category": key, "name": name} for key, name in DOMAIN_CATEGORIES.items()
+    ]
+    by_name = {d["name"]: d["category"] for d in body["domains"]}
+    assert by_name["web"] == ""
+    assert by_name["academic"] == "research"
+    assert by_name["legal"] == "government"
 
 
 def test_invalid_domain_is_rejected(client):

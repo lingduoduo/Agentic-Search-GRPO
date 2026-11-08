@@ -705,7 +705,10 @@ first, so `"finance"` arrives as `financial` and `"health"` as `web`.
 ```
 
 `GET /api/search-domains` returns each category's `name`, `description` (its
-primary topics), `typical_sources` and `source_sites` arrays in registry order.
+primary topics), `typical_sources` and `source_sites` arrays and `category` in
+registry order, plus `categories`: the families (`{"category", "name"}`, from
+`DOMAIN_CATEGORIES`) the UI groups the picker under. Every category but `web`
+belongs to one family; `web` has an empty `category`.
 The Assist page uses it to populate the "Search source" checkbox group next to
 the question box (plus an **Auto** checkbox), so the 20 categories are not
 copied into the frontend bundle; an option's tooltip shows its topics and
