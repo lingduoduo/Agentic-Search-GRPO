@@ -68,11 +68,25 @@ class SearchDomain:
     # Hosts (or host/path) the restricted leg searches. Distinct from the
     # descriptive typical_sources: these are what a query actually runs against.
     source_sites: tuple[str, ...] = ()
+    # The family the UI groups this category under; a key of DOMAIN_CATEGORIES.
+    # Empty for "web", which is the unrestricted default rather than a category.
+    category: str = ""
 
 
 # Every domain can be searched on the public web; the hint is what differs.
 # Declaring it makes the entry ``get_sub_domains`` used to fabricate ordinary.
 WEB_CAPABILITY = Capability(name="web", query_parameter="query", returns="documents")
+
+
+# Families that group the categories for the UI, in display order (key -> name).
+DOMAIN_CATEGORIES: dict[str, str] = {
+    "research": "Research",
+    "news": "News & social",
+    "code": "Code & data",
+    "government": "Government & law",
+    "business": "Business & money",
+    "places": "Places & events",
+}
 
 
 DOMAIN_REGISTRY: dict[str, SearchDomain] = {
@@ -100,6 +114,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             "openreview.net",
             "aclanthology.org",
         ),
+        category="research",
     ),
     "code": SearchDomain(
         "Repositories, APIs, libraries, examples, issues",
@@ -107,6 +122,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("GitHub", "GitLab", "package registries"),
         ("github.com", "gitlab.com", "stackoverflow.com", "pypi.org", "npmjs.com"),
+        category="code",
     ),
     "social_media": SearchDomain(
         "Discussions, opinions, trends, community experiences",
@@ -114,6 +130,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Reddit", "Hacker News", "public social platforms"),
         ("reddit.com", "news.ycombinator.com", "x.com"),
+        category="news",
     ),
     "resource": SearchDomain(
         "Datasets, directories, tools, templates, benchmarks",
@@ -124,6 +141,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         ),
         ("Hugging Face", "Kaggle", "open-data portals"),
         ("huggingface.co", "kaggle.com", "data.gov", "zenodo.org"),
+        category="code",
     ),
     "news": SearchDomain(
         "Breaking news, reporting, investigations, press releases",
@@ -131,12 +149,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("News publishers", "news aggregators"),
         ("reuters.com", "apnews.com", "bbc.com", "npr.org"),
+        category="news",
     ),
     "official": SearchDomain(
         "Official announcements, documentation, authoritative statements",
         "official documentation announcements",
         (WEB_CAPABILITY,),
         ("Government agencies", "organizations", "official websites"),
+        category="government",
     ),
     "legal": SearchDomain(
         "Statutes, regulations, case law, legal decisions",
@@ -150,6 +170,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             "govinfo.gov",
             "eur-lex.europa.eu",
         ),
+        category="government",
     ),
     "financial": SearchDomain(
         "Market data, filings, earnings, financial statements",
@@ -162,6 +183,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         ),
         ("SEC EDGAR", "exchange data", "financial providers"),
         ("sec.gov", "nasdaq.com", "finance.yahoo.com", "marketwatch.com"),
+        category="business",
     ),
     "patent": SearchDomain(
         "Patents, trademarks, inventions, intellectual property",
@@ -169,12 +191,14 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Google Patents", "USPTO", "WIPO"),
         ("patents.google.com", "uspto.gov", "wipo.int", "epo.org"),
+        category="research",
     ),
     "product": SearchDomain(
         "Product catalogs, specifications, prices, reviews",
         "product specifications prices reviews",
         (WEB_CAPABILITY,),
         ("Retailers", "manufacturers", "shopping indexes"),
+        category="business",
     ),
     "business": SearchDomain(
         "Company profiles, industry information, organizations",
@@ -182,6 +206,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Company registries", "corporate websites"),
         ("opencorporates.com", "crunchbase.com"),
+        category="business",
     ),
     "local": SearchDomain(
         "Businesses, locations, hours, local services",
@@ -193,6 +218,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
             Capability("nearby", "query", "records", "search_nearby_places"),
         ),
         ("Maps", "business directories"),
+        category="places",
     ),
     "travel": SearchDomain(
         "Flights, hotels, destinations, transportation",
@@ -204,6 +230,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         ),
         ("Travel providers", "tourism websites"),
         ("tripadvisor.com", "booking.com", "lonelyplanet.com"),
+        category="places",
     ),
     "media": SearchDomain(
         "Images, videos, audio, podcasts, multimedia",
@@ -211,6 +238,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("YouTube", "Wikimedia Commons", "media platforms"),
         ("youtube.com", "commons.wikimedia.org", "vimeo.com", "podcasts.apple.com"),
+        category="news",
     ),
     "books": SearchDomain(
         "Books, authors, editions, publications, libraries",
@@ -218,6 +246,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Open Library", "Google Books", "library catalogs"),
         ("openlibrary.org", "books.google.com", "goodreads.com", "worldcat.org"),
+        category="research",
     ),
     "education": SearchDomain(
         "Courses, tutorials, textbooks, educational programs",
@@ -225,6 +254,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("University websites", "course catalogs", "learning platforms"),
         ("coursera.org", "edx.org", "khanacademy.org", "ocw.mit.edu"),
+        category="research",
     ),
     "events": SearchDomain(
         "Conferences, concerts, meetups, schedules",
@@ -232,6 +262,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Event platforms", "official event sites"),
         ("eventbrite.com", "meetup.com"),
+        category="places",
     ),
     "jobs": SearchDomain(
         "Job openings, careers, salaries, employment opportunities",
@@ -239,6 +270,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Employer career pages", "job boards"),
         ("indeed.com", "linkedin.com/jobs", "glassdoor.com"),
+        category="business",
     ),
     "statistics": SearchDomain(
         "Public statistics, indicators, surveys, census data",
@@ -246,6 +278,7 @@ DOMAIN_REGISTRY: dict[str, SearchDomain] = {
         (WEB_CAPABILITY,),
         ("Census Bureau", "World Bank", "OECD"),
         ("census.gov", "data.worldbank.org", "data.oecd.org", "ourworldindata.org"),
+        category="research",
     ),
 }
 

@@ -146,6 +146,7 @@ from src.internal.tools import SearchPage
 from src.internal.tools import fetch_pages_concurrently
 from src.internal.tools import search_tool
 from src.internal.tools.search import (
+    DOMAIN_CATEGORIES,
     DOMAIN_REGISTRY,
     RESTRICTABLE_PROVIDERS,
     category_sites_enabled,
@@ -1840,7 +1841,7 @@ def create_web_app(
 
     @app.get("/api/search-domains")
     def list_search_domains() -> dict[str, list[dict[str, str | list[str]]]]:
-        """Expose the taxonomy so the UI has one source for names and order."""
+        """Expose the taxonomy so the UI has one source for names, order and grouping."""
         return {
             "domains": [
                 {
@@ -1848,9 +1849,14 @@ def create_web_app(
                     "description": entry.description,
                     "typical_sources": list(entry.typical_sources),
                     "source_sites": list(entry.source_sites),
+                    "category": entry.category,
                 }
                 for name, entry in DOMAIN_REGISTRY.items()
-            ]
+            ],
+            "categories": [
+                {"category": key, "name": name}
+                for key, name in DOMAIN_CATEGORIES.items()
+            ],
         }
 
     @app.get("/api/retrieval/status")

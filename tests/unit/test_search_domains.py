@@ -6,6 +6,7 @@ import pytest
 
 from src.internal.tools.search import (
     AVAILABLE_DOMAINS,
+    DOMAIN_CATEGORIES,
     DOMAIN_REGISTRY,
     category_sites_enabled,
     normalize_search_domain,
@@ -22,6 +23,17 @@ def test_registry_contract():
     assert all(item.description for item in DOMAIN_REGISTRY.values())
     assert DOMAIN_REGISTRY["web"].query_hint == ""
     assert DOMAIN_REGISTRY["patent"].query_hint == "patents intellectual property"
+
+
+def test_every_category_belongs_to_a_known_family():
+    assert DOMAIN_REGISTRY["web"].category == ""
+    for name, entry in DOMAIN_REGISTRY.items():
+        if name != "web":
+            assert entry.category in DOMAIN_CATEGORIES, name
+    # No empty family: each one groups at least one category.
+    assert set(DOMAIN_CATEGORIES) == {e.category for e in DOMAIN_REGISTRY.values()} - {
+        ""
+    }
 
 
 @pytest.mark.parametrize("value", ["Social Media", "social-media", " social_media "])
