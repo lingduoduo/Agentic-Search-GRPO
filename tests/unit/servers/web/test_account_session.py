@@ -65,6 +65,14 @@ def test_account_pages_serve_public_shell_at_exact_paths(client, path):
     assert client.post(path).status_code == 405
 
 
+@pytest.mark.parametrize("path", ["/space/apps", "/space/apps/chat", "/space/sources"])
+def test_space_pages_serve_the_shell(client, path):
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.text == client.get("/").text
+    assert client.get("/space/unknown").status_code == 404
+
+
 def test_sign_in_page_shares_its_path_with_the_login_endpoint(client):
     response = client.get("/auth/login")
     assert response.status_code == 200

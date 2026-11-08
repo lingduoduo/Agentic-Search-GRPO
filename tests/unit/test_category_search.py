@@ -174,7 +174,7 @@ async def test_a_failed_fallback_never_hides_restricted_results():
     "domain,expected",
     [
         ("web", "etf fees"),
-        ("product", "etf fees product specifications prices reviews"),
+        ("official", "etf fees official documentation announcements"),
     ],
 )
 async def test_categories_without_sites_make_one_hint_call(domain, expected):

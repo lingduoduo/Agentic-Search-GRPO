@@ -70,6 +70,18 @@ def test_registry_endpoint_groups_domains_into_families(client):
     assert by_name["legal"] == "government"
 
 
+def test_registry_endpoint_lists_each_category_tools(client):
+    body = client.get("/api/search-domains").json()
+    tools = {d["name"]: d["tools"] for d in body["domains"]}
+    assert tools["academic"] == ["search_arxiv"]
+    assert tools["financial"] == [
+        "get_stock_quote",
+        "get_crypto_price",
+        "convert_currency",
+    ]
+    assert tools["news"] == []
+
+
 def test_invalid_domain_is_rejected(client):
     r = client.post("/api/agent", json={"query": "q", "domain": "nonsense"})
     assert r.status_code == 400

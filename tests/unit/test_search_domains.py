@@ -36,6 +36,12 @@ def test_every_category_belongs_to_a_known_family():
     }
 
 
+def test_typical_sources_list_at_least_three_kinds():
+    for name, entry in DOMAIN_REGISTRY.items():
+        if name != "web":
+            assert len(entry.typical_sources) >= 3, name
+
+
 @pytest.mark.parametrize("value", ["Social Media", "social-media", " social_media "])
 def test_normalize_alias(value):
     assert normalize_search_domain(value) == "social_media"
@@ -118,8 +124,27 @@ EXPECTED_SITES = {
     ),
     "financial": ("sec.gov", "nasdaq.com", "finance.yahoo.com", "marketwatch.com"),
     "patent": ("patents.google.com", "uspto.gov", "wipo.int", "epo.org"),
-    "business": ("opencorporates.com", "crunchbase.com"),
-    "travel": ("tripadvisor.com", "booking.com", "lonelyplanet.com"),
+    "product": (
+        "rtings.com",
+        "consumerreports.org",
+        "amazon.com",
+        "bestbuy.com",
+        "walmart.com",
+    ),
+    "business": (
+        "opencorporates.com",
+        "crunchbase.com",
+        "linkedin.com/company",
+        "dnb.com",
+    ),
+    "local": ("yelp.com", "yellowpages.com", "foursquare.com", "openstreetmap.org"),
+    "travel": (
+        "tripadvisor.com",
+        "booking.com",
+        "lonelyplanet.com",
+        "wikivoyage.org",
+        "kayak.com",
+    ),
     "media": (
         "youtube.com",
         "commons.wikimedia.org",
@@ -128,7 +153,7 @@ EXPECTED_SITES = {
     ),
     "books": ("openlibrary.org", "books.google.com", "goodreads.com", "worldcat.org"),
     "education": ("coursera.org", "edx.org", "khanacademy.org", "ocw.mit.edu"),
-    "events": ("eventbrite.com", "meetup.com"),
+    "events": ("eventbrite.com", "meetup.com", "ticketmaster.com", "lu.ma"),
     "jobs": ("indeed.com", "linkedin.com/jobs", "glassdoor.com"),
     "statistics": (
         "census.gov",
@@ -142,7 +167,9 @@ EXPECTED_SITES = {
 def test_source_sites_match_the_spec():
     actual = {n: e.source_sites for n, e in DOMAIN_REGISTRY.items() if e.source_sites}
     assert actual == EXPECTED_SITES
-    for name in ("web", "official", "product", "local"):
+    # web is unrestricted; official documentation can live on any vendor's
+    # domain, and site:gov alone would be US-only.
+    for name in ("web", "official"):
         assert DOMAIN_REGISTRY[name].source_sites == ()
 
 

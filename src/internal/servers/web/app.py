@@ -1804,6 +1804,9 @@ def create_web_app(
     @app.get("/auth/login", response_class=HTMLResponse)
     @app.get("/account", response_class=HTMLResponse)
     @app.get("/admin", response_class=HTMLResponse)
+    @app.get("/space/apps", response_class=HTMLResponse)
+    @app.get("/space/apps/{app_id}", response_class=HTMLResponse)
+    @app.get("/space/sources", response_class=HTMLResponse)
     def spa_page() -> str:
         return _app_shell()
 
@@ -1850,6 +1853,8 @@ def create_web_app(
                     "typical_sources": list(entry.typical_sources),
                     "source_sites": list(entry.source_sites),
                     "category": entry.category,
+                    # Seeded public-data tools that answer inside this category.
+                    "tools": [c.tool_name for c in entry.capabilities if c.tool_name],
                 }
                 for name, entry in DOMAIN_REGISTRY.items()
             ],
