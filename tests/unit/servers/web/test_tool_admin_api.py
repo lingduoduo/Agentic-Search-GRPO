@@ -133,12 +133,13 @@ def test_register_openapi_creates_tools(tmp_path):
         assert data["provider_id"]
         assert "echo_word" in data["tool_names"]
 
-        # Tool appears in list
-        names = [
-            t["name"]
+        # Tool appears in list, under the provider's registered name
+        listed = {
+            t["name"]: t
             for t in client.get("/admin/tools", headers=_admin_headers()).json()
-        ]
-        assert "echo_word" in names
+        }
+        assert listed["echo_word"]["provider_id"] == data["provider_id"]
+        assert listed["echo_word"]["provider_name"] == "Echo API"
     finally:
         _restore_registry(snap)
 

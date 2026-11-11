@@ -130,6 +130,9 @@ class ToolEntry:
     # when a user is present; with none, an anonymous write would land in a
     # shared bucket and pool unrelated people's data.
     user_scoped: bool = False
+    # Display name of the provider: the name an OpenAPI provider was registered
+    # under (its provider_id is a UUID), or the MCP server's name.
+    provider_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +209,7 @@ class ToolRegistry:
         *,
         source: str = "function",
         provider_id: str | None = None,
+        provider_name: str | None = None,
         agent_callable: bool = True,
         user_scoped: bool = False,
     ) -> None:
@@ -218,6 +222,7 @@ class ToolRegistry:
             tool=tool,
             source=source,
             provider_id=provider_id,
+            provider_name=provider_name,
             agent_callable=agent_callable,
             user_scoped=user_scoped,
         )
@@ -290,7 +295,12 @@ class ToolRegistry:
         )
         tool_names: list[str] = []
         for api_tool in self._api_registry.build_tools(provider.id):
-            self.register(api_tool, source="openapi", provider_id=str(provider.id))
+            self.register(
+                api_tool,
+                source="openapi",
+                provider_id=str(provider.id),
+                provider_name=provider.name,
+            )
             tool_names.append(api_tool.name)
         logger.info(
             "Registered %d tool(s) from OpenAPI provider %r (id=%s)",
@@ -473,6 +483,7 @@ class ToolRegistry:
             "parameters": t.schema.parameters,
             "source": entry.source,
             "provider_id": entry.provider_id,
+            "provider_name": entry.provider_name,
             "agent_callable": entry.agent_callable,
             "user_scoped": entry.user_scoped,
             "effect": t.effect.value,

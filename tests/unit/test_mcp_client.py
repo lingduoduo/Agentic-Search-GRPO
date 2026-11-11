@@ -113,6 +113,7 @@ async def test_registers_remote_tools_under_the_mcp_source(fake_session):
     entry = registry._entries["save_memory"]
     assert entry.source == "mcp"  # so the MCP mirror skips it — no export loop
     assert entry.provider_id == "local"
+    assert entry.provider_name == "local"
     assert entry.tool.schema.description == "Save a memory."
 
 
