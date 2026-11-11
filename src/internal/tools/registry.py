@@ -48,7 +48,7 @@ from uuid import UUID
 
 from src.internal.observability.prometheus import observe_tool_attempt
 
-from .api import ApiToolRegistry, ApiToolNotFoundError
+from .api import ApiToolNotFoundError, ApiToolProviderSpec, ApiToolRegistry
 from .base import (
     FailureCategory,
     FunctionTool,
@@ -133,6 +133,8 @@ class ToolEntry:
     # Display name of the provider: the name an OpenAPI provider was registered
     # under (its provider_id is a UUID), or the MCP server's name.
     provider_name: str | None = None
+    # What the provider is for: an OpenAPI schema's info description.
+    provider_description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +143,13 @@ class ToolInvocation:
     raw: Any
     errors: list[str]
     failure: ToolFailure | None
+
+
+def _provider_uuid(provider_id: str) -> UUID:
+    try:
+        return UUID(provider_id)
+    except ValueError as exc:
+        raise ApiToolNotFoundError("Provider does not exist.") from exc
 
 
 def validate_tool_contract(tool: Tool, *, source: str) -> list[str]:
@@ -210,6 +219,7 @@ class ToolRegistry:
         source: str = "function",
         provider_id: str | None = None,
         provider_name: str | None = None,
+        provider_description: str | None = None,
         agent_callable: bool = True,
         user_scoped: bool = False,
     ) -> None:
@@ -223,6 +233,7 @@ class ToolRegistry:
             source=source,
             provider_id=provider_id,
             provider_name=provider_name,
+            provider_description=provider_description,
             agent_callable=agent_callable,
             user_scoped=user_scoped,
         )
@@ -293,6 +304,53 @@ class ToolRegistry:
             headers=headers,
             icon=icon,
         )
+        tool_names = self._register_provider_tools(provider)
+        logger.info(
+            "Registered %d tool(s) from OpenAPI provider %r (id=%s)",
+            len(tool_names),
+            name,
+            provider.id,
+        )
+        return tool_names
+
+    def update_from_openapi(
+        self,
+        provider_id: str,
+        openapi_json: str,
+        *,
+        name: str,
+        headers: dict[str, str],
+    ) -> list[str]:
+        """Replace an OpenAPI provider's schema, name and headers.
+
+        The provider's tools are re-registered from the new schema, so tools
+        the new schema drops are removed. An invalid schema raises before
+        anything changes. Returns the tool names now registered.
+        """
+        provider = self._api_registry.update_provider(
+            _provider_uuid(provider_id),
+            name=name,
+            openapi_schema=openapi_json,
+            headers=headers,
+        )
+        for stale in [
+            n for n, e in self._entries.items() if e.provider_id == provider_id
+        ]:
+            del self._entries[stale]
+        tool_names = self._register_provider_tools(provider)
+        logger.info(
+            "Updated OpenAPI provider %r (id=%s): %d tool(s)",
+            name,
+            provider_id,
+            len(tool_names),
+        )
+        return tool_names
+
+    def get_openapi_provider(self, provider_id: str) -> ApiToolProviderSpec:
+        """An OpenAPI provider's stored configuration; ApiToolNotFoundError if none."""
+        return self._api_registry.get_provider(_provider_uuid(provider_id))
+
+    def _register_provider_tools(self, provider: ApiToolProviderSpec) -> list[str]:
         tool_names: list[str] = []
         for api_tool in self._api_registry.build_tools(provider.id):
             self.register(
@@ -300,14 +358,9 @@ class ToolRegistry:
                 source="openapi",
                 provider_id=str(provider.id),
                 provider_name=provider.name,
+                provider_description=provider.description,
             )
             tool_names.append(api_tool.name)
-        logger.info(
-            "Registered %d tool(s) from OpenAPI provider %r (id=%s)",
-            len(tool_names),
-            name,
-            provider.id,
-        )
         return tool_names
 
     def register_from_schema(
@@ -484,6 +537,7 @@ class ToolRegistry:
             "source": entry.source,
             "provider_id": entry.provider_id,
             "provider_name": entry.provider_name,
+            "provider_description": entry.provider_description,
             "agent_callable": entry.agent_callable,
             "user_scoped": entry.user_scoped,
             "effect": t.effect.value,
@@ -500,6 +554,43 @@ class ToolRegistry:
 
     def all_summaries(self) -> list[dict[str, Any]]:
         return [self._summary(e) for e in self._entries.values()]
+
+    def provider_summaries(self, search_word: str = "") -> list[dict[str, Any]]:
+        """Tools grouped by provider, in registry order.
+
+        Same grouping as ``catalog_from_registry``: OpenAPI and MCP tools by
+        ``provider_id``, everything else under ``local``. ``search_word``
+        keeps providers whose name or any tool's name or description contains
+        it (case-insensitive).
+        """
+        providers: dict[str, dict[str, Any]] = {}
+        for entry in self._entries.values():
+            grouped = entry.source in ("openapi", "mcp") and entry.provider_id
+            key = entry.provider_id if grouped else "local"
+            provider = providers.get(key)
+            if provider is None:
+                provider = providers[key] = {
+                    "id": key,
+                    "name": (entry.provider_name or key) if grouped else key,
+                    "description": (entry.provider_description or "")
+                    if grouped
+                    else "",
+                    "source": entry.source if grouped else "function",
+                    "tools": [],
+                }
+            provider["tools"].append(self._summary(entry))
+        needle = search_word.strip().lower()
+        if not needle:
+            return list(providers.values())
+        return [
+            p
+            for p in providers.values()
+            if needle in p["name"].lower()
+            or any(
+                needle in t["name"].lower() or needle in t["description"].lower()
+                for t in p["tools"]
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------

@@ -280,6 +280,24 @@ def parse_openapi_schema(openapi_schema_str: str) -> OpenAPISchema:
     )
 
 
+def preview_openapi_schema(openapi_schema_str: str) -> list[dict[str, str]]:
+    """The tools a schema would register, without registering anything.
+
+    Raises ApiToolError for the same problems ``create_provider`` rejects.
+    """
+
+    parsed = parse_openapi_schema(openapi_schema_str)
+    return [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "method": spec.method.upper(),
+            "path": spec.url[len(parsed.server) :],
+        }
+        for spec in _build_tool_specs(parsed)
+    ]
+
+
 def _build_tool_specs(schema: OpenAPISchema) -> list[ApiToolSpec]:
     tools: list[ApiToolSpec] = []
     seen: set[str] = set()
