@@ -1807,6 +1807,7 @@ def create_web_app(
     @app.get("/space/apps", response_class=HTMLResponse)
     @app.get("/space/apps/{app_id}", response_class=HTMLResponse)
     @app.get("/space/sources", response_class=HTMLResponse)
+    @app.get("/space/tools", response_class=HTMLResponse)
     def spa_page() -> str:
         return _app_shell()
 

@@ -225,6 +225,7 @@ async def register_mcp_tools(registry: ToolRegistry, specs: list[McpServerSpec])
                     _build_tool(spec, remote),
                     source=MCP_SOURCE,
                     provider_id=spec.name,
+                    provider_name=spec.name,
                     agent_callable=remote.name not in spec.agent_exclude,
                     user_scoped=remote.name in spec.user_scoped,
                 )

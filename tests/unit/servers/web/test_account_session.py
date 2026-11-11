@@ -65,7 +65,9 @@ def test_account_pages_serve_public_shell_at_exact_paths(client, path):
     assert client.post(path).status_code == 405
 
 
-@pytest.mark.parametrize("path", ["/space/apps", "/space/apps/chat", "/space/sources"])
+@pytest.mark.parametrize(
+    "path", ["/space/apps", "/space/apps/chat", "/space/sources", "/space/tools"]
+)
 def test_space_pages_serve_the_shell(client, path):
     response = client.get(path)
     assert response.status_code == 200

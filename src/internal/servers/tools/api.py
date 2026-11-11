@@ -47,6 +47,9 @@ class ToolView(BaseModel):
     parameters: dict[str, Any]
     source: str
     provider_id: str | None
+    # What to show for the provider: the registered OpenAPI provider name (its
+    # provider_id is a UUID) or the MCP server name; None for function tools.
+    provider_name: str | None = None
     # Both come from ToolEntry and were being dropped here: all_summaries()
     # returns them, but a field absent from the model is silently discarded, so
     # no caller could tell a registered-but-not-agent-offered tool from a normal

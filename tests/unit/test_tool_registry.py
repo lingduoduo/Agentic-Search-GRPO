@@ -150,6 +150,8 @@ def test_register_function_tool():
     assert s is not None
     assert s["description"] == "Add two ints"
     assert s["source"] == "function"
+    assert s["provider_id"] is None
+    assert s["provider_name"] is None
 
 
 def test_register_overwrites_existing():
