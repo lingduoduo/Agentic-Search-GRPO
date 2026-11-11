@@ -427,3 +427,284 @@ def test_discover_is_not_shadowed_by_the_name_route(tmp_path):
         assert "final_tools" in resp.json()
     finally:
         _restore_registry(snap)
+
+
+# ---------------------------------------------------------------------------
+# Providers page, schema validation, provider detail and update
+# ---------------------------------------------------------------------------
+
+_TWO_OPS_JSON = json.dumps(
+    {
+        "openapi": "3.0.0",
+        "info": {"title": "Echo API", "description": "Echo words back, twice."},
+        "servers": [{"url": "https://echo.test"}],
+        "paths": {
+            "/echo": {"post": {"operationId": "echo_word", "summary": "Echo a word."}},
+            "/shout": {"get": {"operationId": "shout_word"}},
+        },
+    }
+)
+
+
+def _register(client, name: str, openapi_json: str = _OPENAPI_JSON) -> str:
+    resp = client.post(
+        "/admin/tools/openapi",
+        json={"name": name, "openapi_json": openapi_json},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["provider_id"]
+
+
+def _rename_ops(prefix: str) -> str:
+    """A one-operation schema whose tool name is unique to ``prefix``."""
+    return _OPENAPI_JSON.replace("echo_word", f"{prefix}_word")
+
+
+def test_new_endpoints_require_auth(tmp_path):
+    client = TestClient(_make_app(tmp_path))
+    assert client.get("/admin/tools/providers").status_code == 401
+    assert (
+        client.post(
+            "/admin/tools/openapi/validate", json={"openapi_json": "{}"}
+        ).status_code
+        == 401
+    )
+    assert client.get("/admin/tools/openapi/x").status_code == 401
+    assert client.put("/admin/tools/openapi/x", json={}).status_code == 401
+
+
+def test_providers_groups_and_pages(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+
+        def add(a: int, b: int) -> int:
+            """Add two ints."""
+            return a + b
+
+        tool_registry.tool(
+            add, effect=ToolEffect.READ_ONLY, result_kind=ResultKind.JSON
+        )
+
+        echo_id = _register(client, "Echo API")
+        for i in range(2):
+            _register(client, f"Extra {i}", _rename_ops(f"extra{i}"))
+
+        first = client.get(
+            "/admin/tools/providers",
+            params={"current_page": 1, "page_size": 2},
+            headers=_admin_headers(),
+        ).json()
+        assert first["paginator"] == {
+            "current_page": 1,
+            "page_size": 2,
+            "total_page": 2,
+            "total_record": 4,
+        }
+        local, echo = first["list"]
+        assert (local["id"], local["source"]) == ("local", "function")
+        assert [t["name"] for t in local["tools"]] == ["add"]
+        assert echo == {
+            "id": echo_id,
+            "name": "Echo API",
+            "description": "Echo words back.",
+            "source": "openapi",
+            "tools": [echo["tools"][0]],
+        }
+        assert echo["tools"][0]["name"] == "echo_word"
+
+        second = client.get(
+            "/admin/tools/providers",
+            params={"current_page": 2, "page_size": 2},
+            headers=_admin_headers(),
+        ).json()
+        assert [p["name"] for p in second["list"]] == ["Extra 0", "Extra 1"]
+
+        past_end = client.get(
+            "/admin/tools/providers",
+            params={"current_page": 3, "page_size": 2},
+            headers=_admin_headers(),
+        ).json()
+        assert past_end["list"] == []
+        assert (
+            client.get(
+                "/admin/tools/providers",
+                params={"page_size": 0},
+                headers=_admin_headers(),
+            ).status_code
+            == 422
+        )
+    finally:
+        _restore_registry(snap)
+
+
+def test_providers_search_matches_provider_and_tool_text(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        _register(client, "Echo API")
+        _register(client, "Weather", _rename_ops("forecast"))
+
+        def names(word: str) -> list[str]:
+            page = client.get(
+                "/admin/tools/providers",
+                params={"search_word": word},
+                headers=_admin_headers(),
+            ).json()
+            assert page["paginator"]["total_record"] == len(page["list"])
+            return [p["name"] for p in page["list"]]
+
+        assert names("weather") == ["Weather"]  # provider name
+        assert names("FORECAST") == ["Weather"]  # tool name, any case
+        assert names("echo a word") == ["Echo API", "Weather"]  # tool description
+        assert names("nothing") == []
+    finally:
+        _restore_registry(snap)
+
+
+def test_validate_previews_tools_without_registering(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        resp = client.post(
+            "/admin/tools/openapi/validate",
+            json={"openapi_json": _TWO_OPS_JSON},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["tools"] == [
+            {
+                "name": "echo_word",
+                "description": "Echo a word.",
+                "method": "POST",
+                "path": "/echo",
+            },
+            {
+                "name": "shout_word",
+                "description": "GET /shout",
+                "method": "GET",
+                "path": "/shout",
+            },
+        ]
+        assert client.get("/admin/tools", headers=_admin_headers()).json() == []
+
+        bad = client.post(
+            "/admin/tools/openapi/validate",
+            json={"openapi_json": "{not json"},
+            headers=_admin_headers(),
+        )
+        assert bad.status_code == 400
+        assert "valid OpenAPI" in bad.json()["detail"]
+    finally:
+        _restore_registry(snap)
+
+
+def test_get_openapi_provider_detail(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        resp = client.post(
+            "/admin/tools/openapi",
+            json={
+                "name": "Echo API",
+                "openapi_json": _OPENAPI_JSON,
+                "headers": {"Authorization": "Bearer x"},
+            },
+            headers=_admin_headers(),
+        )
+        provider_id = resp.json()["provider_id"]
+
+        detail = client.get(
+            f"/admin/tools/openapi/{provider_id}", headers=_admin_headers()
+        ).json()
+        assert detail == {
+            "provider_id": provider_id,
+            "name": "Echo API",
+            "description": "Echo words back.",
+            "openapi_json": _OPENAPI_JSON,
+            "headers": {"Authorization": "Bearer x"},
+        }
+        for missing in ("not-a-uuid", "00000000-0000-0000-0000-000000000000"):
+            assert (
+                client.get(
+                    f"/admin/tools/openapi/{missing}", headers=_admin_headers()
+                ).status_code
+                == 404
+            )
+    finally:
+        _restore_registry(snap)
+
+
+def test_update_openapi_provider_rebuilds_its_tools(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        provider_id = _register(client, "Echo API", _TWO_OPS_JSON)
+
+        resp = client.put(
+            f"/admin/tools/openapi/{provider_id}",
+            json={
+                "name": "Echo v2",
+                "openapi_json": _OPENAPI_JSON,
+                "headers": {"X-Key": "k"},
+            },
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"provider_id": provider_id, "tool_names": ["echo_word"]}
+
+        listed = {
+            t["name"]: t
+            for t in client.get("/admin/tools", headers=_admin_headers()).json()
+        }
+        # The tool the new schema dropped is gone; the kept one is renamed.
+        assert list(listed) == ["echo_word"]
+        assert listed["echo_word"]["provider_id"] == provider_id
+        assert listed["echo_word"]["provider_name"] == "Echo v2"
+        assert listed["echo_word"]["provider_description"] == "Echo words back."
+        detail = client.get(
+            f"/admin/tools/openapi/{provider_id}", headers=_admin_headers()
+        ).json()
+        assert detail["headers"] == {"X-Key": "k"}
+    finally:
+        _restore_registry(snap)
+
+
+def test_update_with_invalid_schema_changes_nothing(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        provider_id = _register(client, "Echo API")
+
+        resp = client.put(
+            f"/admin/tools/openapi/{provider_id}",
+            json={"name": "Echo API", "openapi_json": "{not json"},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 400
+        names = [
+            t["name"]
+            for t in client.get("/admin/tools", headers=_admin_headers()).json()
+        ]
+        assert names == ["echo_word"]
+
+        missing = client.put(
+            "/admin/tools/openapi/00000000-0000-0000-0000-000000000000",
+            json={"name": "x", "openapi_json": _OPENAPI_JSON},
+            headers=_admin_headers(),
+        )
+        assert missing.status_code == 404
+    finally:
+        _restore_registry(snap)
+
+
+def test_providers_route_is_not_shadowed_by_the_name_route(tmp_path):
+    snap = _clear_registry()
+    try:
+        client = TestClient(_make_app(tmp_path))
+        resp = client.get("/admin/tools/providers", headers=_admin_headers())
+        assert resp.status_code == 200
+        assert resp.json()["list"] == []
+    finally:
+        _restore_registry(snap)

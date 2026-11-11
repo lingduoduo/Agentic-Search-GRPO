@@ -230,8 +230,8 @@ they were all once called "Tools":
 
 | Surface | Component | Reads | For |
 |---|---|---|---|
-| `/tools` page | `ToolAgentView` → `ToolCatalog` | `/admin/tools` | The agent, plus the inventory it chooses from |
-| Header **Manage tools** (wrench) | `ToolAdminPanel` | `/admin/tools` | Register/delete OpenAPI providers, test-invoke a tool |
+| Tools app (`/space/apps/tools`) | `ToolAgentView` → `ToolCatalog` | `/admin/tools` | The agent, plus the inventory it chooses from |
+| **Manage tools** page (`/space/tools`) | `ToolsView` | `/admin/tools/providers`, `/admin/tools/openapi/*` | Browse providers; create, edit and delete OpenAPI providers; test-invoke a tool |
 | `/assist` → Dev Console | `debug/ToolCatalogPanel` → `ToolCatalog` | `/api/debug/tools` | Dev observability |
 
 `ToolCatalog` is shared by the first and third: one renderer, two data sources.
@@ -244,9 +244,24 @@ registered, so why did the agent ignore it".
 Admin-gated (`require_admin`), always mounted:
 
 - `GET /admin/tools` — every registered tool with `parameters`, `source`,
-  `provider_id`, `agent_callable`, `user_scoped`, `effect`, `result_kind`, and
-  `citeable`. Group by
-  `source`/`provider_id` to get the catalog shape.
+  `provider_id`, `provider_name`, `provider_description`, `agent_callable`,
+  `user_scoped`, `effect`, `result_kind`, and `citeable`. `provider_id` is the
+  OpenAPI provider's UUID, the MCP server's name, or null for function tools.
+- `GET /admin/tools/providers?current_page=&page_size=&search_word=` — the
+  same tools grouped by provider (`catalog_from_registry`'s rule: OpenAPI and
+  MCP tools by `provider_id`, the rest under `local`), one page at a time:
+  `{list, paginator}`. `search_word` matches provider names and tool names and
+  descriptions, case-insensitively.
+- `POST /admin/tools/openapi` — register a provider from an OpenAPI JSON string.
+- `POST /admin/tools/openapi/validate` — the tools a schema would register
+  (name, description, method, path), or a 400 with the reason. Registers nothing.
+- `GET /admin/tools/openapi/{provider_id}` — a provider's stored name,
+  description, schema and headers.
+- `PUT /admin/tools/openapi/{provider_id}` — replace a provider's name, schema
+  and headers. Its tools are rebuilt from the new schema, so dropped operations
+  are unregistered; an invalid schema changes nothing.
+- `DELETE /admin/tools/openapi/{provider_id}` — remove a provider and its tools.
+  OpenAPI providers live in memory only, so they do not survive a restart.
 - `POST /admin/tools/discover` — ranks tools for a `query` via the TF-IDF
   `SemanticRouter`, returning the per-stage routing details. No LLM.
 - `POST /admin/tools/{name}/invoke` — run one tool directly with arguments.
@@ -255,7 +270,7 @@ Admin-gated (`require_admin`), always mounted:
   arguments, and a tool that raises, come back in `errors` rather than as a 500.
 
 Dev-only, **mounted only when `AGENTIC_SEARCH_DEBUG_PANELS` is set** — these do
-not exist in a normal deployment, which is why the `/tools` page uses the admin
+not exist in a normal deployment, which is why the Tools app uses the admin
 endpoints instead:
 
 - `GET /api/debug/tools` — `registered` plus the `catalog` already grouped by
