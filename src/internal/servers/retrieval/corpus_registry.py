@@ -19,8 +19,6 @@ import json
 import logging
 import os
 
-from src.internal.servers.retrieval.demo import _load_corpus
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANIFEST_PATH = "data/corpora.json"
@@ -109,6 +107,10 @@ def register_corpus(
 
 
 def resolve_corpus_docs(spec: str, manifest: dict | None = None) -> list[dict]:
+    # Imported here so reading the manifest (the web app's dataset list) does
+    # not load scikit-learn through the demo server module.
+    from src.internal.servers.retrieval.demo import _load_corpus
+
     if manifest is None:
         manifest = load_manifest()
 

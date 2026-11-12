@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets as _secrets
@@ -1808,6 +1809,7 @@ def create_web_app(
     @app.get("/space/apps/{app_id}", response_class=HTMLResponse)
     @app.get("/space/sources", response_class=HTMLResponse)
     @app.get("/space/tools", response_class=HTMLResponse)
+    @app.get("/space/datasets", response_class=HTMLResponse)
     def spa_page() -> str:
         return _app_shell()
 
@@ -1880,6 +1882,48 @@ def create_web_app(
             "embedded": bool(resolved.services.embedded_retrieval),
             "ok": check["ok"],
         }
+
+    @app.get("/api/datasets", dependencies=[Depends(make_require_admin(resolved))])
+    def list_datasets() -> list[dict[str, object]]:
+        """The corpora registered in data/corpora.json, the knowledge base the
+        retrieval server can be started with.
+
+        ``served`` says whether the in-process retriever loaded the corpus; it is
+        None when a separate retrieval server answers, since its corpus is not
+        known here.
+        """
+        from src.internal.servers.retrieval import corpus_registry
+
+        try:
+            manifest = corpus_registry.load_manifest()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=500, detail="The corpus manifest could not be parsed."
+            ) from exc
+        spec = resolved.services.embedded_retrieval
+        if spec is None:
+            served: set[str] | None = None
+        elif spec == "all":
+            served = set(manifest)
+        else:
+            served = {name.strip() for name in spec.split(",")} & set(manifest)
+        datasets = []
+        for name, entry in sorted(manifest.items()):
+            # An entry is a dict, or just a path in hand-written manifests.
+            entry = entry if isinstance(entry, dict) else {"path": entry}
+            path = entry.get("path")
+            datasets.append(
+                {
+                    "name": name,
+                    "path": path,
+                    "docs": entry.get("docs"),
+                    "domain": entry.get("domain"),
+                    "source": entry.get("source") or name,
+                    "available": bool(path) and os.path.exists(path),
+                    "served": None if served is None else name in served,
+                }
+            )
+        return datasets
 
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str, http_request: Request) -> ChatSessionView:
