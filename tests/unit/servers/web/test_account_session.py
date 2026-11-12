@@ -73,6 +73,7 @@ def test_account_pages_serve_public_shell_at_exact_paths(client, path):
         "/space/sources",
         "/space/tools",
         "/space/datasets",
+        "/space/datasets/demo",
     ],
 )
 def test_space_pages_serve_the_shell(client, path):
