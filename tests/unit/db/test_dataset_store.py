@@ -123,4 +123,6 @@ def test_tracks_an_upload_batch_per_file(store):
         ("completed", 3, None),
         ("error", 0, "Line 2: bad"),
     ]
-    assert store.list_dataset_upload_batch(store.create_dataset("other").id, batch) == []
+    assert (
+        store.list_dataset_upload_batch(store.create_dataset("other").id, batch) == []
+    )
