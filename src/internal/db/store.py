@@ -19,6 +19,7 @@ from .models import (
     ChatMessageRecord,
     ChatSessionRecord,
     DatasetDocumentRecord,
+    DatasetQueryRecord,
     DatasetRecord,
     DatasetUploadRecord,
     GroupRecord,
@@ -223,7 +224,7 @@ class AgenticSearchStore:
 
     #: The schema this build writes. Version 1 is everything _init_schema
     #: produces; later versions come from _MIGRATIONS. See _ensure_schema.
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
     _MIGRATIONS: dict[int, Migration] = {
         # Managed knowledge-base datasets and their documents.
         2: Migration(
@@ -280,6 +281,24 @@ class AgenticSearchStore:
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_dataset_uploads_batch "
                 "ON dataset_uploads (dataset_id, batch, position)",
+            ),
+            breaks_older_readers=False,
+        ),
+        # Search-test queries, by dataset name so unmanaged corpora have them too.
+        4: Migration(
+            statements=(
+                """
+                CREATE TABLE IF NOT EXISTS dataset_queries (
+                    id TEXT PRIMARY KEY,
+                    dataset_name TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    top_k INTEGER NOT NULL,
+                    result_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_dataset_queries_name "
+                "ON dataset_queries (dataset_name, created_at)",
             ),
             breaks_older_readers=False,
         ),
@@ -1481,6 +1500,54 @@ class AgenticSearchStore:
                 document_count=int(row["document_count"]),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    def add_dataset_query(
+        self, dataset_name: str, query: str, *, top_k: int, result_count: int
+    ) -> DatasetQueryRecord:
+        record = DatasetQueryRecord(
+            id=_new_id("dsq"),
+            dataset_name=dataset_name,
+            query=query,
+            top_k=top_k,
+            result_count=result_count,
+            created_at=_now(),
+        )
+        self._conn.execute(
+            "INSERT INTO dataset_queries "
+            "(id, dataset_name, query, top_k, result_count, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record.id,
+                record.dataset_name,
+                record.query,
+                record.top_k,
+                record.result_count,
+                record.created_at,
+            ),
+        )
+        self._conn.commit()
+        return record
+
+    def list_dataset_queries(
+        self, dataset_name: str, *, limit: int = 20
+    ) -> list[DatasetQueryRecord]:
+        """Newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM dataset_queries WHERE dataset_name = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (dataset_name, limit),
+        ).fetchall()
+        return [
+            DatasetQueryRecord(
+                id=row["id"],
+                dataset_name=row["dataset_name"],
+                query=row["query"],
+                top_k=int(row["top_k"]),
+                result_count=int(row["result_count"]),
+                created_at=row["created_at"],
             )
             for row in rows
         ]

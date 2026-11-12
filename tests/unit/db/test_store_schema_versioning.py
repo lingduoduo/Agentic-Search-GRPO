@@ -64,7 +64,7 @@ V1 = _store_class(1, {})
 def test_a_new_database_is_stamped_at_the_current_version(tmp_path):
     path = tmp_path / "s.sqlite3"
     AgenticSearchStore(path).close()
-    assert _version(path) == AgenticSearchStore.SCHEMA_VERSION == 3
+    assert _version(path) == AgenticSearchStore.SCHEMA_VERSION == 4
     assert _min_reader(path) == 1  # every real migration so far is additive
 
 
@@ -103,6 +103,9 @@ def test_the_dataset_migrations_upgrade_a_v1_database(tmp_path):
         path, "dataset_documents"
     )
     assert {"batch", "status", "document_count"} <= _columns(path, "dataset_uploads")
+    assert {"dataset_name", "query", "result_count"} <= _columns(
+        path, "dataset_queries"
+    )
     assert _min_reader(path) == 1  # additive: a v1 build can still read it
 
 

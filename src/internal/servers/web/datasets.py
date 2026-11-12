@@ -24,6 +24,7 @@ import math
 import os
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 
 from fastapi import (
@@ -146,6 +147,33 @@ class DocumentBatchView(BaseModel):
     files: list[UploadFileView]
     # Every file is completed or error.
     done: bool
+
+
+class HitRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class HitResult(BaseModel):
+    id: str | None
+    title: str | None
+    contents: str | None
+    source: str | None
+    score: float
+
+
+class HitResponse(BaseModel):
+    query: str
+    top_k: int
+    results: list[HitResult]
+    latency_ms: float
+
+
+class DatasetQueryView(BaseModel):
+    query: str
+    top_k: int
+    result_count: int
+    created_at: str | None
 
 
 def _batch_view(uploads: list[DatasetUploadRecord]) -> DocumentBatchView:
@@ -570,6 +598,91 @@ def create_datasets_router(
         if not uploads:
             raise HTTPException(status_code=404, detail="Upload batch not found.")
         return _batch_view(uploads)
+
+    def searchable_documents(name: str) -> tuple[list[dict], str]:
+        """The documents search would see, in corpus form, and the label."""
+        record = store.get_dataset_by_name(name)
+        if record is not None:
+            documents = [
+                {
+                    "id": doc.doc_id or doc.id,
+                    "title": doc.title,
+                    "contents": doc.contents,
+                    "metadata": doc.metadata,
+                }
+                for doc in store.enabled_dataset_documents(record.id)
+            ]
+            return documents, record.source or name
+        current = dataset(name)
+        if not current.available or current.path is None:
+            raise HTTPException(status_code=409, detail=FILE_MISSING)
+        return _read_jsonl(current.path), current.source
+
+    @router.post("/{name}/hit", response_model=HitResponse)
+    def hit(name: str, body: HitRequest) -> HitResponse:
+        """Search this dataset alone with the TF-IDF retriever, and log the query.
+
+        The index is built from the dataset's documents for this request, so it
+        answers for this dataset whatever the retrieval server is serving.
+        """
+        query = body.query.strip()
+        if not query:
+            raise HTTPException(status_code=422, detail="Enter a query.")
+        documents, label = searchable_documents(name)
+        if not documents:
+            raise HTTPException(
+                status_code=409, detail="This dataset has no enabled documents."
+            )
+        # Imported here so the web app does not load scikit-learn until used.
+        from src.internal.servers.retrieval.demo import TfidfRetriever
+
+        started = time.perf_counter()
+        try:
+            rows = TfidfRetriever.from_docs(documents).retrieve(
+                [query], topk=body.top_k
+            )[0]
+        except ValueError as exc:
+            # TF-IDF found no terms to index (e.g. only stop words).
+            raise HTTPException(
+                status_code=409, detail="Nothing in this dataset can be searched."
+            ) from exc
+        latency_ms = (time.perf_counter() - started) * 1000
+        results = []
+        for row in rows:
+            doc = row["document"]
+            meta = doc.get("metadata") or {}
+            results.append(
+                HitResult(
+                    id=None if doc.get("id") is None else str(doc["id"]),
+                    title=doc.get("title") or None,
+                    contents=doc.get("text"),
+                    source=meta.get("source") or label,
+                    score=round(float(row["score"]), 4),
+                )
+            )
+        store.add_dataset_query(
+            name, query, top_k=body.top_k, result_count=len(results)
+        )
+        return HitResponse(
+            query=query,
+            top_k=body.top_k,
+            results=results,
+            latency_ms=round(latency_ms, 1),
+        )
+
+    @router.get("/{name}/queries", response_model=list[DatasetQueryView])
+    def recent_queries(name: str) -> list[DatasetQueryView]:
+        """The latest search-test queries, newest first."""
+        dataset(name)  # 404 for an unknown dataset
+        return [
+            DatasetQueryView(
+                query=q.query,
+                top_k=q.top_k,
+                result_count=q.result_count,
+                created_at=q.created_at,
+            )
+            for q in store.list_dataset_queries(name)
+        ]
 
     @router.get("/{name}/documents/{document_id}", response_model=DatasetDocumentView)
     def get_document(name: str, document_id: str) -> DatasetDocumentView:

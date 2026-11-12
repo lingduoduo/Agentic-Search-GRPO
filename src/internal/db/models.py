@@ -158,6 +158,18 @@ class DatasetUploadRecord:
 
 
 @dataclass(slots=True)
+class DatasetQueryRecord:
+    """A search-test query run against a dataset (by name, managed or not)."""
+
+    id: str
+    dataset_name: str
+    query: str
+    top_k: int
+    result_count: int
+    created_at: str | None = None
+
+
+@dataclass(slots=True)
 class HookRecord:
     """Persisted configuration for an outbound webhook."""
 

@@ -415,3 +415,79 @@ def test_a_failed_upload_changes_nothing_in_search(admin, files):
     _upload(admin, "kb", ("broken.jsonl", b"{not json"))
 
     assert files["export"]("kb").stat().st_mtime_ns == before
+
+
+# --- search test and recent queries ----------------------------------------
+
+
+def test_searches_an_unmanaged_corpus_and_logs_the_query(admin):
+    response = admin.post(
+        "/api/datasets/legacy/hit", json={"query": " sparse ranking ", "top_k": 3}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"] == "sparse ranking"
+    assert body["top_k"] == 3
+    assert body["latency_ms"] >= 0
+    [top] = body["results"]  # the other document shares no terms
+    assert top["id"] == "doc_002"
+    assert top["title"] == "BM25"
+    assert top["contents"] == "Sparse ranking."
+    assert top["source"] == "Legacy KB"  # the corpus label, as at search time
+    assert 0 < top["score"] <= 1
+    recent = admin.get("/api/datasets/legacy/queries").json()
+    assert [(q["query"], q["top_k"], q["result_count"]) for q in recent] == [
+        ("sparse ranking", 3, 1)
+    ]
+
+
+def test_a_managed_dataset_is_searched_without_its_disabled_documents(admin):
+    admin.post("/api/datasets/legacy/import")
+    vectors = _documents(admin, "legacy")[0]["document_id"]
+    admin.patch(f"/api/datasets/legacy/documents/{vectors}", json={"enabled": False})
+
+    hits = admin.post("/api/datasets/legacy/hit", json={"query": "vectors"}).json()
+
+    assert hits["results"] == []
+    ranking = admin.post("/api/datasets/legacy/hit", json={"query": "ranking"})
+    assert [r["id"] for r in ranking.json()["results"]] == ["doc_002"]
+
+
+def test_recent_queries_are_newest_first(admin):
+    for query in ("first", "second"):
+        admin.post("/api/datasets/legacy/hit", json={"query": query})
+
+    recent = admin.get("/api/datasets/legacy/queries").json()
+
+    assert [q["query"] for q in recent] == ["second", "first"]
+    assert all(q["result_count"] == 0 for q in recent)
+
+
+def test_hit_refuses_what_cannot_be_searched(admin):
+    admin.post("/api/datasets", json={"name": "kb"})
+
+    empty = admin.post("/api/datasets/kb/hit", json={"query": "x"})
+    assert empty.status_code == 409
+    assert empty.json()["detail"] == "This dataset has no enabled documents."
+    gone = admin.post("/api/datasets/gone/hit", json={"query": "x"})
+    assert gone.status_code == 409
+    assert admin.post("/api/datasets/nope/hit", json={"query": "x"}).status_code == 404
+    assert (
+        admin.post("/api/datasets/legacy/hit", json={"query": "  "}).status_code == 422
+    )
+    assert admin.post("/api/datasets/legacy/hit", json={"query": ""}).status_code == 422
+    too_many = admin.post("/api/datasets/legacy/hit", json={"query": "x", "top_k": 21})
+    assert too_many.status_code == 422
+    assert admin.get("/api/datasets/nope/queries").status_code == 404
+    assert admin.get("/api/datasets/kb/queries").json() == []
+
+
+def test_a_dataset_of_stop_words_cannot_be_searched(admin):
+    admin.post("/api/datasets", json={"name": "kb"})
+    _upload(admin, "kb", ("a.jsonl", b'{"contents": "the and of"}\n'))
+
+    response = admin.post("/api/datasets/kb/hit", json={"query": "the"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Nothing in this dataset can be searched."

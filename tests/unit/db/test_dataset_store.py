@@ -126,3 +126,16 @@ def test_tracks_an_upload_batch_per_file(store):
     assert (
         store.list_dataset_upload_batch(store.create_dataset("other").id, batch) == []
     )
+
+
+def test_records_search_test_queries_newest_first_per_dataset(store):
+    store.add_dataset_query("kb", "first", top_k=5, result_count=2)
+    store.add_dataset_query("other", "elsewhere", top_k=5, result_count=0)
+    second = store.add_dataset_query("kb", "second", top_k=3, result_count=1)
+
+    recent = store.list_dataset_queries("kb")
+
+    assert [q.query for q in recent] == ["second", "first"]
+    assert (recent[0].top_k, recent[0].result_count) == (3, 1)
+    assert recent[0].created_at == second.created_at
+    assert [q.query for q in store.list_dataset_queries("kb", limit=1)] == ["second"]
