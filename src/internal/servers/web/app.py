@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
@@ -523,6 +523,16 @@ def _ranking_metadata(
     }
 
 
+class _SwappableRetriever:
+    """Forwards to ``engine``, which a rebuild replaces in one assignment."""
+
+    def __init__(self, engine: Any) -> None:
+        self.engine = engine
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.engine, name)
+
+
 def _register_routers(
     app: FastAPI,
     db: AgenticSearchStore,
@@ -534,6 +544,7 @@ def _register_routers(
     memory_compression_direct: bool = False,
     memory_auto_curate: bool = False,
     memory_history_tokens: int | None = None,
+    reload_retrieval: Callable[[], None] | None = None,
 ) -> None:
     """Attach all API routers and exception handlers to *app*."""
 
@@ -569,7 +580,7 @@ def _register_routers(
     app.include_router(create_query_history_router(db, settings))
 
     app.include_router(create_tools_router(settings))
-    app.include_router(create_datasets_router(settings))
+    app.include_router(create_datasets_router(settings, db, reload_retrieval))
 
     # --- Users & groups ---
     app.include_router(create_user_group_router(db, settings))
@@ -1727,9 +1738,19 @@ def create_web_app(
             create_app as create_retrieval_app,
         )
 
-        retriever = TfidfRetriever.from_docs(
-            resolve_corpus_docs(resolved.services.embedded_retrieval)
-        )
+        embedded_spec = resolved.services.embedded_retrieval
+
+        def build_retriever() -> TfidfRetriever:
+            return TfidfRetriever.from_docs(resolve_corpus_docs(embedded_spec))
+
+        # The routes hold this proxy, so a dataset change can swap in a rebuilt
+        # index (see reload_retrieval) without remounting them.
+        retriever = _SwappableRetriever(build_retriever())
+
+        def reload_retrieval() -> None:
+            retriever.engine = build_retriever()
+            logger.info("Rebuilt in-process retrieval (corpus: %s)", embedded_spec)
+
         # Only its API routes (/retrieve, /health), not its /docs pages, and
         # only for same-host callers, as the standalone server binds 127.0.0.1.
         retrieval_routes = APIRouter()
@@ -1749,6 +1770,9 @@ def create_web_app(
             resolved.services.embedded_retrieval,
         )
 
+    else:
+        reload_retrieval = None
+
     _register_routers(
         app,
         db,
@@ -1760,6 +1784,7 @@ def create_web_app(
         memory_compression_direct=settings.memory_compression_direct,
         memory_auto_curate=settings.memory_auto_curate,
         memory_history_tokens=settings.memory_history_tokens,
+        reload_retrieval=reload_retrieval,
     )
 
     frontend_dist = _frontend_dist_path()

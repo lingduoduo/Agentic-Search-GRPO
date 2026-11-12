@@ -6,6 +6,7 @@ from src.internal.servers.retrieval.corpus_registry import (
     load_manifest,
     register_corpus,
     resolve_corpus_docs,
+    unregister_corpus,
 )
 from src.internal.servers.retrieval.demo import TfidfRetriever
 
@@ -238,3 +239,31 @@ def test_register_corpus_reports_a_manifest_it_cannot_parse(tmp_path):
 
     # The user's file is left exactly as it was, for them to fix.
     assert path.read_text() == "{not json"
+
+
+def test_unregister_corpus_removes_only_that_entry(tmp_path):
+    manifest_path = str(tmp_path / "corpora.json")
+    register_corpus(
+        "a", corpus_path="a.jsonl", doc_count=1, manifest_path=manifest_path
+    )
+    register_corpus(
+        "b", corpus_path="b.jsonl", doc_count=2, manifest_path=manifest_path
+    )
+
+    assert unregister_corpus("a", manifest_path=manifest_path)
+
+    assert set(load_manifest(manifest_path)) == {"b"}
+    assert not unregister_corpus("a", manifest_path=manifest_path)
+
+
+def test_unregister_corpus_without_a_manifest_is_a_no_op(tmp_path):
+    assert not unregister_corpus("a", manifest_path=str(tmp_path / "none.json"))
+
+
+def test_unregister_corpus_reports_a_manifest_it_cannot_parse(tmp_path):
+    manifest_path = tmp_path / "corpora.json"
+    manifest_path.write_text("{not json")
+
+    with pytest.raises(ValueError, match="could not be parsed"):
+        unregister_corpus("a", manifest_path=str(manifest_path))
+    assert manifest_path.read_text() == "{not json"

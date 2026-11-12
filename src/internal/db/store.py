@@ -18,6 +18,8 @@ from uuid import uuid4
 from .models import (
     ChatMessageRecord,
     ChatSessionRecord,
+    DatasetDocumentRecord,
+    DatasetRecord,
     GroupRecord,
     HookRecord,
     MemoryIndexNodeRecord,
@@ -220,8 +222,44 @@ class AgenticSearchStore:
 
     #: The schema this build writes. Version 1 is everything _init_schema
     #: produces; later versions come from _MIGRATIONS. See _ensure_schema.
-    SCHEMA_VERSION = 1
-    _MIGRATIONS: dict[int, Migration] = {}
+    SCHEMA_VERSION = 2
+    _MIGRATIONS: dict[int, Migration] = {
+        # Managed knowledge-base datasets and their documents.
+        2: Migration(
+            statements=(
+                """
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL DEFAULT '',
+                    domain TEXT,
+                    source TEXT,
+                    imported_from TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS dataset_documents (
+                    id TEXT PRIMARY KEY,
+                    dataset_id TEXT NOT NULL
+                        REFERENCES datasets(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    doc_id TEXT,
+                    title TEXT,
+                    contents TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_dataset_documents_dataset "
+                "ON dataset_documents (dataset_id, position)",
+            ),
+            breaks_older_readers=False,
+        ),
+    }
 
     def _ensure_schema(self) -> None:
         """Bring the database to SCHEMA_VERSION, or refuse one this build cannot
@@ -1173,6 +1211,233 @@ class AgenticSearchStore:
         cursor = self._conn.execute("DELETE FROM hooks WHERE id = ?", (hook_id,))
         self._conn.commit()
         return cursor.rowcount > 0
+
+    # --- Managed datasets -------------------------------------------------
+
+    def create_dataset(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        domain: str | None = None,
+        source: str | None = None,
+        imported_from: str | None = None,
+    ) -> DatasetRecord:
+        """Raises sqlite3.IntegrityError when *name* is taken."""
+        now = _now()
+        dataset_id = _new_id("ds")
+        self._conn.execute(
+            """
+            INSERT INTO datasets
+                (id, name, description, domain, source, imported_from,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (dataset_id, name, description, domain, source, imported_from, now, now),
+        )
+        self._conn.commit()
+        return self.get_dataset_by_name(name)  # type: ignore[return-value]
+
+    def get_dataset_by_name(self, name: str) -> DatasetRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM datasets WHERE name = ?", (name,)
+        ).fetchone()
+        return self._row_to_dataset(row) if row else None
+
+    def list_datasets(self) -> list[DatasetRecord]:
+        rows = self._conn.execute("SELECT * FROM datasets ORDER BY name").fetchall()
+        return [self._row_to_dataset(row) for row in rows]
+
+    def update_dataset(self, dataset_id: str, **fields: str | None) -> bool:
+        """Set any of description, domain and source; others stay as they are."""
+        allowed = {"description", "domain", "source"}
+        changes = {k: v for k, v in fields.items() if k in allowed}
+        if not changes:
+            return self._dataset_exists(dataset_id)
+        assignments = ", ".join(f"{column} = ?" for column in changes)
+        cursor = self._conn.execute(
+            f"UPDATE datasets SET {assignments}, updated_at = ? WHERE id = ?",
+            (*changes.values(), _now(), dataset_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_dataset(self, dataset_id: str) -> bool:
+        """Deletes the dataset and, by cascade, its documents."""
+        cursor = self._conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def add_dataset_documents(
+        self, dataset_id: str, documents: Iterable[dict[str, Any]]
+    ) -> int:
+        """Append corpus-format documents ({id, title, contents, metadata})."""
+        now = _now()
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(position), -1) FROM dataset_documents "
+            "WHERE dataset_id = ?",
+            (dataset_id,),
+        ).fetchone()
+        position = int(row[0]) + 1
+        rows = []
+        for doc in documents:
+            doc_id = doc.get("id")
+            rows.append(
+                (
+                    _new_id("doc"),
+                    dataset_id,
+                    position,
+                    None if doc_id is None else str(doc_id),
+                    doc.get("title"),
+                    doc.get("contents", doc.get("text")),
+                    _json_dumps(doc.get("metadata")),
+                    now,
+                    now,
+                )
+            )
+            position += 1
+        self._conn.executemany(
+            """
+            INSERT INTO dataset_documents
+                (id, dataset_id, position, doc_id, title, contents, metadata_json,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        self._touch_dataset(dataset_id, now)
+        self._conn.commit()
+        return len(rows)
+
+    def count_dataset_documents(self, dataset_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM dataset_documents WHERE dataset_id = ?",
+            (dataset_id,),
+        ).fetchone()
+        return int(row[0])
+
+    def list_dataset_documents(
+        self,
+        dataset_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        search_word: str = "",
+    ) -> tuple[list[DatasetDocumentRecord], int]:
+        """A page of documents in position order, and the total that match.
+        ``search_word`` matches title or contents, ignoring case."""
+        where = "dataset_id = ?"
+        params: list[Any] = [dataset_id]
+        word = search_word.strip().lower()
+        if word:
+            where += (
+                " AND (instr(lower(COALESCE(title, '')), ?) > 0"
+                " OR instr(lower(COALESCE(contents, '')), ?) > 0)"
+            )
+            params += [word, word]
+        total = self._conn.execute(
+            f"SELECT COUNT(*) FROM dataset_documents WHERE {where}", params
+        ).fetchone()[0]
+        rows = self._conn.execute(
+            f"SELECT * FROM dataset_documents WHERE {where} "
+            "ORDER BY position LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        return [self._row_to_dataset_document(row) for row in rows], int(total)
+
+    def enabled_dataset_documents(self, dataset_id: str) -> list[DatasetDocumentRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM dataset_documents WHERE dataset_id = ? AND enabled = 1 "
+            "ORDER BY position",
+            (dataset_id,),
+        ).fetchall()
+        return [self._row_to_dataset_document(row) for row in rows]
+
+    def get_dataset_document(
+        self, dataset_id: str, document_id: str
+    ) -> DatasetDocumentRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM dataset_documents WHERE dataset_id = ? AND id = ?",
+            (dataset_id, document_id),
+        ).fetchone()
+        return self._row_to_dataset_document(row) if row else None
+
+    def update_dataset_document(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        title: str | None = None,
+        enabled: bool | None = None,
+    ) -> bool:
+        """Rename and/or enable a document; None leaves a field unchanged."""
+        changes: dict[str, Any] = {}
+        if title is not None:
+            changes["title"] = title
+        if enabled is not None:
+            changes["enabled"] = int(enabled)
+        if not changes:
+            return self.get_dataset_document(dataset_id, document_id) is not None
+        now = _now()
+        assignments = ", ".join(f"{column} = ?" for column in changes)
+        cursor = self._conn.execute(
+            f"UPDATE dataset_documents SET {assignments}, updated_at = ? "
+            "WHERE dataset_id = ? AND id = ?",
+            (*changes.values(), now, dataset_id, document_id),
+        )
+        if cursor.rowcount:
+            self._touch_dataset(dataset_id, now)
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_dataset_document(self, dataset_id: str, document_id: str) -> bool:
+        cursor = self._conn.execute(
+            "DELETE FROM dataset_documents WHERE dataset_id = ? AND id = ?",
+            (dataset_id, document_id),
+        )
+        if cursor.rowcount:
+            self._touch_dataset(dataset_id, _now())
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def _dataset_exists(self, dataset_id: str) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM datasets WHERE id = ?", (dataset_id,)
+            ).fetchone()
+            is not None
+        )
+
+    def _touch_dataset(self, dataset_id: str, now: str) -> None:
+        self._conn.execute(
+            "UPDATE datasets SET updated_at = ? WHERE id = ?", (now, dataset_id)
+        )
+
+    def _row_to_dataset(self, row: sqlite3.Row) -> DatasetRecord:
+        return DatasetRecord(
+            id=row["id"],
+            name=row["name"],
+            description=row["description"],
+            domain=row["domain"],
+            source=row["source"],
+            imported_from=row["imported_from"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _row_to_dataset_document(self, row: sqlite3.Row) -> DatasetDocumentRecord:
+        return DatasetDocumentRecord(
+            id=row["id"],
+            dataset_id=row["dataset_id"],
+            position=int(row["position"]),
+            doc_id=row["doc_id"],
+            title=row["title"],
+            contents=row["contents"],
+            metadata=json.loads(row["metadata_json"] or "{}"),
+            enabled=bool(row["enabled"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def _row_to_hook(self, row: sqlite3.Row) -> HookRecord:
         is_reachable_raw = row["is_reachable"]

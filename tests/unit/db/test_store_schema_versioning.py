@@ -53,6 +53,10 @@ RESHAPE = Migration(
     breaks_older_readers=True,
 )
 
+# A build at the v1 baseline, so the upgrade and rollback cases below do not
+# depend on how many real migrations this build carries.
+V1 = _store_class(1, {})
+
 
 # --- stamping --------------------------------------------------------------
 
@@ -60,13 +64,14 @@ RESHAPE = Migration(
 def test_a_new_database_is_stamped_at_the_current_version(tmp_path):
     path = tmp_path / "s.sqlite3"
     AgenticSearchStore(path).close()
-    assert _version(path) == AgenticSearchStore.SCHEMA_VERSION == 1
-    assert _min_reader(path) == 1
+    assert _version(path) == AgenticSearchStore.SCHEMA_VERSION == 2
+    assert _min_reader(path) == 1  # every real migration so far is additive
 
 
 def test_an_in_memory_store_opens_at_the_current_version():
     store = AgenticSearchStore(":memory:")
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    version = store._conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == AgenticSearchStore.SCHEMA_VERSION
     store.close()
 
 
@@ -82,8 +87,22 @@ def test_a_legacy_unversioned_database_is_stamped_and_keeps_its_rows(tmp_path):
     store = AgenticSearchStore(path)
     assert store.get_user("alice") is not None
     store.close()
-    assert _version(path) == 1
+    assert _version(path) == AgenticSearchStore.SCHEMA_VERSION
     assert _min_reader(path) == 1
+
+
+def test_the_datasets_migration_upgrades_a_v1_database(tmp_path):
+    path = tmp_path / "s.sqlite3"
+    V1(path).close()
+
+    AgenticSearchStore(path).close()
+
+    assert _version(path) == 2
+    assert {"id", "name", "description"} <= _columns(path, "datasets")
+    assert {"dataset_id", "enabled", "metadata_json"} <= _columns(
+        path, "dataset_documents"
+    )
+    assert _min_reader(path) == 1  # additive: a v1 build can still read it
 
 
 # --- upgrades --------------------------------------------------------------
@@ -91,7 +110,7 @@ def test_a_legacy_unversioned_database_is_stamped_and_keeps_its_rows(tmp_path):
 
 def test_migrations_apply_in_order(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
 
     v3 = _store_class(3, {2: ADD_NICKNAME, 3: ADD_AUDIT_TABLE})
     v3(path).close()
@@ -104,7 +123,7 @@ def test_migrations_apply_in_order(tmp_path):
 
 def test_a_breaking_migration_raises_the_min_reader(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
 
     _store_class(3, {2: ADD_NICKNAME, 3: RESHAPE})(path).close()
 
@@ -114,7 +133,7 @@ def test_a_breaking_migration_raises_the_min_reader(tmp_path):
 
 def test_a_failed_migration_stops_at_the_last_good_version(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
     broken = Migration(
         statements=(
             "CREATE TABLE half_done (id TEXT)",
@@ -135,7 +154,7 @@ def test_a_failed_migration_stops_at_the_last_good_version(tmp_path):
 
 def test_a_gap_in_the_migrations_raises(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
 
     with pytest.raises(RuntimeError, match="migration to schema v2"):
         _store_class(3, {3: ADD_AUDIT_TABLE})(path)
@@ -147,10 +166,10 @@ def test_a_gap_in_the_migrations_raises(tmp_path):
 
 def test_an_older_build_opens_a_compatible_newer_database_read_only(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
     _store_class(3, {2: ADD_NICKNAME, 3: ADD_AUDIT_TABLE})(path).close()
 
-    store = AgenticSearchStore(path)  # rolled back to a v1 build
+    store = V1(path)  # rolled back to a v1 build
     store.upsert_user(UserRecord(id="bob"))
     assert store.get_user("bob") is not None
     store.close()
@@ -161,11 +180,11 @@ def test_an_older_build_opens_a_compatible_newer_database_read_only(tmp_path):
 
 def test_an_older_build_refuses_a_database_it_cannot_read(tmp_path):
     path = tmp_path / "s.sqlite3"
-    AgenticSearchStore(path).close()
+    V1(path).close()
     _store_class(3, {2: ADD_NICKNAME, 3: RESHAPE})(path).close()
 
     with pytest.raises(SchemaVersionError, match="schema >= 3"):
-        AgenticSearchStore(path)
+        V1(path)
     assert _version(path) == 3
 
 
@@ -184,7 +203,7 @@ def test_a_new_database_on_a_later_build_runs_every_migration(tmp_path):
 def test_a_failed_step_leaves_nothing_behind_on_a_live_connection(tmp_path):
     """The step itself is atomic -- not just because the constructor closes
     the connection on failure. Pins both BEGIN and ROLLBACK."""
-    store = AgenticSearchStore(tmp_path / "s.sqlite3")
+    store = V1(tmp_path / "s.sqlite3")
 
     with pytest.raises(sqlite3.OperationalError):
         store._apply_step(
