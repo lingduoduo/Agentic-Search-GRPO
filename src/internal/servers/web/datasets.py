@@ -26,15 +26,34 @@ import sqlite3
 import threading
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
 from src.internal.configs import AppSettings
 from src.internal.db import AgenticSearchStore
-from src.internal.db.models import DatasetDocumentRecord, DatasetRecord
+from src.internal.db.models import (
+    DatasetDocumentRecord,
+    DatasetRecord,
+    DatasetUploadRecord,
+)
 from src.internal.servers._auth import make_require_admin
 from src.internal.servers.retrieval import corpus_registry
 from src.internal.servers.tools.api import Paginator
+from src.internal.servers.web.dataset_files import (
+    ALLOWED_EXTENSIONS,
+    UploadError,
+    extension,
+    parse_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +65,10 @@ DATASETS_DIR = "data/datasets"
 NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 
 FILE_MISSING = "The dataset's file is missing on the server."
+
+#: Upload limits, checked before anything is stored.
+MAX_UPLOAD_FILES = 20
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 class DatasetView(BaseModel):
@@ -108,6 +131,37 @@ class UpdateDatasetRequest(BaseModel):
 class UpdateDocumentRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
     enabled: bool | None = None
+
+
+class UploadFileView(BaseModel):
+    filename: str
+    # waiting -> parsing -> completed | error
+    status: str
+    error: str | None
+    document_count: int
+
+
+class DocumentBatchView(BaseModel):
+    batch: str
+    files: list[UploadFileView]
+    # Every file is completed or error.
+    done: bool
+
+
+def _batch_view(uploads: list[DatasetUploadRecord]) -> DocumentBatchView:
+    return DocumentBatchView(
+        batch=uploads[0].batch,
+        files=[
+            UploadFileView(
+                filename=u.filename,
+                status=u.status,
+                error=u.error,
+                document_count=u.document_count,
+            )
+            for u in uploads
+        ],
+        done=all(u.status in ("completed", "error") for u in uploads),
+    )
 
 
 def _page(items: list, current_page: int, page_size: int) -> tuple[list, Paginator]:
@@ -441,6 +495,81 @@ def create_datasets_router(
             )
         items, paginator = _page(documents, current_page, page_size)
         return DatasetDocumentPage(list=items, paginator=paginator)
+
+    def process_uploads(
+        dataset_id: str, name: str, files: list[tuple[str, str, bytes]]
+    ) -> None:
+        """Parse each file into documents, then publish the dataset once."""
+        added = 0
+        for upload_id, filename, data in files:
+            store.set_dataset_upload_status(upload_id, "parsing")
+            try:
+                documents = parse_upload(filename, data)
+                store.add_dataset_documents(dataset_id, documents)
+            except UploadError as exc:
+                store.set_dataset_upload_status(upload_id, "error", error=str(exc))
+                continue
+            except Exception:
+                logger.exception("Processing upload %r for %r failed", filename, name)
+                store.set_dataset_upload_status(
+                    upload_id, "error", error="The file could not be processed."
+                )
+                continue
+            store.set_dataset_upload_status(
+                upload_id, "completed", document_count=len(documents)
+            )
+            added += len(documents)
+        record = store.get_dataset_by_name(name)
+        # The dataset may have been deleted while the files were processed.
+        if added and record is not None and record.id == dataset_id:
+            publish(record)
+
+    @router.post("/{name}/documents", response_model=DocumentBatchView, status_code=202)
+    async def upload_documents(
+        name: str,
+        background: BackgroundTasks,
+        files: list[UploadFile] = File(...),
+    ) -> DocumentBatchView:
+        """Accept files and process them in the background; poll the batch."""
+        record = managed(name)
+        if len(files) > MAX_UPLOAD_FILES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Upload at most {MAX_UPLOAD_FILES} files at a time.",
+            )
+        received: list[tuple[str, bytes]] = []
+        for upload in files:
+            filename = os.path.basename(upload.filename or "") or "upload"
+            if extension(filename) not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{filename}: use .jsonl, .txt or .md files.",
+                )
+            data = await upload.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"{filename} is over the 10 MB limit.",
+                )
+            received.append((filename, data))
+        uploads = store.create_dataset_upload_batch(
+            record.id, [filename for filename, _ in received]
+        )
+        background.add_task(
+            process_uploads,
+            record.id,
+            name,
+            [(u.id, f, d) for u, (f, d) in zip(uploads, received, strict=True)],
+        )
+        return _batch_view(uploads)
+
+    @router.get("/{name}/documents/batch/{batch}", response_model=DocumentBatchView)
+    def get_upload_batch(name: str, batch: str) -> DocumentBatchView:
+        record = managed(name)
+        uploads = store.list_dataset_upload_batch(record.id, batch)
+        if not uploads:
+            raise HTTPException(status_code=404, detail="Upload batch not found.")
+        return _batch_view(uploads)
 
     @router.get("/{name}/documents/{document_id}", response_model=DatasetDocumentView)
     def get_document(name: str, document_id: str) -> DatasetDocumentView:

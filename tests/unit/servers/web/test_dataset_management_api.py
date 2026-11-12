@@ -322,3 +322,96 @@ def test_a_failed_rebuild_keeps_the_change(monkeypatch, files):
 
     assert client.post("/api/datasets/legacy/import").status_code == 200
     assert client.get("/api/datasets/legacy").json()["managed"] is True
+
+
+# --- uploads ---------------------------------------------------------------
+
+
+def _upload(client, name, *files):
+    return client.post(
+        f"/api/datasets/{name}/documents",
+        files=[
+            ("files", (filename, data, "application/octet-stream"))
+            for filename, data in files
+        ],
+    )
+
+
+def test_uploads_files_in_a_batch_and_publishes_them(admin, files):
+    admin.post("/api/datasets", json={"name": "kb"})
+
+    response = _upload(
+        admin,
+        "kb",
+        ("notes.txt", b"Team notes about retrieval."),
+        ("docs.jsonl", b'{"id": "d1", "title": "BM25", "contents": "Sparse."}\n'),
+        ("broken.jsonl", b"{not json"),
+    )
+
+    assert response.status_code == 202
+    accepted = response.json()
+    assert [f["status"] for f in accepted["files"]] == ["waiting"] * 3
+    assert accepted["done"] is False
+    # The test client runs background tasks before returning, so it is done.
+    batch = admin.get(f"/api/datasets/kb/documents/batch/{accepted['batch']}").json()
+    assert batch["done"] is True
+    assert [
+        (f["filename"], f["status"], f["document_count"]) for f in batch["files"]
+    ] == [
+        ("notes.txt", "completed", 1),
+        ("docs.jsonl", "completed", 1),
+        ("broken.jsonl", "error", 0),
+    ]
+    assert batch["files"][2]["error"].startswith("Line 1: not valid JSON")
+    assert [d["title"] for d in _documents(admin, "kb")] == ["notes", "BM25"]
+    assert [d["id"] for d in _read(files["export"]("kb"))] == ["notes-1", "d1"]
+    assert _manifest(files)["kb"]["docs"] == 2
+
+
+def test_upload_rejects_bad_requests_before_storing_anything(admin, monkeypatch):
+    admin.post("/api/datasets", json={"name": "kb"})
+
+    wrong_type = _upload(admin, "kb", ("a.txt", b"ok"), ("b.pdf", b"%PDF"))
+    assert wrong_type.status_code == 422
+    assert wrong_type.json()["detail"] == "b.pdf: use .jsonl, .txt or .md files."
+
+    monkeypatch.setattr(datasets_api, "MAX_UPLOAD_BYTES", 4)
+    too_big = _upload(admin, "kb", ("a.txt", b"12345"))
+    assert too_big.status_code == 413
+
+    monkeypatch.setattr(datasets_api, "MAX_UPLOAD_FILES", 1)
+    too_many = _upload(admin, "kb", ("a.txt", b"1"), ("b.txt", b"2"))
+    assert too_many.status_code == 422
+
+    assert _documents(admin, "kb") == []
+
+
+def test_upload_needs_a_managed_dataset(admin):
+    assert _upload(admin, "legacy", ("a.txt", b"x")).status_code == 409
+    assert _upload(admin, "nope", ("a.txt", b"x")).status_code == 404
+
+
+def test_an_unknown_batch_is_not_found(admin):
+    admin.post("/api/datasets", json={"name": "kb"})
+
+    missing = admin.get("/api/datasets/kb/documents/batch/batch_nope")
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Upload batch not found."
+
+
+def test_a_batch_belongs_to_its_dataset(admin):
+    admin.post("/api/datasets", json={"name": "a"})
+    admin.post("/api/datasets", json={"name": "b"})
+    batch = _upload(admin, "a", ("x.txt", b"x")).json()["batch"]
+
+    assert admin.get(f"/api/datasets/b/documents/batch/{batch}").status_code == 404
+
+
+def test_a_failed_upload_changes_nothing_in_search(admin, files):
+    admin.post("/api/datasets", json={"name": "kb"})
+    before = files["export"]("kb").stat().st_mtime_ns
+
+    _upload(admin, "kb", ("broken.jsonl", b"{not json"))
+
+    assert files["export"]("kb").stat().st_mtime_ns == before

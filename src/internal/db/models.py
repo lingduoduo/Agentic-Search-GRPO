@@ -141,6 +141,23 @@ class DatasetDocumentRecord:
 
 
 @dataclass(slots=True)
+class DatasetUploadRecord:
+    """One file of an upload batch and how its processing went."""
+
+    id: str
+    dataset_id: str
+    batch: str
+    position: int
+    filename: str
+    # waiting -> parsing -> completed | error
+    status: str = "waiting"
+    error: str | None = None
+    document_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass(slots=True)
 class HookRecord:
     """Persisted configuration for an outbound webhook."""
 

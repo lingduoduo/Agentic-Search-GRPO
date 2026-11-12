@@ -20,6 +20,7 @@ from .models import (
     ChatSessionRecord,
     DatasetDocumentRecord,
     DatasetRecord,
+    DatasetUploadRecord,
     GroupRecord,
     HookRecord,
     MemoryIndexNodeRecord,
@@ -222,7 +223,7 @@ class AgenticSearchStore:
 
     #: The schema this build writes. Version 1 is everything _init_schema
     #: produces; later versions come from _MIGRATIONS. See _ensure_schema.
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     _MIGRATIONS: dict[int, Migration] = {
         # Managed knowledge-base datasets and their documents.
         2: Migration(
@@ -256,6 +257,29 @@ class AgenticSearchStore:
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_dataset_documents_dataset "
                 "ON dataset_documents (dataset_id, position)",
+            ),
+            breaks_older_readers=False,
+        ),
+        # Upload batches: one row per uploaded file and its processing status.
+        3: Migration(
+            statements=(
+                """
+                CREATE TABLE IF NOT EXISTS dataset_uploads (
+                    id TEXT PRIMARY KEY,
+                    dataset_id TEXT NOT NULL
+                        REFERENCES datasets(id) ON DELETE CASCADE,
+                    batch TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    document_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_dataset_uploads_batch "
+                "ON dataset_uploads (dataset_id, batch, position)",
             ),
             breaks_older_readers=False,
         ),
@@ -1399,6 +1423,67 @@ class AgenticSearchStore:
             self._touch_dataset(dataset_id, _now())
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def create_dataset_upload_batch(
+        self, dataset_id: str, filenames: list[str]
+    ) -> list[DatasetUploadRecord]:
+        """One waiting row per file, sharing a new batch id."""
+        now = _now()
+        batch = _new_id("batch")
+        rows = [
+            (_new_id("upl"), dataset_id, batch, i, filename, "waiting", now, now)
+            for i, filename in enumerate(filenames)
+        ]
+        self._conn.executemany(
+            """
+            INSERT INTO dataset_uploads
+                (id, dataset_id, batch, position, filename, status,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        self._conn.commit()
+        return self.list_dataset_upload_batch(dataset_id, batch)
+
+    def set_dataset_upload_status(
+        self,
+        upload_id: str,
+        status: str,
+        *,
+        error: str | None = None,
+        document_count: int = 0,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE dataset_uploads SET status = ?, error = ?, document_count = ?, "
+            "updated_at = ? WHERE id = ?",
+            (status, error, document_count, _now(), upload_id),
+        )
+        self._conn.commit()
+
+    def list_dataset_upload_batch(
+        self, dataset_id: str, batch: str
+    ) -> list[DatasetUploadRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM dataset_uploads WHERE dataset_id = ? AND batch = ? "
+            "ORDER BY position",
+            (dataset_id, batch),
+        ).fetchall()
+        return [
+            DatasetUploadRecord(
+                id=row["id"],
+                dataset_id=row["dataset_id"],
+                batch=row["batch"],
+                position=int(row["position"]),
+                filename=row["filename"],
+                status=row["status"],
+                error=row["error"],
+                document_count=int(row["document_count"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
 
     def _dataset_exists(self, dataset_id: str) -> bool:
         return (

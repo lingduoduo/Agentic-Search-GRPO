@@ -247,7 +247,7 @@ python3 -m examples.beir_to_corpus --dataset nfcorpus
 python3 -m src.internal.servers.retrieval.demo --corpus nfcorpus
 ```
 
-Admins can also manage datasets on the UI's `/space/datasets` pages (`/api/datasets`). A dataset created there, or a registered corpus imported there, keeps its documents in the API's SQLite store. Each change writes the enabled documents to `data/datasets/<name>.jsonl` and registers that file in `data/corpora.json` under the dataset's name, so `--corpus <name>` serves it. The in-process retriever (`AGENTIC_SEARCH_EMBEDDED_RETRIEVAL`) rebuilds right away; a separate retrieval server picks up changes when it restarts. Deleting an imported dataset registers its original file again.
+Admins can also manage datasets on the UI's `/space/datasets` pages (`/api/datasets`). A dataset created there, or a registered corpus imported there, keeps its documents in the API's SQLite store. Each change writes the enabled documents to `data/datasets/<name>.jsonl` and registers that file in `data/corpora.json` under the dataset's name, so `--corpus <name>` serves it. The in-process retriever (`AGENTIC_SEARCH_EMBEDDED_RETRIEVAL`) rebuilds right away; a separate retrieval server picks up changes when it restarts. Deleting an imported dataset registers its original file again. Documents are added by uploading `.jsonl` files (one document per line, as in a corpus file) or `.txt`/`.md` files (split into passages of about 300 words); uploads are processed in the background and `GET /api/datasets/{name}/documents/batch/{batch}` reports each file's status.
 
 **Optional services.** Start each in its own terminal, then set its variable on the API in step 2:
 
