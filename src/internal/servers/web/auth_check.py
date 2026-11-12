@@ -41,6 +41,7 @@ PUBLIC_ENDPOINT_SPECS: list[tuple[str, set[str]]] = [
     ("/space/sources", {"GET"}),
     ("/space/tools", {"GET"}),
     ("/space/datasets", {"GET"}),
+    ("/space/datasets/{name}", {"GET"}),
     ("/assets/app.css", {"GET"}),
     ("/assets/app.js", {"GET"}),
     ("/assets", {"GET", "HEAD"}),

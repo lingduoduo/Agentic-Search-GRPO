@@ -247,7 +247,7 @@ python3 -m examples.beir_to_corpus --dataset nfcorpus
 python3 -m src.internal.servers.retrieval.demo --corpus nfcorpus
 ```
 
-Admins can see the registered corpora on the UI's `/space/datasets` page, served by `GET /api/datasets`.
+Admins can see the registered corpora and browse their documents on the UI's `/space/datasets` pages, served by `GET /api/datasets` and `GET /api/datasets/{name}/documents`.
 
 **Optional services.** Start each in its own terminal, then set its variable on the API in step 2:
 
