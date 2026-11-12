@@ -88,6 +88,9 @@ def test_pages_registered_corpora_for_an_admin(monkeypatch, manifest):
                 "source": "demo",  # no label: falls back to the name
                 "available": True,
                 "served": None,  # a separate retrieval server answers
+                "managed": False,
+                "description": None,
+                "updated_at": None,
             },
             {
                 "name": "scifact",
@@ -97,6 +100,9 @@ def test_pages_registered_corpora_for_an_admin(monkeypatch, manifest):
                 "source": "SciFact Corpus",
                 "available": False,
                 "served": None,
+                "managed": False,
+                "description": None,
+                "updated_at": None,
             },
         ],
         "paginator": {
@@ -178,17 +184,23 @@ def test_pages_a_corpus_documents(monkeypatch, manifest):
         "list": [
             {
                 "id": "doc_001",
+                "document_id": None,
                 "title": "Dense Retrieval with FAISS",
                 "contents": "Dense retrieval encodes queries as vectors.",
                 "source": "Vector Search Docs",  # the document's own source wins
                 "acl": ["public"],
+                "enabled": True,
+                "updated_at": None,
             },
             {
                 "id": "2",  # ids are strings in the response
+                "document_id": None,
                 "title": "BM25",
                 "contents": "Sparse lexical ranking.",
                 "source": "demo",  # falls back to the corpus label
                 "acl": [],
+                "enabled": True,
+                "updated_at": None,
             },
         ],
         "paginator": {

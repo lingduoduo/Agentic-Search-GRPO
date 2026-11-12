@@ -109,6 +109,38 @@ class ChatMessageRecord:
 
 
 @dataclass(slots=True)
+class DatasetRecord:
+    """A managed knowledge-base dataset: a named corpus whose documents live in
+    the store and are exported to a registered .jsonl for the retrievers."""
+
+    id: str
+    name: str
+    description: str = ""
+    domain: str | None = None
+    source: str | None = None
+    # The corpus file it was imported from, registered again if it is deleted.
+    imported_from: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass(slots=True)
+class DatasetDocumentRecord:
+    """One document of a managed dataset; disabled documents are not exported."""
+
+    id: str
+    dataset_id: str
+    position: int
+    doc_id: str | None = None
+    title: str | None = None
+    contents: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    enabled: bool = True
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass(slots=True)
 class HookRecord:
     """Persisted configuration for an outbound webhook."""
 

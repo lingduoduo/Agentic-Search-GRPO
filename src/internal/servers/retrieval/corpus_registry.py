@@ -106,6 +106,32 @@ def register_corpus(
     return entry
 
 
+def unregister_corpus(name: str, *, manifest_path: str = DEFAULT_MANIFEST_PATH) -> bool:
+    """Remove *name* from the manifest; the corpus file is left alone.
+
+    Returns whether an entry was removed. Like :func:`register_corpus`, an
+    unparseable manifest is reported rather than overwritten.
+    """
+    if not os.path.exists(manifest_path):
+        return False
+    try:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Corpus manifest {manifest_path!r} could not be parsed: {exc}. "
+            f"It was left unchanged."
+        ) from exc
+    if name not in manifest:
+        return False
+    del manifest[name]
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+        f.write("\n")
+    logger.info("Unregistered corpus %r from %s", name, manifest_path)
+    return True
+
+
 def resolve_corpus_docs(spec: str, manifest: dict | None = None) -> list[dict]:
     # Imported here so reading the manifest (the web app's dataset list) does
     # not load scikit-learn through the demo server module.
