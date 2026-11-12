@@ -103,3 +103,26 @@ def test_deleting_a_dataset_deletes_its_documents(store):
 
     assert store.get_dataset_by_name("kb") is None
     assert store.count_dataset_documents(ds.id) == 0
+
+
+def test_tracks_an_upload_batch_per_file(store):
+    ds = store.create_dataset("kb")
+
+    waiting = store.create_dataset_upload_batch(ds.id, ["a.txt", "b.jsonl"])
+
+    assert [(u.filename, u.status, u.position) for u in waiting] == [
+        ("a.txt", "waiting", 0),
+        ("b.jsonl", "waiting", 1),
+    ]
+    batch = waiting[0].batch
+    assert waiting[1].batch == batch
+    store.set_dataset_upload_status(waiting[0].id, "completed", document_count=3)
+    store.set_dataset_upload_status(waiting[1].id, "error", error="Line 2: bad")
+    done = store.list_dataset_upload_batch(ds.id, batch)
+    assert [(u.status, u.document_count, u.error) for u in done] == [
+        ("completed", 3, None),
+        ("error", 0, "Line 2: bad"),
+    ]
+    assert (
+        store.list_dataset_upload_batch(store.create_dataset("other").id, batch) == []
+    )
