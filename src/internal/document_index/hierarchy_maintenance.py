@@ -61,6 +61,11 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
     bucket_map = {}
     for member, label in zip(members, labels):
         bucket_map.setdefault(int(label), []).append(member)
+    return _bounded_buckets(bucket_map, max_size, degenerate)
+
+
+def _bounded_buckets(bucket_map, max_size, degenerate):
+    """Preserve membership while bounding buckets with deterministic chunks."""
     chunks = []
     oversized = False
     for label in sorted(bucket_map):
@@ -72,6 +77,59 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
             for part in np.array_split(np.array(bucket, dtype=object), parts)
         )
     return chunks, degenerate, oversized
+
+
+def partition_members(
+    member_ids,
+    vectors,
+    count,
+    max_size,
+    random_state,
+    *,
+    backend="kmeans",
+    e_means_epochs=5,
+):
+    """Partition sorted members, retaining the common size/degeneracy contract.
+
+    E-means training uses moving centroids; assign again against final centers
+    before recording membership. The caller recomputes normalized member means
+    after size splitting, as it does for sklearn partitions.
+    """
+    if backend == "kmeans":
+        return kmeans_partition(member_ids, vectors, count, max_size, random_state)
+    if backend not in ("e_means", "spherical_e_means"):
+        raise ValueError(f"unknown clustering backend: {backend}")
+    members = sorted(member_ids)
+    if not members:
+        return [], False, False
+    try:
+        from faiss.contrib.e_means import NumpyEmeans
+    except ImportError as error:
+        raise ValueError(
+            "E-means requires faiss.contrib.e_means; install faiss-cpu>=1.16.0 "
+            "in the offline builder environment, or select clustering_backend=kmeans."
+        ) from error
+    x = np.ascontiguousarray([vectors[i] for i in members], dtype=np.float32)
+    k = min(count, len(members))
+    model = NumpyEmeans(
+        x.shape[1],
+        k,
+        # Upstream rounds fractional passes to rows; zero rows crashes finalize.
+        nepochs=max(e_means_epochs, 1.0 / len(members)),
+        seed=random_state,
+        spherical=backend == "spherical_e_means",
+        capture_assignments=False,
+        max_points_per_centroid=None,
+    )
+    model.train(x)
+    _, labels = model.assign(x)
+    bucket_map = {}
+    for member, label in zip(members, labels):
+        bucket_map.setdefault(int(label), []).append(member)
+    # Like sklearn's ConvergenceWarning: fewer distinct vectors than clusters.
+    # An empty cluster left by mini-batch training on distinct data is not.
+    degenerate = len(np.unique(x, axis=0)) < k
+    return _bounded_buckets(bucket_map, max_size, degenerate)
 
 
 def centroid(member_ids, vectors):
@@ -204,8 +262,14 @@ def maintain_leaves(
         # clusters, the most that still leaves room for one min_size bucket.
         count = math.ceil(len(pool) / config.target_cluster_size)
         while True:
-            buckets, flag, _ = kmeans_partition(
-                pool, vectors, count, max_size, config.random_state
+            buckets, flag, _ = partition_members(
+                pool,
+                vectors,
+                count,
+                max_size,
+                config.random_state,
+                backend=config.clustering_backend,
+                e_means_epochs=config.e_means_epochs,
             )
             accepted = []
             for bucket in buckets:
@@ -268,12 +332,14 @@ def maintain_leaves(
         if not (oversized or drifted):
             result.append(g)
             continue
-        buckets, flag, _ = kmeans_partition(
+        buckets, flag, _ = partition_members(
             g["document_ids"],
             vectors,
             max(2, math.ceil(size / config.target_cluster_size)),
             max_size,
             config.random_state,
+            backend=config.clustering_backend,
+            e_means_epochs=config.e_means_epochs,
         )
         degenerate |= flag
         if flag and not oversized:
@@ -402,12 +468,20 @@ def _descendant_documents(gid, children, by_id):
     ]
 
 
-def balance_levels(groups, vectors, max_fanout, random_state):
+def balance_levels(
+    groups,
+    vectors,
+    max_fanout,
+    random_state,
+    *,
+    backend="kmeans",
+    e_means_epochs=5,
+):
     """Collapse degenerate intermediates, then bound every parent's fanout.
 
     Returns ``(groups, operations, new_group_ids)``. Intermediates are groups
     with no documents of their own; a parent over ``max_fanout`` children gets
-    new intermediate levels built by k-means over child centroids.
+    new intermediate levels built by the selected backend over child centroids.
     """
     if max_fanout is not None and max_fanout < 2:
         raise ValueError("max_fanout must be at least 2")
@@ -466,12 +540,14 @@ def balance_levels(groups, vectors, max_fanout, random_state):
             k: centroid(_descendant_documents(k, children, by_id), vectors)
             for k in kids
         }
-        buckets, _, _ = kmeans_partition(
+        buckets, _, _ = partition_members(
             kids,
             child_centroids,
             math.ceil(len(kids) / max_fanout),
             max_fanout,
             random_state,
+            backend=backend,
+            e_means_epochs=e_means_epochs,
         )
         if len(buckets) >= len(kids):
             # No progress (degenerate centroids): chunk by ID order instead.
