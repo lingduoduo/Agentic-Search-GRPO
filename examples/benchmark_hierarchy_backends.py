@@ -1,6 +1,6 @@
 """Compare hierarchy clustering backends (k-means, E-means, spherical E-means).
 
-Embeds BEIR SciFact once, then clusters the same fixed vectors with each
+Embeds a BEIR dataset (SciFact by default) once, then clusters the same fixed vectors with each
 backend and seed in its own subprocess, recording build/update time, peak
 memory, leaf balance, coherence and routing recall. Recall is the fraction of
 gold documents reached by a centroid-similarity beam over the tree (no LLM),
@@ -46,8 +46,8 @@ BEAMS = (1, 2, 4, 8)
 DEFAULT_MODEL = "intfloat/e5-base-v2"
 
 
-def embed(data_dir, model, device):
-    """Download SciFact from the Hub and save fixed document/query vectors."""
+def embed(data_dir, model, device, dataset="scifact"):
+    """Download a BEIR dataset from the Hub and save fixed document/query vectors."""
     from datasets import load_dataset
 
     from src.internal.document_index.hierarchy_formats import first_sentence
@@ -56,14 +56,15 @@ def embed(data_dir, model, device):
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     corpus = {
-        str(r["_id"]): r for r in load_dataset("BeIR/scifact", "corpus", split="corpus")
+        str(r["_id"]): r
+        for r in load_dataset(f"BeIR/{dataset}", "corpus", split="corpus")
     }
     queries = {
         str(r["_id"]): r["text"]
-        for r in load_dataset("BeIR/scifact", "queries", split="queries")
+        for r in load_dataset(f"BeIR/{dataset}", "queries", split="queries")
     }
     qrels = defaultdict(list)
-    for r in load_dataset("BeIR/scifact-qrels", split="test"):
+    for r in load_dataset(f"BeIR/{dataset}-qrels", split="test"):
         if int(r["score"]) > 0:
             qrels[str(r["query-id"])].append(str(r["corpus-id"]))
     ids = sorted(corpus)
@@ -393,6 +394,9 @@ def main(argv=None):
     p.add_argument("--data", required=True)
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--device", default="cpu")
+    p.add_argument(
+        "--dataset", default="scifact", help="BEIR name on the Hub, e.g. nfcorpus"
+    )
     p = sub.add_parser("run")
     p.add_argument("--data", required=True)
     p.add_argument("--output", required=True)
@@ -413,7 +417,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == "embed":
-        embed(args.data, args.model, args.device)
+        embed(args.data, args.model, args.device, args.dataset)
     elif args.command == "run":
         run_grid(args.data, args.output, args.seeds, args.configs, args.backends)
     elif args.command == "trial":
