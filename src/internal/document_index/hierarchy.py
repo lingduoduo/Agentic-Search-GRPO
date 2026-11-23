@@ -24,7 +24,7 @@ from .hierarchy_maintenance import (
     balance_levels,
     centroid,
     fit_reference,
-    kmeans_partition,
+    partition_members,
     maintain_leaves,
 )
 
@@ -45,10 +45,22 @@ class HierarchyConfig:
     fit_quantile: float = 0.05
     split_poor_fit_fraction: float = 0.3
     description_refresh_overlap: float = 0.5
+    clustering_backend: str = "kmeans"
+    e_means_epochs: float = 5.0
 
     def __post_init__(self):
         if self.mode not in ("auto", "structure", "cluster"):
             raise ValueError("mode must be auto, structure or cluster")
+        if self.clustering_backend not in ("kmeans", "e_means", "spherical_e_means"):
+            raise ValueError(
+                "clustering_backend must be kmeans, e_means or spherical_e_means"
+            )
+        if (
+            type(self.e_means_epochs) not in (int, float)
+            or not math.isfinite(self.e_means_epochs)
+            or self.e_means_epochs <= 0
+        ):
+            raise ValueError("e_means_epochs must be a positive finite number")
         for name in (
             "target_cluster_size",
             "max_cluster_size",
@@ -546,8 +558,14 @@ def build_hierarchy(
         count = config.n_clusters or math.ceil(
             len(semantic) / config.target_cluster_size
         )
-        buckets, degenerate, oversized = kmeans_partition(
-            semantic, vectors, count, config.max_cluster_size, config.random_state
+        buckets, degenerate, oversized = partition_members(
+            semantic,
+            vectors,
+            count,
+            config.max_cluster_size,
+            config.random_state,
+            backend=config.clustering_backend,
+            e_means_epochs=config.e_means_epochs,
         )
         if oversized:
             notices.append(
@@ -586,7 +604,12 @@ def build_hierarchy(
     if degenerate:
         notices.append("Degenerate semantic vectors reduced distinct clusters.")
     semantic_groups, level_operations, new_level_ids = balance_levels(
-        semantic_groups, vectors, config.max_fanout, config.random_state
+        semantic_groups,
+        vectors,
+        config.max_fanout,
+        config.random_state,
+        backend=config.clustering_backend,
+        e_means_epochs=config.e_means_epochs,
     )
     structure_operations.extend(level_operations)
     semantic_by_id = {g["id"]: g for g in semantic_groups}

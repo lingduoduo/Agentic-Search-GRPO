@@ -53,6 +53,18 @@ def _parser():
     )
     build.add_argument("--infer-layout", action="store_true")
     build.add_argument("--random-state", type=int, default=42)
+    build.add_argument(
+        "--clustering-backend",
+        choices=("kmeans", "e_means", "spherical_e_means"),
+        default="kmeans",
+        help="Offline partition algorithm; E-means requires Faiss >=1.16.0",
+    )
+    build.add_argument(
+        "--e-means-epochs",
+        type=float,
+        default=5.0,
+        help="E-means training passes (positive, fractional values supported)",
+    )
     update.add_argument(
         "--previous",
         required=True,
@@ -140,6 +152,8 @@ def main(argv=None):
                 n_clusters=args.clusters,
                 infer_layout=args.infer_layout,
                 random_state=args.random_state,
+                clustering_backend=args.clustering_backend,
+                e_means_epochs=args.e_means_epochs,
             )
         )
         documents = _load_documents(args.corpus or args.corpus_path)

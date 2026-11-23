@@ -10,7 +10,7 @@ This pipeline handles two cases:
   sections from explicit sections, HTML or Markdown headings. Conservative
   plain-text layout recovery is opt-in.
 - **Missing structure:** embed each document's title and first sentence,
-  cluster with deterministic k-means, then describe each cluster. A local LLM
+  cluster with seeded k-means (or optional E-means), then describe each cluster. A local LLM
   can generate descriptions; without one, explicitly marked extractive
   descriptions use representative titles/first sentences.
 
@@ -105,6 +105,66 @@ disabled, and corpus text is never sent to a hosted inference endpoint.
 of titles and first sentences. Descriptions record their source, including
 `local_llm` or `extractive`; they are not verified factual summaries. Empty model
 outputs or samples that cannot fit the context budget fail explicitly.
+
+## Optional E-means clustering
+
+K-means remains the default. To use Faiss E-means for an offline build:
+
+```sh
+python -m src.internal.document_index.hierarchy_cli build \
+  --corpus-path data/corpus.jsonl --mode cluster \
+  --clustering-backend e_means --e-means-epochs 5 \
+  --output indexes/e-means-tree.json
+```
+
+`--clustering-backend` accepts `kmeans`, `e_means` (Euclidean), or
+`spherical_e_means` (cosine, with normalized centroids during training).
+Euclidean E-means preserves the current clustering objective; spherical
+E-means changes it to align with the cosine comparisons used in maintenance.
+`--e-means-epochs` is a positive finite pass budget, default 5; fractional
+budgets such as 2.5 are supported. Each partition trains on at least one row;
+a smaller budget is raised to `1 / partition_size` passes to avoid upstream
+zero-row rounding on tiny maintenance batches. Both settings are saved in the
+artifact, inherited by updates, and require a fresh build to change. Older
+artifacts default to k-means.
+
+The E-means path needs `faiss.contrib.e_means`, provided by `faiss-cpu>=1.16.0`.
+The optional `requirements-retrieval-heavy.txt` includes a compatible version;
+a CPU-only builder can install Faiss separately without the other retrieval
+backends. On macOS use the conda installation guidance in that file: the pip
+`faiss-cpu` and `torch` wheels each bundle `libomp.dylib`, and a build loads
+both (torch for embeddings, Faiss for E-means), so the process aborts with
+`OMP: Error #15`. This affects pip Faiss 1.13 as well, not only E-means. Do not
+work around it with `KMP_DUPLICATE_LIB_OK=TRUE`, which OpenMP documents as able
+to give silently incorrect results. Faiss is
+loaded lazily only when an E-means partition is needed, and a missing or old
+installation fails with an actionable error rather than switching algorithms.
+
+This integration uses the CPU `NumpyEmeans` implementation with contiguous FP32
+vectors and the configured `--random-state`. `--device` still controls the
+embedding and description models; it does not move clustering to a GPU.
+E-means processes mini-batches with exponential moving averages. After training,
+we run an additional exact nearest-centroid assignment over every document,
+rather than using labels collected while centroids were moving. We recompute
+our normalized member means after the usual deterministic overflow splitting.
+As with k-means, a partition is reported as degenerate only when there are
+fewer distinct vectors than requested clusters; an empty cluster left by
+mini-batch training on distinct data yields fewer buckets but is not flagged.
+
+The selected algorithm is used for initial leaves, local spawn/split operations,
+and optional intermediate levels. Maximum cluster size and fanout bounds still
+apply; E-means itself does not balance cluster sizes. Final cluster IDs and
+memberships can differ between algorithms. Seed repeatability is checked within
+a fixed environment; it is not a cross-version or cross-platform bitwise promise.
+
+[E-means upstream](https://github.com/facebookresearch/faiss/tree/main/contrib/e_means)
+reports faster convergence on large embedding benchmarks. This integration does
+not establish a speedup on our corpus, particularly for tiny local maintenance
+jobs. Compare fixed embeddings across all three backends: measure build time,
+memory, overflow rate, post-split coherence, minority-topic coverage, and
+ancestor-path survival/final passage recall under identical routing budgets.
+The existing description evaluator can compare the resulting trees against
+held-out queries. GPU execution and automatic backend selection are not enabled.
 
 ## Description judgeability
 
