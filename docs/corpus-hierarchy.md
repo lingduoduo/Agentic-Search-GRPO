@@ -195,15 +195,35 @@ gold documents reached by a centroid-similarity beam over the tree (no LLM).
 - Local maintenance (adding 10% of documents) took the same total time for all
   backends; its clustering share stayed under about 1.3 s.
 
-K-means therefore stays the default. E-means, preferably `spherical_e_means`,
-is worth selecting when full-build clustering time matters; this measurement
-does not show a routing-quality gain. It covers one corpus and machine, a
-non-default embedding model, centroid rather than decision-model routing, and
-does not measure minority-topic coverage. For another corpus, compare fixed
-embeddings across all three backends with the existing description evaluator
-under identical routing budgets;
-`examples/benchmark_hierarchy_backends.py` reproduces this measurement. GPU execution and automatic backend selection
-are not enabled.
+**NFCorpus replication (2026-11-22).** Same protocol on 3,633 BEIR NFCorpus
+documents and 323 test queries (38 gold documents per query on average, so
+absolute recall is lower).
+
+| | k-means | E-means | spherical E-means |
+|---|---|---|---|
+| Clustering time (default / fine) | 10.4 s / 26.5 s | 0.39 s / 0.37 s | 0.37 s / 0.36 s |
+| Leaf-size coefficient of variation (default / fine) | 0.37 / 0.40 | 0.43 / 0.52 | 0.44 / 0.51 |
+| Recall, beam 1 (default / fine) | 0.187 / 0.073 | 0.179 / 0.071 | 0.180 / 0.080 |
+| Recall, beam 8 (default / fine) | 0.518 / 0.297 | 0.520 / 0.295 | 0.522 / 0.292 |
+
+The speedup, identical coherence, less balanced leaves and extra first-update
+restructuring all replicate. Neither SciFact recall effect does: every NFCorpus
+recall difference is within about 1 point and within seed-to-seed noise,
+including Euclidean E-means at beam 1 (-0.8 / -0.2 points) and spherical
+E-means at beams 4-8 on the fine tree (-0.7 / -0.5 points).
+
+K-means therefore stays the default. E-means is worth selecting when full-build
+clustering time matters; across both corpora it shows no consistent routing
+recall gain or loss. The two E-means variants were within noise of each other
+except on the SciFact fine tree, where spherical avoided the Euclidean beam-1
+loss; that single case is weak grounds for preferring `spherical_e_means`.
+Both measurements share one machine, a non-default
+embedding model, centroid rather than decision-model routing, and do not
+measure minority-topic coverage. `examples/benchmark_hierarchy_backends.py`
+reproduces them (`embed --dataset scifact|nfcorpus`); for decision-model routing
+compare the resulting trees with the existing description evaluator under
+identical routing budgets. GPU execution and automatic backend selection are
+not enabled.
 
 ## Description judgeability
 
