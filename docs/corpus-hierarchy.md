@@ -131,12 +131,18 @@ artifacts default to k-means.
 The E-means path needs `faiss.contrib.e_means`, provided by `faiss-cpu>=1.16.0`.
 The optional `requirements-retrieval-heavy.txt` includes a compatible version;
 a CPU-only builder can install Faiss separately without the other retrieval
-backends. On macOS use the conda installation guidance in that file: the pip
-`faiss-cpu` and `torch` wheels each bundle `libomp.dylib`, and a build loads
-both (torch for embeddings, Faiss for E-means), so the process aborts with
-`OMP: Error #15`. This affects pip Faiss 1.13 as well, not only E-means. Do not
-work around it with `KMP_DUPLICATE_LIB_OK=TRUE`, which OpenMP documents as able
-to give silently incorrect results. Faiss is
+backends. On macOS the pip `faiss-cpu` and `torch` wheels each bundle
+`libomp.dylib`, and `hierarchy_cli build` loads both (torch for embeddings,
+Faiss for E-means), so the process aborts with `OMP: Error #15`. This affects
+pip Faiss 1.13 as well, not only E-means. The conda guidance in that file does
+not help here yet: as of 2026-11-22 conda-forge ships `faiss-cpu` 1.14.3 and the
+pytorch channel 1.15.0, both too old for E-means. Run E-means builds on Linux.
+On macOS the CLI cannot avoid the conflict; the Python API can, by embedding
+in one process and calling `build_hierarchy` with an embedder that returns the
+saved vectors in a torch-free process, as
+`examples/benchmark_hierarchy_backends.py` does. Do not work around it with
+`KMP_DUPLICATE_LIB_OK=TRUE`, which OpenMP documents as able to give silently
+incorrect results. Faiss is
 loaded lazily only when an E-means partition is needed, and a missing or old
 installation fails with an actionable error rather than switching algorithms.
 
@@ -195,7 +201,8 @@ does not show a routing-quality gain. It covers one corpus and machine, a
 non-default embedding model, centroid rather than decision-model routing, and
 does not measure minority-topic coverage. For another corpus, compare fixed
 embeddings across all three backends with the existing description evaluator
-under identical routing budgets. GPU execution and automatic backend selection
+under identical routing budgets;
+`examples/benchmark_hierarchy_backends.py` reproduces this measurement. GPU execution and automatic backend selection
 are not enabled.
 
 ## Description judgeability
