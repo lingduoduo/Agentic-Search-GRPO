@@ -158,13 +158,45 @@ memberships can differ between algorithms. Seed repeatability is checked within
 a fixed environment; it is not a cross-version or cross-platform bitwise promise.
 
 [E-means upstream](https://github.com/facebookresearch/faiss/tree/main/contrib/e_means)
-reports faster convergence on large embedding benchmarks. This integration does
-not establish a speedup on our corpus, particularly for tiny local maintenance
-jobs. Compare fixed embeddings across all three backends: measure build time,
-memory, overflow rate, post-split coherence, minority-topic coverage, and
-ancestor-path survival/final passage recall under identical routing budgets.
-The existing description evaluator can compare the resulting trees against
-held-out queries. GPU execution and automatic backend selection are not enabled.
+reports faster convergence on large embedding benchmarks.
+
+**SciFact measurement (2026-11-22).** 5,183 BEIR SciFact abstracts embedded once
+with `intfloat/e5-base-v2` (title + first sentence), 300 test queries, 5 seeds
+per backend, Faiss 1.16.0 on an Apple Silicon laptop. Recall is the fraction of
+gold documents reached by a centroid-similarity beam over the tree (no LLM).
+
+| | k-means | E-means | spherical E-means |
+|---|---|---|---|
+| Clustering time, default config (52 leaves) | 7.4 s | 0.30 s | 0.28 s |
+| Clustering time, `target_cluster_size=25`, `max_fanout=10` (~220 leaves, depth 2) | 27 s | 0.47 s | 0.38 s |
+| Leaf-size coefficient of variation (default / fine) | 0.31 / 0.39 | 0.44 / 0.53 | 0.44 / 0.54 |
+| Recall, beam 1 (default / fine) | 0.50 / 0.28 | 0.47 / 0.24 | 0.47 / 0.27 |
+| Recall, beam 8 (default / fine) | 0.87 / 0.71 | 0.88 / 0.72 | 0.87 / 0.73 |
+
+- The speedup is not only the 10 sklearn restarts: on the same vectors a single
+  k-means restart took 2.9 s (52 clusters) and 3.8 s (208) against 0.23-0.25 s
+  for E-means, at equal or slightly lower inertia.
+- Member coherence was identical. E-means leaves are less balanced, the default
+  config needed overflow splitting in 4/5 E-means runs against 1/5 for k-means,
+  and the first update after an E-means build did more structural work (more
+  splits, plus merges of leaves under `min_cluster_size`, which the initial
+  build does not enforce).
+- At beam 1 both E-means variants lost about 3.5 recall points on the default
+  config. On the fine tree Euclidean E-means lost about 3.7 (all 5 seeds lower),
+  while spherical E-means matched k-means and gained about 2 points at beams
+  4-8, scanning about 10% more documents. Most other differences are within
+  seed-to-seed noise.
+- Local maintenance (adding 10% of documents) took the same total time for all
+  backends; its clustering share stayed under about 1.3 s.
+
+K-means therefore stays the default. E-means, preferably `spherical_e_means`,
+is worth selecting when full-build clustering time matters; this measurement
+does not show a routing-quality gain. It covers one corpus and machine, a
+non-default embedding model, centroid rather than decision-model routing, and
+does not measure minority-topic coverage. For another corpus, compare fixed
+embeddings across all three backends with the existing description evaluator
+under identical routing budgets. GPU execution and automatic backend selection
+are not enabled.
 
 ## Description judgeability
 
