@@ -103,14 +103,14 @@ class LocalHierarchyDescriber:
     ) -> dict:
         if not documents:
             raise ValueError("Cannot describe an empty group")
-        from src.internal.document_index.hierarchy_formats import first_sentence
+        from src.internal.document_index.hierarchy.formats import first_sentence
         import torch
 
         self._load()
         model, tokenizer = self._model, self._tokenizer
         # Bound the sample before tokenization; do not silently truncate chat
         # role delimiters or the request itself. The sample is not the evidence.
-        from .hierarchy_descriptions import (
+        from .descriptions import (
             DESCRIPTION_POLICY_VERSION,
             select_description_samples,
         )
@@ -177,7 +177,7 @@ class LocalHierarchyDescriber:
                 warnings.append("context_dropped:" + dropped["document_id"])
         else:
             raise ValueError("Description context cannot fit one document sample")
-        from .hierarchy_descriptions import _language
+        from .descriptions import _language
 
         packed_languages = {_language(by_id[s["document_id"]]) for s in samples}
         for language in sorted({_language(d) for d in documents} - packed_languages):

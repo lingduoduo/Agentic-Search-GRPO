@@ -233,7 +233,7 @@ def main(argv=None):
                 raise ValueError(f"--{name.replace('_', '-')} must be >= 0")
         # Import only after argparse: --help does not import ML libraries.
         from src.internal.document_index.hierarchy import HierarchyConfig
-        from src.internal.document_index.hierarchy_models import (
+        from src.internal.document_index.hierarchy.models import (
             LocalHierarchyDescriber,
             SentenceEmbedding,
         )

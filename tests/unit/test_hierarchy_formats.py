@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from src.internal.document_index.hierarchy_formats import (
+from src.internal.document_index.hierarchy.formats import (
     first_sentence,
     normalize_document,
     split_passages,

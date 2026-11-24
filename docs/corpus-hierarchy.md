@@ -52,7 +52,7 @@ it can miss headings or misclassify text. Every normalized document records
 `structure_source` and `section_source` so recovered structure is auditable.
 
 ```sh
-python -m src.internal.document_index.hierarchy_cli build \
+python -m src.internal.document_index.hierarchy.cli build \
   --corpus-path data/corpus.jsonl \
   --mode structure \
   --output indexes/support-tree.json
@@ -71,7 +71,7 @@ A URL prefix alone does not imply a useful hierarchy: Wikipedia's shared
 paths and cluster every document, or supply curated metadata paths.
 
 ```sh
-python -m src.internal.document_index.hierarchy_cli build \
+python -m src.internal.document_index.hierarchy.cli build \
   --corpus-path data/wikipedia.jsonl \
   --mode cluster \
   --embedding-model intfloat/e5-base-v2 \
@@ -111,7 +111,7 @@ outputs or samples that cannot fit the context budget fail explicitly.
 K-means remains the default. To use Faiss E-means for an offline build:
 
 ```sh
-python -m src.internal.document_index.hierarchy_cli build \
+python -m src.internal.document_index.hierarchy.cli build \
   --corpus-path data/corpus.jsonl --mode cluster \
   --clustering-backend e_means --e-means-epochs 5 \
   --output indexes/e-means-tree.json
@@ -132,7 +132,7 @@ The E-means path needs `faiss.contrib.e_means`, provided by `faiss-cpu>=1.16.0`.
 The optional `requirements-retrieval-heavy.txt` includes a compatible version;
 a CPU-only builder can install Faiss separately without the other retrieval
 backends. On macOS the pip `faiss-cpu` and `torch` wheels each bundle
-`libomp.dylib`, and `hierarchy_cli build` loads both (torch for embeddings,
+`libomp.dylib`, and `hierarchy.cli build` loads both (torch for embeddings,
 Faiss for E-means), so the process aborts with `OMP: Error #15`. This affects
 pip Faiss 1.13 as well, not only E-means. The conda guidance in that file does
 not help here yet: as of 2026-11-22 conda-forge ships `faiss-cpu` 1.14.3 and the
@@ -299,7 +299,7 @@ reward matching the generator's wording.
 ## Updates are full snapshots
 
 ```sh
-python -m src.internal.document_index.hierarchy_cli update \
+python -m src.internal.document_index.hierarchy.cli update \
   --previous indexes/support-tree.json \
   --corpus-path data/current-corpus.jsonl \
   --output indexes/support-tree.json
@@ -439,7 +439,7 @@ checked for mismatches.
 ## Inspect granularity before choosing navigation budgets
 
 ```sh
-python -m src.internal.document_index.hierarchy_cli inspect indexes/nq-tree.json
+python -m src.internal.document_index.hierarchy.cli inspect indexes/nq-tree.json
 ```
 
 The report includes group sizes, imbalance, singleton groups, maximum depth,

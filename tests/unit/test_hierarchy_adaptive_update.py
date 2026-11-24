@@ -8,7 +8,7 @@ from src.internal.document_index.hierarchy import (
     HierarchyConfig,
     build_hierarchy,
 )
-from src.internal.document_index.hierarchy_descriptions import (
+from src.internal.document_index.hierarchy.descriptions import (
     select_description_samples,
 )
 from tests.unit.hierarchy_fakes import CountingDescriber, TopicEmbedder, docs

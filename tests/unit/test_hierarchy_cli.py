@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from src.internal.document_index.hierarchy import HierarchyArtifact
-from src.internal.document_index.hierarchy_cli import main
+from src.internal.document_index.hierarchy.cli import main
 
 
 def corpus(path, count=2):
@@ -26,7 +26,7 @@ def corpus(path, count=2):
 
 def test_help_subprocess():
     result = subprocess.run(
-        [sys.executable, "-m", "src.internal.document_index.hierarchy_cli", "--help"],
+        [sys.executable, "-m", "src.internal.document_index.hierarchy.cli", "--help"],
         capture_output=True,
         text=True,
     )
@@ -39,7 +39,7 @@ def test_offline_build_update_inspect(tmp_path, capsys, monkeypatch):
     source = tmp_path / "docs.jsonl"
     artifact = tmp_path / "tree.json"
     corpus(source)
-    import src.internal.document_index.hierarchy_models as models
+    import src.internal.document_index.hierarchy.models as models
 
     monkeypatch.setattr(
         models,
@@ -120,7 +120,7 @@ def test_update_rejects_encoder_override(tmp_path, capsys):
 
 def test_build_exposes_description_sample_budget(tmp_path):
     import json
-    from src.internal.document_index.hierarchy_cli import main
+    from src.internal.document_index.hierarchy.cli import main
     from src.internal.document_index.hierarchy import HierarchyArtifact
 
     corpus = tmp_path / "corpus.jsonl"
@@ -219,7 +219,7 @@ def test_update_dry_run_prints_diagnostics_and_writes_nothing(tmp_path, capsys):
 
 
 def test_update_passes_description_call_cap(tmp_path, monkeypatch):
-    import src.internal.document_index.hierarchy_cli as cli
+    import src.internal.document_index.hierarchy.cli as cli
 
     source = tmp_path / "docs.jsonl"
     artifact = tmp_path / "tree.json"
@@ -249,7 +249,7 @@ def test_update_help_documents_dry_run_cost():
         [
             sys.executable,
             "-m",
-            "src.internal.document_index.hierarchy_cli",
+            "src.internal.document_index.hierarchy.cli",
             "update",
             "--help",
         ],

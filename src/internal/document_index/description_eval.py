@@ -24,7 +24,7 @@ def _fingerprint(value):
 
 def builtin_variants(artifact):
     """Build description-only controls without embedding or changing membership."""
-    from .hierarchy_descriptions import select_description_samples
+    from .hierarchy.descriptions import select_description_samples
 
     children = {}
     for group in artifact.groups:

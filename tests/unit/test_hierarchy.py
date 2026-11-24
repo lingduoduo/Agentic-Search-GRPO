@@ -150,7 +150,7 @@ def test_invalid_embedding_and_empty_corpus():
 
 
 def test_flat_descendant_memberships_scan_groups_once():
-    from src.internal.document_index.hierarchy import _descendant_memberships
+    from src.internal.document_index.hierarchy.build import _descendant_memberships
 
     class CountedGroups(dict):
         visits = 0
@@ -281,7 +281,7 @@ def test_old_semantic_description_policy_refresh_does_not_reembed():
 def test_generation_settings_record_config_sample_size_and_null_provenance_updates():
     import copy
     from src.internal.document_index.hierarchy import HierarchyConfig, build_hierarchy
-    from src.internal.document_index.hierarchy_descriptions import (
+    from src.internal.document_index.hierarchy.descriptions import (
         select_description_samples,
     )
 

@@ -1,6 +1,6 @@
 """Build, update, and inspect offline corpus hierarchies.
 
-Example: python -m src.internal.document_index.hierarchy_cli build \
+Example: python -m src.internal.document_index.hierarchy.cli build \
     --corpus-path corpus.jsonl --output hierarchy.json
 """
 
@@ -10,8 +10,8 @@ import argparse
 import json
 from pathlib import Path
 
-from .hierarchy import HierarchyArtifact, HierarchyConfig, build_hierarchy
-from .hierarchy_formats import normalize_document
+from .build import HierarchyArtifact, HierarchyConfig, build_hierarchy
+from .formats import normalize_document
 
 
 def _parser():
@@ -169,11 +169,11 @@ def main(argv=None):
         embedder = None
         describer = None
         if semantic_needed:
-            from .hierarchy_models import SentenceEmbedding
+            from .models import SentenceEmbedding
 
             embedder = SentenceEmbedding(config.embedding_model, device=args.device)
         if config.description_model:
-            from .hierarchy_models import LocalHierarchyDescriber
+            from .models import LocalHierarchyDescriber
 
             describer = LocalHierarchyDescriber(
                 config.description_model, device=args.device

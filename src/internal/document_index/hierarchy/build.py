@@ -13,13 +13,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .hierarchy_descriptions import (
+from .descriptions import (
     DESCRIPTION_POLICY_VERSION,
     assess_description,
     select_description_samples,
 )
-from .hierarchy_formats import first_sentence, normalize_document, split_passages
-from .hierarchy_maintenance import (
+from .formats import first_sentence, normalize_document, split_passages
+from .maintenance import (
     _hash,
     balance_levels,
     centroid,

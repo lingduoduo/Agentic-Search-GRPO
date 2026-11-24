@@ -1,6 +1,6 @@
 import copy
 
-from src.internal.document_index.hierarchy_descriptions import (
+from src.internal.document_index.hierarchy.descriptions import (
     assess_description,
     select_description_samples,
 )
@@ -50,7 +50,7 @@ def test_selector_rejects_nonpositive_limit():
 
 
 def test_japanese_with_kanji_is_not_merged_into_han_stratum():
-    from src.internal.document_index.hierarchy_descriptions import _language
+    from src.internal.document_index.hierarchy.descriptions import _language
 
     assert _language(dict(title="東京の天気", contents="今日は晴れです")) == "kana"
     assert _language(dict(title="北京天气", contents="今天晴")) == "han"

@@ -162,7 +162,8 @@ def test_simulation_cli_writes_counts_and_skips_absent_gold(tmp_path, monkeypatc
     import json
 
     from examples.simulate_hierarchy_churn import main
-    from src.internal.document_index import decision_model, hierarchy_models
+    from src.internal.document_index import decision_model
+    from src.internal.document_index.hierarchy import models as hierarchy_models
 
     class Embedder(TopicEmbedder):
         def __init__(self, model_name, device="cpu"):
