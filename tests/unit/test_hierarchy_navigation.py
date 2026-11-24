@@ -192,11 +192,11 @@ def test_server_loads_offline_artifact_without_loading_build_models(
         ),
         patch("src.internal.servers.retrieval.decision.run_uvicorn_app") as serve,
         patch(
-            "src.internal.document_index.hierarchy_models.SentenceEmbedding",
+            "src.internal.document_index.hierarchy.models.SentenceEmbedding",
             side_effect=AssertionError("offline only"),
         ),
         patch(
-            "src.internal.document_index.hierarchy_models.LocalHierarchyDescriber",
+            "src.internal.document_index.hierarchy.models.LocalHierarchyDescriber",
             side_effect=AssertionError("offline only"),
         ),
     ):

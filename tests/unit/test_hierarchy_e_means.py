@@ -14,8 +14,8 @@ from src.internal.document_index.hierarchy import (
     HierarchyConfig,
     build_hierarchy,
 )
-from src.internal.document_index.hierarchy_cli import main
-from src.internal.document_index import hierarchy_maintenance as maintenance
+from src.internal.document_index.hierarchy.cli import main
+from src.internal.document_index.hierarchy import maintenance
 
 
 @pytest.fixture
@@ -199,7 +199,7 @@ def test_old_artifact_defaults_to_kmeans():
 
 
 def test_cli_persists_and_inherits_backend(fake_emeans, monkeypatch, tmp_path, capsys):
-    import src.internal.document_index.hierarchy_models as models
+    import src.internal.document_index.hierarchy.models as models
 
     monkeypatch.setattr(models, "SentenceEmbedding", lambda *a, **kw: Encoder())
     corpus = tmp_path / "corpus.jsonl"

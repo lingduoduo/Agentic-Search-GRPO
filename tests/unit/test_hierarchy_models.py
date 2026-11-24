@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.internal.document_index.hierarchy_models import (
+from src.internal.document_index.hierarchy.models import (
     LocalHierarchyDescriber,
     SentenceEmbedding,
 )

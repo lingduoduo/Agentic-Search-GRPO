@@ -27,13 +27,13 @@ effect on the paper's NQ benchmark.
 
 | Finding | Evidence | Consequence |
 |---|---|---|
-| Descriptions are accepted for being nonblank | `hierarchy.py:445–448`; persisted group strings at `153–155` need only be truthy | Generic and duplicate descriptions pass; persisted whitespace-only descriptions also pass. No semantic quality gate. |
-| LLM samples are ID prefixes | `hierarchy_models.py:108–115`, default sample size 12; context pressure pops the last sample | No guarantee of major/minority topic or language coverage; changing IDs can change the evidence available to the generator. |
-| Extractive descriptions are smaller ID prefixes | `hierarchy.py:452–455`: first eight titles/first sentences, capped at 1600 characters | A tail-topic addition can invalidate the cache and trigger regeneration without changing the actual routing description. This is coverage loss, not a failed cache refresh. |
+| Descriptions are accepted for being nonblank | `hierarchy/build.py:445–448`; persisted group strings at `153–155` need only be truthy | Generic and duplicate descriptions pass; persisted whitespace-only descriptions also pass. No semantic quality gate. |
+| LLM samples are ID prefixes | `hierarchy/models.py:108–115`, default sample size 12; context pressure pops the last sample | No guarantee of major/minority topic or language coverage; changing IDs can change the evidence available to the generator. |
+| Extractive descriptions are smaller ID prefixes | `hierarchy/build.py:452–455`: first eight titles/first sentences, capped at 1600 characters | A tail-topic addition can invalidate the cache and trigger regeneration without changing the actual routing description. This is coverage loss, not a failed cache refresh. |
 | Uncertain descriptions still face ordinary pruning | `decision_retriever.py:282–287` exposes group label plus description; `309–313` applies the budget | Pruned descendants never receive a document-level relevance judgment. Default zero cutoff does not prevent budget-based losses. |
 | Later levels have the same dependency | `decision_retriever.py:245–254`: sections use title+heading; documents use title or ID | A good group description cannot rescue a gold document pruned under a generic title or an uninformative Body heading. |
 | ACL-safe descriptors have a separate coverage limit | `decision_retriever.py:335–349`: visible titles joined and clipped to 1600 characters | The first long visible title can hide later topics even when the filter removes no documents. Reusing mixed-ACL summaries would be unsafe; improve the visible-only representation instead. |
-| Diagnostics currently measure structure | `hierarchy.py:503–533` | Size, imbalance and fanout reports are useful, but do not measure coverage, sibling distinguishability or routing recall. |
+| Diagnostics currently measure structure | `hierarchy/build.py:503–533` | Size, imbalance and fanout reports are useful, but do not measure coverage, sibling distinguishability or routing recall. |
 
 Description source (`local_llm`, `extractive`) is provenance, not a quality score.
 A longer description can also add noise or consume context; text length alone

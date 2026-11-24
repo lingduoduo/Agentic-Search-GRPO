@@ -3,7 +3,7 @@
 import numpy as np
 
 from src.internal.document_index.hierarchy import HierarchyConfig
-from src.internal.document_index.hierarchy_descriptions import (
+from src.internal.document_index.hierarchy.descriptions import (
     select_description_samples,
 )
 

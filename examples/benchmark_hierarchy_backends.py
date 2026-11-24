@@ -50,8 +50,8 @@ def embed(data_dir, model, device, dataset="scifact"):
     """Download a BEIR dataset from the Hub and save fixed document/query vectors."""
     from datasets import load_dataset
 
-    from src.internal.document_index.hierarchy_formats import first_sentence
-    from src.internal.document_index.hierarchy_models import SentenceEmbedding
+    from src.internal.document_index.hierarchy.formats import first_sentence
+    from src.internal.document_index.hierarchy.models import SentenceEmbedding
 
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -183,8 +183,11 @@ def _tree_metrics(artifact, data):
 
 def trial(data, backend, seed, config_name, model=DEFAULT_MODEL):
     """Full build, then a ~90% build updated with the held-back ~10%."""
-    from src.internal.document_index import hierarchy, hierarchy_maintenance
-    from src.internal.document_index.hierarchy_formats import first_sentence
+    from src.internal.document_index.hierarchy import build as hierarchy
+    from src.internal.document_index.hierarchy import (
+        maintenance as hierarchy_maintenance,
+    )
+    from src.internal.document_index.hierarchy.formats import first_sentence
 
     by_text = {
         f"{d['title']}\n{first_sentence(d['contents'])}": data["doc_vec"][d["id"]]

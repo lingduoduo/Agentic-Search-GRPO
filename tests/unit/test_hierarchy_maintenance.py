@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from src.internal.document_index.hierarchy import HierarchyConfig
-from src.internal.document_index.hierarchy_maintenance import (
+from src.internal.document_index.hierarchy.maintenance import (
     balance_levels,
     centroid,
     fit_reference,
@@ -561,7 +561,7 @@ def test_inserted_level_id_never_collides_with_existing_group():
         for k, v in vectors.items()
     ]
     # An existing intermediate whose ID is the hash of the bucket {a, b}.
-    from src.internal.document_index.hierarchy_maintenance import _hash
+    from src.internal.document_index.hierarchy.maintenance import _hash
 
     old = dict(
         id="semantic-level-" + _hash(["a", "b"])[:20],
@@ -649,7 +649,7 @@ def test_unrelated_kmeans_warning_is_not_degeneracy(monkeypatch):
 
 
 def _recording_kmeans(monkeypatch):
-    import src.internal.document_index.hierarchy_maintenance as module
+    import src.internal.document_index.hierarchy.maintenance as module
 
     calls = []
     original = module.kmeans_partition

@@ -217,7 +217,7 @@ class DecisionRetriever:
         self._topics = self._build(docs)
 
     def _build(self, docs: Sequence[dict]) -> tuple[_Node, ...]:
-        from src.internal.document_index.hierarchy_formats import split_passages
+        from src.internal.document_index.hierarchy.formats import split_passages
 
         topics: dict[str, list[_Node]] = {}
         document_nodes: dict[str, _Node] = {}
@@ -355,7 +355,7 @@ class DecisionRetriever:
 
     def _preview(self, node: _Node, result: NavigationResult, limit: int) -> str:
         """Inspect only the already visible subtree, within the query scan cap."""
-        from src.internal.document_index.hierarchy_formats import first_sentence
+        from src.internal.document_index.hierarchy.formats import first_sentence
 
         prefix = "\nSampled child evidence (not exhaustive):\n"
         if limit <= len(prefix) + 16:
@@ -406,7 +406,7 @@ class DecisionRetriever:
     ) -> tuple[list[_Node], tuple[str, ...], int]:
         if not self.config.preview_max_nodes or candidates[0].document is not None:
             return candidates, (), 0
-        from src.internal.document_index.hierarchy_descriptions import (
+        from src.internal.document_index.hierarchy.descriptions import (
             assess_description,
         )
 
