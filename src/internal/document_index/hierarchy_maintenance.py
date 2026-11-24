@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import warnings
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -58,14 +59,23 @@ def kmeans_partition(member_ids, vectors, count, max_size, random_state):
             degenerate = True
         else:
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
-    bucket_map = {}
+    return _bounded_partition(members, labels, max_size, degenerate)
+
+
+def _bounded_partition(
+    members: Sequence[str],
+    labels: Iterable[int],
+    max_size: int,
+    degenerate: bool,
+) -> tuple[list[list[str]], bool, bool]:
+    """Group sorted members by label, then split into deterministic chunks.
+
+    Both backends share label ordering and balanced maximum-size splitting.
+    Return the chunks, backend degeneracy flag, and whether splitting occurred.
+    """
+    bucket_map: dict[int, list[str]] = {}
     for member, label in zip(members, labels):
         bucket_map.setdefault(int(label), []).append(member)
-    return _bounded_buckets(bucket_map, max_size, degenerate)
-
-
-def _bounded_buckets(bucket_map, max_size, degenerate):
-    """Preserve membership while bounding buckets with deterministic chunks."""
     chunks = []
     oversized = False
     for label in sorted(bucket_map):
@@ -80,15 +90,15 @@ def _bounded_buckets(bucket_map, max_size, degenerate):
 
 
 def partition_members(
-    member_ids,
-    vectors,
-    count,
-    max_size,
-    random_state,
+    member_ids: Iterable[str],
+    vectors: Mapping[str, Sequence[float]],
+    count: int,
+    max_size: int,
+    random_state: int,
     *,
-    backend="kmeans",
-    e_means_epochs=5,
-):
+    backend: str = "kmeans",
+    e_means_epochs: float = 5.0,
+) -> tuple[list[list[str]], bool, bool]:
     """Partition sorted members, retaining the common size/degeneracy contract.
 
     E-means training uses moving centroids; assign again against final centers
@@ -109,11 +119,11 @@ def partition_members(
             "E-means requires faiss.contrib.e_means; install faiss-cpu>=1.16.0 "
             "in the offline builder environment, or select clustering_backend=kmeans."
         ) from error
-    x = np.ascontiguousarray([vectors[i] for i in members], dtype=np.float32)
-    k = min(count, len(members))
+    matrix = np.ascontiguousarray([vectors[i] for i in members], dtype=np.float32)
+    cluster_count = min(count, len(members))
     model = NumpyEmeans(
-        x.shape[1],
-        k,
+        matrix.shape[1],
+        cluster_count,
         # Upstream rounds fractional passes to rows; zero rows crashes finalize.
         nepochs=max(e_means_epochs, 1.0 / len(members)),
         seed=random_state,
@@ -121,15 +131,26 @@ def partition_members(
         capture_assignments=False,
         max_points_per_centroid=None,
     )
-    model.train(x)
-    _, labels = model.assign(x)
-    bucket_map = {}
-    for member, label in zip(members, labels):
-        bucket_map.setdefault(int(label), []).append(member)
+    model.train(matrix)
+    _, labels = model.assign(matrix)
     # Like sklearn's ConvergenceWarning: fewer distinct vectors than clusters.
     # An empty cluster left by mini-batch training on distinct data is not.
-    degenerate = len(np.unique(x, axis=0)) < k
-    return _bounded_buckets(bucket_map, max_size, degenerate)
+    degenerate = not _has_distinct_rows(matrix, cluster_count)
+    return _bounded_partition(members, labels, max_size, degenerate)
+
+
+def _has_distinct_rows(matrix: np.ndarray, count: int) -> bool:
+    """Whether ``matrix`` has at least ``count`` distinct rows, stopping early.
+
+    Equivalent to ``len(np.unique(matrix, axis=0)) >= count`` without sorting
+    every row; adding +0.0 maps -0.0 to 0.0 so bytes compare like floats.
+    """
+    seen = set()
+    for row in matrix:
+        seen.add((row + np.float32(0)).tobytes())
+        if len(seen) >= count:
+            return True
+    return False
 
 
 def centroid(member_ids, vectors):
