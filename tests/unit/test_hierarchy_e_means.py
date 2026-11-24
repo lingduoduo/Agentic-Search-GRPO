@@ -99,6 +99,20 @@ def test_fewer_distinct_vectors_than_clusters_is_degenerate(fake_emeans):
         list(v), v, 4, 12, 42, backend="e_means"
     )
     assert degenerate
+    # Exactly as many distinct vectors as clusters is not degenerate.
+    _, degenerate, _ = maintenance.partition_members(
+        list(v), v, 3, 12, 42, backend="e_means"
+    )
+    assert not degenerate
+
+
+def test_signed_zeros_are_one_distinct_vector(fake_emeans):
+    # Float equality, as np.unique uses: -0.0 == 0.0 despite different bytes.
+    v = {"a": [0.0, 1.0], "b": [-0.0, 1.0]}
+    _, degenerate, _ = maintenance.partition_members(
+        list(v), v, 2, 2, 42, backend="e_means"
+    )
+    assert degenerate
 
 
 def test_missing_backend_is_actionable_and_default_stays_lazy(monkeypatch):
